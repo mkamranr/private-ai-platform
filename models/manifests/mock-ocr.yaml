@@ -1,0 +1,17 @@
+# Synthetic OCR, so the §M15 ingestion path for scanned pages is exercisable GPU-free.
+#
+# Returns one block naming the uploaded file, which is what lets a test prove a scan
+# reached OCR and its text reached the index — rather than proving only that the document
+# stopped being NO_TEXT.
+name: mock-ocr
+display_name: Mock OCR (synthetic)
+type: OCR
+runtime: mock
+storage_path: /data/models/mock-ocr
+required_gpu_memory_mib: 0
+min_gpu_count: 0
+description: >
+  Synthetic text recognition for GPU-free development (§M28). Generates text; it does not
+  read the image.
+aliases:
+  - enterprise-ocr

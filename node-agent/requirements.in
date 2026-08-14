@@ -1,0 +1,21 @@
+# Private AI Platform — node agent direct dependencies (M04)
+#
+# Deliberately minimal. The agent runs on every managed host, including GPU nodes
+# whose only job is inference; each dependency here is another thing to bundle,
+# patch and security-review across the fleet.
+#
+# AIR-GAP RULE (§M23): pinned with `==`. `make lock` compiles the hashed closure.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+pydantic-settings==2.15.0
+
+# Host telemetry: CPU, memory, disk, network.
+psutil==7.2.2
+
+# Docker Engine SDK. Reachable ONLY from app/runtime/docker.py (Rule 7),
+# enforced by the import-linter contract in pyproject.toml.
+docker==7.2.0
+
+structlog==26.1.0

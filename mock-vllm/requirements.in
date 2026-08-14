@@ -1,0 +1,14 @@
+# Mock vLLM — OpenAI-compatible inference server for GPU-free development (§M26).
+#
+# Deliberately tiny: it exists so the model platform, the gateway and (from Phase 4)
+# agents can be exercised end to end on a machine with no GPU. Every dependency here
+# is one more thing in the offline bundle.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+
+# Multipart form parsing, for the Phase 9 audio and OCR endpoints: FastAPI's
+# UploadFile/Form need it, and without it the app raises at import rather than at the
+# first upload. Same pin as the backend.
+python-multipart==0.0.32

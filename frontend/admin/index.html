@@ -1,0 +1,1297 @@
+<!doctype html>
+<!--
+  Private AI Platform — admin UI (M21).
+
+  Plain HTML/CSS/JS with Bootstrap and Chart.js, exactly as §4.3 specifies. No build
+  step, no npm, no framework — deliberately. An air-gapped install must be a file copy,
+  and a bundler would add a toolchain to vendor, patch and reproduce on the target for
+  no benefit at this size. The vendored assets in vendor/ are served by nginx; nothing
+  is fetched from a CDN at runtime (Rule 4).
+
+  Phase 1 covers Infrastructure: Nodes, GPUs, Containers. The remaining §M21 sections
+  arrive with their modules.
+-->
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Private AI Platform</title>
+  <link rel="stylesheet" href="/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body>
+
+<!-- Sidebar icon sprite. Defined once and referenced with <use>, so an icon is edited
+     in one place rather than twenty, and the file stays readable. Stroke-only and
+     currentColor, so they follow the theme without a second dark-mode set. Authored
+     here: no licence, no request, nothing for a bundle to forget. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-dashboard" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.2" width="7.6" height="7.6" rx="1.4"/><rect x="13.2" y="3.2" width="7.6" height="4.6" rx="1.4"/><rect x="13.2" y="10.2" width="7.6" height="10.6" rx="1.4"/><rect x="3.2" y="13.2" width="7.6" height="7.6" rx="1.4"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12.2c0 3.9-3.8 7-8.5 7-1 0-2-.15-2.9-.42L4 20.5l1.5-3.6C4.2 15.6 3.5 14 3.5 12.2c0-3.9 3.8-7 8.5-7s8.5 3.1 8.5 7Z"/></symbol>
+    <symbol id="i-nodes" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="4.2" width="17.6" height="6" rx="1.6"/><rect x="3.2" y="13.8" width="17.6" height="6" rx="1.6"/><path d="M6.8 7.2h.01M6.8 16.8h.01" stroke-width="2.2"/></symbol>
+    <symbol id="i-gpus" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.2" y="7.2" width="9.6" height="9.6" rx="1.6"/><path d="M10 3.4v3.8M14 3.4v3.8M10 16.8v3.8M14 16.8v3.8M3.4 10h3.8M3.4 14h3.8M16.8 10h3.8M16.8 14h3.8"/></symbol>
+    <symbol id="i-containers" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.3 20.2 8v8L12 20.7 3.8 16V8L12 3.3Z"/><path d="M3.8 8 12 12.6 20.2 8M12 12.6v8.1"/></symbol>
+    <symbol id="i-models" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6.2" rx="7.8" ry="3"/><path d="M4.2 6.2v5.6c0 1.66 3.49 3 7.8 3s7.8-1.34 7.8-3V6.2"/><path d="M4.2 11.8v5.6c0 1.66 3.49 3 7.8 3s7.8-1.34 7.8-3v-5.6"/></symbol>
+    <symbol id="i-deployments" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2c3 2.2 4.6 5.4 4.6 9.1L12 17l-4.6-4.7c0-3.7 1.6-6.9 4.6-9.1Z"/><circle cx="12" cy="10" r="1.9"/><path d="M9.4 17.4 7.6 21l3.2-1.4M14.6 17.4 16.4 21l-3.2-1.4"/></symbol>
+    <symbol id="i-endpoints" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.4" cy="12" r="3.6"/><path d="M11.9 11.2h8.7v3M17.4 11.2v2.6"/></symbol>
+    <symbol id="i-agents" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.2" y="7.6" width="15.6" height="11.2" rx="2.6"/><path d="M12 4v3.6M8.6 12.6h.01M15.4 12.6h.01" stroke-width="2.2"/><path d="M9.4 16h5.2"/></symbol>
+    <symbol id="i-skills" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4c-2.9 0-5.2 2.2-5.2 5 0 1.9 1 3.2 1.9 4.2.6.7.9 1.3.9 2.1v.5h4.8v-.5c0-.8.3-1.4.9-2.1.9-1 1.9-2.3 1.9-4.2 0-2.8-2.3-5-5.2-5Z"/><path d="M9.9 18.2h4.2M10.6 20.6h2.8"/></symbol>
+    <symbol id="i-tools" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.9 4.6a4.4 4.4 0 0 0-5.6 5.6L4 15.5l2.9 2.9 5.3-5.3a4.4 4.4 0 0 0 5.6-5.6l-2.6 2.6-2.3-.6-.6-2.3 2.6-2.6Z"/></symbol>
+    <symbol id="i-approvals" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 4.6h6.8a1.6 1.6 0 0 1 1.6 1.6v.6H7v-.6a1.6 1.6 0 0 1 1.6-1.6Z"/><path d="M17 6.8h1.6a1.6 1.6 0 0 1 1.6 1.6v10.4a1.6 1.6 0 0 1-1.6 1.6H5.4a1.6 1.6 0 0 1-1.6-1.6V8.4a1.6 1.6 0 0 1 1.6-1.6H7"/><path d="m8.8 13.4 2.2 2.2 4.2-4.4"/></symbol>
+    <symbol id="i-knowledge" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 5.2c2.6-.9 5.1-.9 7.6.6 2.5-1.5 5-1.5 7.6-.6v12.4c-2.6-.9-5.1-.9-7.6.6-2.5-1.5-5-1.5-7.6-.6V5.2Z"/><path d="M12 5.8v12.4"/></symbol>
+    <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.2" y="4.2" width="15.6" height="15.6" rx="2.4"/><rect x="8.6" y="8.6" width="6.8" height="6.8" rx="1.2"/><path d="M9.4 1.8v2.4M14.6 1.8v2.4M9.4 19.8v2.4M14.6 19.8v2.4M1.8 9.4h2.4M1.8 14.6h2.4M19.8 9.4h2.4M19.8 14.6h2.4"/></symbol>
+    <symbol id="i-voice" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9.2" y="3.2" width="5.6" height="10.4" rx="2.8"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0M12 17.8v3"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.6 4.4h6v6M19.6 4.4 11 13"/><path d="M18 13.4v5.2a1.8 1.8 0 0 1-1.8 1.8H5.6a1.8 1.8 0 0 1-1.8-1.8V7.8A1.8 1.8 0 0 1 5.6 6h5.2"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.4" cy="8.4" r="3.4"/><path d="M3.4 19.4c0-3.1 2.7-5.2 6-5.2s6 2.1 6 5.2"/><path d="M16 5.4a3.2 3.2 0 0 1 0 6M17.6 14.6c2 .7 3.4 2.4 3.4 4.8"/></symbol>
+    <symbol id="i-audit" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.6" y="3.4" width="14.8" height="17.2" rx="2"/><path d="M8.4 8.2h7.2M8.4 12h7.2M8.4 15.8h4.4"/></symbol>
+  </defs>
+</svg>
+
+
+<nav class="navbar navbar-expand-lg border-bottom border-secondary-subtle px-3">
+  <span class="navbar-brand fw-semibold">
+    <!-- A shield around a small network: what this platform is, in one glyph — models and
+         nodes kept inside a boundary. Authored here rather than sourced, so there is no
+         licence attached to it and nothing to fetch at runtime. -->
+    <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 2.4 4.4 5.3v6c0 4.5 3.1 8.7 7.6 10.3 4.5-1.6 7.6-5.8 7.6-10.3v-6L12 2.4Z"
+            stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      <circle cx="12" cy="8.6" r="1.5" fill="currentColor"/>
+      <circle cx="8.4" cy="14.2" r="1.5" fill="currentColor"/>
+      <circle cx="15.6" cy="14.2" r="1.5" fill="currentColor"/>
+      <path d="M12 8.6 8.4 14.2m3.6-5.6 3.6 5.6m-7.2 0h7.2"
+            stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity=".7"/>
+    </svg><span class="brand-dot"></span> Private AI Platform
+  </span>
+  <div class="ms-auto d-flex align-items-center gap-3">
+    <span id="poll-status" class="small text-secondary"></span>
+    <span id="user-badge" class="badge text-bg-secondary d-none"></span>
+    <!-- Dark by default; the toggle exists because a wall-mounted screen and a laptop by
+         a window do not want the same thing. -->
+    <button id="theme-toggle" class="btn btn-sm btn-outline-secondary" type="button"
+            title="Switch between dark and light" aria-label="Switch colour theme">
+      <svg id="theme-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"
+              stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <button id="logout-btn" class="btn btn-sm btn-outline-secondary d-none">Sign out</button>
+  </div>
+</nav>
+
+<!-- Login ------------------------------------------------------------------->
+<div id="login-view" class="container" style="max-width: 26rem; margin-top: 8vh;">
+  <div class="card border-secondary-subtle">
+    <div class="card-body">
+      <!-- The sign-in page is the one screen with nothing on it, so it is the one place a
+           picture earns its keep. A rack of nodes under a shield, drawn from the same
+           vocabulary as the brand mark: GPUs, held inside a boundary. -->
+      <div class="login-art text-center mb-3">
+        <svg viewBox="0 0 120 76" fill="none" aria-hidden="true">
+          <rect x="26" y="40" width="68" height="12" rx="2.5"
+                stroke="currentColor" stroke-width="1.6" opacity=".85"/>
+          <rect x="26" y="56" width="68" height="12" rx="2.5"
+                stroke="currentColor" stroke-width="1.6" opacity=".55"/>
+          <circle cx="33" cy="46" r="2" fill="var(--ok)"/>
+          <circle cx="33" cy="62" r="2" fill="var(--ok)"/>
+          <path d="M76 46h12M76 62h12" stroke="currentColor" stroke-width="1.4"
+                stroke-linecap="round" opacity=".45"/>
+          <path d="M60 6 42 13v10.5C42 31.6 49.4 38.6 60 41.5 70.6 38.6 78 31.6 78 23.5V13L60 6Z"
+                stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"
+                fill="var(--bs-body-bg)"/>
+          <circle cx="60" cy="18" r="2.2" fill="currentColor"/>
+          <circle cx="54" cy="28" r="2.2" fill="currentColor"/>
+          <circle cx="66" cy="28" r="2.2" fill="currentColor"/>
+          <path d="M60 18 54 28m6-10 6 10m-12 0h12" stroke="currentColor"
+                stroke-width="1.3" stroke-linecap="round" opacity=".7"/>
+        </svg>
+      </div>
+      <h5 class="card-title mb-1">Sign in</h5>
+      <p class="small text-secondary mb-3">Private AI Platform — control plane</p>
+      <form id="login-form">
+        <div class="mb-3">
+          <label class="form-label small text-secondary" for="username">Username</label>
+          <input class="form-control" id="username" autocomplete="username" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small text-secondary" for="password">Password</label>
+          <input class="form-control" id="password" type="password" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="alert alert-danger py-2 small d-none"></div>
+        <button class="btn btn-primary w-100" type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Application ------------------------------------------------------------->
+<div id="app-view" class="d-none">
+  <div class="d-flex">
+    <aside class="sidebar border-end border-secondary-subtle p-3">
+      <div class="nav-section">Overview</div>
+      <a class="nav-item active" data-page="dashboard" href="#dashboard"><svg class="nav-icon" aria-hidden="true"><use href="#i-dashboard"/></svg>Dashboard</a>
+      <a class="nav-item" data-page="chat" href="#chat"><svg class="nav-icon" aria-hidden="true"><use href="#i-chat"/></svg>Chat</a>
+
+      <div class="nav-section mt-4">Infrastructure</div>
+      <a class="nav-item" data-page="nodes" href="#nodes"><svg class="nav-icon" aria-hidden="true"><use href="#i-nodes"/></svg>Nodes</a>
+      <a class="nav-item" data-page="gpus" href="#gpus"><svg class="nav-icon" aria-hidden="true"><use href="#i-gpus"/></svg>GPUs</a>
+      <a class="nav-item" data-page="containers" href="#containers"><svg class="nav-icon" aria-hidden="true"><use href="#i-containers"/></svg>Containers</a>
+
+      <div class="nav-section mt-4">AI Models</div>
+      <a class="nav-item" data-page="models" href="#models"><svg class="nav-icon" aria-hidden="true"><use href="#i-models"/></svg>Model Registry</a>
+      <a class="nav-item" data-page="deployments" href="#deployments"><svg class="nav-icon" aria-hidden="true"><use href="#i-deployments"/></svg>Deployments</a>
+      <a class="nav-item" data-page="endpoints" href="#endpoints"><svg class="nav-icon" aria-hidden="true"><use href="#i-endpoints"/></svg>Endpoints &amp; Keys</a>
+
+      <div class="nav-section mt-4">Agents</div>
+      <a class="nav-item" data-page="agents" href="#agents"><svg class="nav-icon" aria-hidden="true"><use href="#i-agents"/></svg>Agents</a>
+      <a class="nav-item" data-page="skills" href="#skills"><svg class="nav-icon" aria-hidden="true"><use href="#i-skills"/></svg>Skills</a>
+      <a class="nav-item" data-page="tools" href="#tools"><svg class="nav-icon" aria-hidden="true"><use href="#i-tools"/></svg>Tools &amp; MCP</a>
+      <a class="nav-item" data-page="approvals" href="#approvals"><svg class="nav-icon" aria-hidden="true"><use href="#i-approvals"/></svg>
+        Approvals <span id="approval-badge" class="badge text-bg-warning d-none">0</span>
+      </a>
+
+      <div class="nav-section mt-4">Knowledge</div>
+      <a class="nav-item" data-page="knowledge" href="#knowledge"><svg class="nav-icon" aria-hidden="true"><use href="#i-knowledge"/></svg>Knowledge Bases</a>
+      <a class="nav-item" data-page="memory" href="#memory"><svg class="nav-icon" aria-hidden="true"><use href="#i-memory"/></svg>Memory</a>
+
+      <div class="nav-section mt-4">Administration</div>
+      <a class="nav-item" data-page="voice" href="#voice"><svg class="nav-icon" aria-hidden="true"><use href="#i-voice"/></svg>Voice Assistant</a>
+      <a class="nav-item" href="/voice/" target="_blank" rel="noopener"><svg class="nav-icon" aria-hidden="true"><use href="#i-external"/></svg>Open Assistant ↗</a>
+      <a class="nav-item" data-page="users" href="#users"><svg class="nav-icon" aria-hidden="true"><use href="#i-users"/></svg>Users &amp; Roles</a>
+      <a class="nav-item" data-page="audit" href="#audit"><svg class="nav-icon" aria-hidden="true"><use href="#i-audit"/></svg>Audit Log</a>
+    </aside>
+
+    <main class="flex-grow-1 p-4">
+      <div id="alert-slot"></div>
+
+      <!-- Dashboard -->
+      <section id="page-dashboard" class="page">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Dashboard</h4>
+          <select id="dash-window" class="form-select form-select-sm ms-auto" style="width:auto">
+            <option value="24" selected>Last 24 hours</option>
+            <option value="6">Last 6 hours</option>
+            <option value="168">Last 7 days</option>
+          </select>
+        </div>
+        <div id="dashboard-body"></div>
+      </section>
+
+      <!-- Chat -->
+      <section id="page-chat" class="page d-none">
+        <h4 class="mb-3">Chat</h4>
+        <div id="chat-body"></div>
+      </section>
+
+      <!-- Nodes -->
+      <section id="page-nodes" class="page d-none">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Nodes</h4>
+          <button class="btn btn-sm btn-primary ms-auto" data-bs-toggle="modal" data-bs-target="#add-node-modal">
+            Add node
+          </button>
+          <!-- Kept, demoted. It is the only path for a node that cannot call home, and
+               the single-host deployment has a local agent with no bundle to install
+               from — so removing it would be a regression, not a simplification. -->
+          <button class="btn btn-sm btn-outline-secondary ms-2" data-bs-toggle="modal" data-bs-target="#register-modal">
+            Register manually
+          </button>
+        </div>
+        <div class="row g-3 mb-4" id="node-stats"></div>
+        <div id="pending-enrollments"></div>
+        <div id="nodes-body"></div>
+      </section>
+
+      <!-- GPUs -->
+      <section id="page-gpus" class="page d-none">
+        <h4 class="mb-3">GPUs</h4>
+        <div id="gpus-body"></div>
+      </section>
+
+      <!-- Containers -->
+      <section id="page-containers" class="page d-none">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Containers</h4>
+          <div class="form-check form-switch ms-auto">
+            <input class="form-check-input" type="checkbox" id="managed-only">
+            <label class="form-check-label small text-secondary" for="managed-only">
+              Platform-managed only
+            </label>
+          </div>
+        </div>
+        <div id="containers-body"></div>
+      </section>
+
+      <!-- Model registry -->
+      <section id="page-models" class="page d-none">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Model Registry</h4>
+          <div class="ms-auto d-flex gap-2">
+            <button id="import-ollama" class="btn btn-sm btn-outline-secondary"
+                    title="Register the models a running Ollama already serves">
+              Import from Ollama
+            </button>
+            <button id="import-manifests" class="btn btn-sm btn-outline-secondary"
+                    title="Register every model described by models/manifests/">
+              Import manifests
+            </button>
+            <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#model-modal">
+              Register model
+            </button>
+          </div>
+        </div>
+        <div id="models-body"></div>
+      </section>
+
+      <!-- Deployments -->
+      <section id="page-deployments" class="page d-none">
+        <h4 class="mb-3">Deployments</h4>
+        <div class="row g-3 mb-4" id="deployment-stats"></div>
+        <div id="deployments-body"></div>
+      </section>
+
+      <!-- Agents -->
+      <section id="page-agents" class="page d-none">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Agents</h4>
+          <button class="btn btn-sm btn-primary ms-auto" data-bs-toggle="modal"
+                  data-bs-target="#agent-modal">Create agent</button>
+        </div>
+        <div id="agents-body"></div>
+      </section>
+
+      <!-- Skills -->
+      <section id="page-skills" class="page d-none">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Skills</h4>
+          <button class="btn btn-sm btn-primary ms-auto" data-bs-toggle="modal"
+                  data-bs-target="#skill-modal">Create skill</button>
+        </div>
+        <div id="skills-body"></div>
+      </section>
+
+      <!-- Tools and MCP -->
+      <section id="page-tools" class="page d-none">
+        <h4 class="mb-3">Tools &amp; MCP</h4>
+
+        <div class="d-flex align-items-center mb-2">
+          <h6 class="mb-0 text-secondary">MCP servers</h6>
+          <div class="ms-auto d-flex gap-2">
+            <button id="mcp-import" class="btn btn-sm btn-outline-secondary"
+                    title="Register every server declared in mcp/manifests/">
+              Import manifests
+            </button>
+            <button class="btn btn-sm btn-primary"
+                    data-bs-toggle="modal" data-bs-target="#mcp-modal">Register server</button>
+          </div>
+        </div>
+        <div id="mcp-body" class="mb-4"></div>
+
+        <h6 class="mb-2 text-secondary">Tools</h6>
+        <div id="tools-body"></div>
+      </section>
+
+      <!-- Approvals -->
+      <section id="page-approvals" class="page d-none">
+        <h4 class="mb-3">Pending approvals</h4>
+        <div id="approvals-body"></div>
+      </section>
+
+      <!-- Endpoints and keys -->
+      <section id="page-endpoints" class="page d-none">
+        <h4 class="mb-3">Endpoints &amp; Keys</h4>
+
+        <div class="d-flex align-items-center mb-2">
+          <h6 class="mb-0 text-secondary">Model aliases</h6>
+          <button class="btn btn-sm btn-outline-secondary ms-auto"
+                  data-bs-toggle="modal" data-bs-target="#alias-modal">New alias</button>
+        </div>
+        <div id="aliases-body" class="mb-4"></div>
+
+        <div class="d-flex align-items-center mb-2">
+          <h6 class="mb-0 text-secondary">API keys</h6>
+          <button class="btn btn-sm btn-outline-secondary ms-auto"
+                  data-bs-toggle="modal" data-bs-target="#key-modal">New key</button>
+        </div>
+        <div id="keys-body" class="mb-4"></div>
+
+        <h6 class="mb-2 text-secondary">Usage — last 24 hours</h6>
+        <div id="usage-body"></div>
+      </section>
+
+      <!-- Users and roles (M03) -->
+      <!-- M29 §49. Runtime configuration, not .env: choosing which speech models the
+           assistant uses is a decision a site revisits, and requiring a restart means it
+           gets set once, wrongly, and left. -->
+      <section id="page-voice" class="page d-none">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Voice Assistant</h4>
+          <span class="badge text-bg-secondary ms-2">M29</span>
+          <span id="voice-state-badge" class="ms-auto"></span>
+        </div>
+
+        <div id="voice-readiness" class="mb-3"></div>
+
+        <form id="voice-config-form" class="card p-3 mb-4">
+          <div class="row g-3">
+            <div class="col-12">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="vc-enabled">
+                <label class="form-check-label" for="vc-enabled">
+                  <span class="fw-medium">Enabled</span>
+                  <span class="small text-secondary ms-2">
+                    Off until a speech-to-text and a text-to-speech model are serving.
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="vc-stt">Speech-to-text model</label>
+              <select class="form-select" id="vc-stt"></select>
+              <div class="form-text small">
+                An alias, not a URL. Repointing the alias swaps the engine for every
+                session without touching this page.
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="vc-tts">Text-to-speech model</label>
+              <select class="form-select" id="vc-tts"></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="vc-agent">Default agent</label>
+              <select class="form-select" id="vc-agent"></select>
+              <div class="form-text small">Which agent answers when a caller names none.</div>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="vc-language">Default language</label>
+              <select class="form-select" id="vc-language">
+                <!-- Detection is the default: forcing the wrong language does not fail,
+                     it returns fluent nonsense (§25). -->
+                <option value="auto">Auto detect (recommended)</option>
+                <option value="en">English</option>
+                <option value="ar">العربية</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="vc-voice">Default voice</label>
+              <input class="form-control" id="vc-voice" placeholder="leave blank for the engine default">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="vc-rate">Sample rate (Hz)</label>
+              <input class="form-control" id="vc-rate" type="number" min="8000" max="48000" step="1000">
+              <div class="form-text small">16000 unless your engine wants otherwise.</div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="vc-max">Max session (seconds)</label>
+              <input class="form-control" id="vc-max" type="number" min="30" max="7200">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="vc-idle">Idle timeout (seconds)</label>
+              <input class="form-control" id="vc-idle" type="number" min="10" max="3600">
+            </div>
+
+            <div class="col-md-6">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="vc-interrupt">
+                <label class="form-check-label" for="vc-interrupt">
+                  Allow interruption (barge-in)
+                  <span class="d-block small text-secondary">
+                    An assistant that cannot be interrupted is one people stop using.
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="vc-vad">
+                <label class="form-check-label" for="vc-vad">
+                  Voice activity detection
+                  <span class="d-block small text-secondary">
+                    Stops silence being sent to the transcriber.
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <hr class="my-4">
+
+          <!-- Retention is the part of this page with consequences for people who are
+               not in the room. It is separated and warned about for that reason (§29). -->
+          <h6 class="mb-2">Recording and retention</h6>
+          <div class="alert alert-warning small py-2">
+            Raw audio is biometric data, and a microphone records whoever is nearby — not
+            only the person who pressed the button. Both switches are off by default;
+            turning them on is a policy decision, not a convenience.
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="vc-store-audio">
+                <label class="form-check-label" for="vc-store-audio">Store audio</label>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="vc-store-transcripts">
+                <label class="form-check-label" for="vc-store-transcripts">Store transcripts</label>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="vc-retention">Retention (days)</label>
+              <input class="form-control" id="vc-retention" type="number" min="1" max="3650">
+            </div>
+          </div>
+
+          <div id="voice-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+          <div class="mt-3">
+            <button type="submit" class="btn btn-primary">Save configuration</button>
+            <span class="small text-secondary ms-2">
+              Applies to the next session — no restart needed.
+            </span>
+          </div>
+        </form>
+
+        <h6 class="mb-2">Speech model endpoints</h6>
+        <p class="small text-secondary">
+          Everything here runs on your own hardware. Register a locally hosted engine as a
+          model with an <span class="mono">external</span> runtime and its URL; the
+          platform will refuse a public cloud address.
+        </p>
+        <div id="voice-endpoints"></div>
+      </section>
+
+      <section id="page-users" class="page d-none">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Users &amp; Roles</h4>
+          <button class="btn btn-sm btn-primary ms-auto" data-bs-toggle="modal"
+                  data-bs-target="#user-modal">Create user</button>
+        </div>
+        <div id="users-body" class="mb-4"></div>
+
+        <h6 class="mb-2 text-secondary">Roles</h6>
+        <p class="small text-secondary">
+          The eight roles of §M03, and what each one can do. Permissions are checked
+          server-side on every request — hiding a control here never grants or denies
+          anything on its own.
+        </p>
+        <div id="roles-body"></div>
+      </section>
+
+      <!-- Audit log (M24) -->
+      <section id="page-audit" class="page d-none">
+        <h4 class="mb-1">Audit Log</h4>
+        <p class="small text-secondary mb-3">
+          Read-only. Nothing in this platform edits or deletes an audit record — a log an
+          administrator can rewrite answers no question worth asking.
+        </p>
+
+        <div class="card card-body py-2 mb-3">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="form-label small text-secondary mb-1" for="aud-action">Action</label>
+              <select class="form-select form-select-sm" id="aud-action"></select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-secondary mb-1" for="aud-result">Result</label>
+              <select class="form-select form-select-sm" id="aud-result">
+                <option value="">Any</option>
+                <option value="SUCCESS">SUCCESS</option>
+                <option value="FAILURE">FAILURE</option>
+                <option value="DENIED">DENIED</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary mb-1" for="aud-resource">Resource type</label>
+              <input class="form-control form-control-sm mono" id="aud-resource"
+                     placeholder="user, model, tool…">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-secondary mb-1" for="aud-since">Since</label>
+              <input class="form-control form-control-sm" id="aud-since" type="date">
+            </div>
+            <div class="col-md-2">
+              <button id="aud-apply" class="btn btn-sm btn-outline-secondary">Apply</button>
+              <button id="aud-clear" class="btn btn-sm btn-link">Clear</button>
+            </div>
+          </div>
+        </div>
+        <div id="audit-body"></div>
+      </section>
+
+      <!-- Knowledge bases (M15) -->
+      <section id="page-knowledge" class="page d-none">
+        <div class="d-flex align-items-center mb-3">
+          <h4 class="mb-0">Knowledge Bases</h4>
+          <button class="btn btn-sm btn-primary ms-auto" data-bs-toggle="modal"
+                  data-bs-target="#kb-modal">Create knowledge base</button>
+        </div>
+        <div id="kb-body" class="mb-4"></div>
+
+        <!-- Filled once a base is selected. Documents, upload and the retrieval
+             preview all act on one base, so they stay hidden until there is one. -->
+        <div id="kb-detail"></div>
+      </section>
+
+      <!-- Memory (M16) -->
+      <section id="page-memory" class="page d-none">
+        <h4 class="mb-1">Memory</h4>
+        <p class="small text-secondary mb-3">
+          What the platform remembers about a person, in the three layers of §M16.
+          Every read here is <strong>scoped</strong>: there is no view of a whole
+          tenant’s memory, because that would show one person’s memories to another.
+        </p>
+
+        <div class="card card-body mb-3 py-2">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="form-label small text-secondary mb-1" for="mem-tenant">Tenant</label>
+              <input class="form-control form-control-sm mono" id="mem-tenant" value="default">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary mb-1" for="mem-user">Subject</label>
+              <input class="form-control form-control-sm mono" id="mem-user"
+                     placeholder="fatima.almansoori@example.ae">
+              <div class="form-text small">The chat identity, as the gateway recorded it.</div>
+            </div>
+            <div class="col-md-3">
+              <button id="mem-load" class="btn btn-sm btn-outline-secondary">Load</button>
+              <button id="mem-forget-all" class="btn btn-sm btn-outline-danger ms-1"
+                      title="Erase everything remembered about this subject">Erase subject</button>
+            </div>
+          </div>
+        </div>
+        <div id="memory-body"></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- Create user modal --------------------------------------------------------->
+<div class="modal fade" id="user-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="user-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Create user</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">
+            A <strong>local</strong> account, with a password held by the platform. People
+            who sign in through a directory get their account created automatically on
+            first sign-in, with roles from their groups.
+          </p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="usr-name">Username</label>
+              <input class="form-control mono" id="usr-name" required pattern="[A-Za-z0-9._-]+"
+                     placeholder="fatima.almansoori">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="usr-email">Email</label>
+              <input class="form-control" id="usr-email" required
+                     placeholder="fatima.almansoori@example.ae">
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="usr-full">Full name</label>
+              <input class="form-control" id="usr-full" placeholder="Fatima Al Mansoori">
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="usr-pass">Password</label>
+              <input class="form-control" id="usr-pass" type="password" required minlength="12">
+              <div class="form-text small">
+                At least 12 characters. Length is what resists guessing; composition rules
+                mostly push people toward predictable substitutions.
+              </div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="usr-roles">Roles</label>
+              <select class="form-select" id="usr-roles" multiple size="8"></select>
+              <div class="form-text small">
+                Ctrl/Cmd-click for several. No role means the account can sign in and do
+                nothing, which is the safe default.
+              </div>
+            </div>
+          </div>
+          <div id="user-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Create knowledge base modal ---------------------------------------------->
+<div class="modal fade" id="kb-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="kb-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Create knowledge base</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">
+            A knowledge base is a set of documents an agent can retrieve from. Creating one
+            also creates its vector collection, so the embedding model must be
+            <strong>deployed and reachable now</strong> — its dimensions are discovered by
+            embedding a probe string, never configured.
+          </p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="kb-name">Name</label>
+              <input class="form-control mono" id="kb-name" placeholder="hr-policies"
+                     required pattern="[a-z0-9][a-z0-9._-]*">
+              <div class="form-text small">Lowercase. Names the vector collection too.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="kb-display">Display name</label>
+              <input class="form-control" id="kb-display" placeholder="HR Policies" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="kb-desc">Description</label>
+              <input class="form-control" id="kb-desc"
+                     placeholder="Leave, expenses and conduct policies.">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="kb-embed">Embedding model</label>
+              <select class="form-select" id="kb-embed" required></select>
+              <div class="form-text small">
+                Fixed for the life of the base: changing it would leave old vectors
+                unsearchable against new queries.
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="kb-tenant">Tenant</label>
+              <input class="form-control mono" id="kb-tenant" value="default" required>
+              <div class="form-text small">Scopes every search against this base.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="kb-chunk">Chunk size</label>
+              <input class="form-control" id="kb-chunk" type="number" value="1200" min="100">
+              <div class="form-text small">Characters per passage.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="kb-overlap">Chunk overlap</label>
+              <input class="form-control" id="kb-overlap" type="number" value="150" min="0">
+              <div class="form-text small">
+                Carried between passages so a sentence split across a boundary is still
+                findable from either side.
+              </div>
+            </div>
+          </div>
+          <div id="kb-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Register node modal ------------------------------------------------------>
+<!-- Role assignment (M03). A dialog rather than a prompt(): the browser's own box
+     cannot show which roles exist, so an operator had to remember the names and type
+     them, and a typo returned a validation error instead of assigning anything.
+     Checkboxes, because a user may hold several roles and permissions are their union. -->
+<div class="modal fade" id="roles-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="roles-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Roles for <span id="roles-user" class="fw-normal"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <!-- Populated from /roles, so the list is whatever the platform actually has
+               rather than a copy in the markup that drifts. -->
+          <div id="roles-options"></div>
+          <div id="roles-note" class="alert alert-warning small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Assign</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+
+<!-- Add a node by name. The operator never types a URL or a token: the platform issues a
+     one-time enrolment token and the install script on the node reports its own address.
+     Modelled on #key-modal, including that the secret is revealed once and in place. -->
+<div class="modal fade" id="add-node-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="add-node-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Add node</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="add-node-name">Node name</label>
+            <input class="form-control" id="add-node-name" placeholder="gpu-node-01" required>
+            <div class="form-text small">
+              The node takes this name and cannot change it. It must match
+              <code>NODE_AGENT_NODE_NAME</code> on that host, which the install script sets
+              for you.
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="add-node-desc">Description</label>
+            <input class="form-control" id="add-node-desc" placeholder="Rack 4, dual A100">
+          </div>
+          <div id="add-node-error" class="alert alert-danger py-2 small d-none"></div>
+
+          <!-- Shown once. Only a hash of the token is stored. -->
+          <div id="add-node-result" class="d-none">
+            <div class="alert alert-success py-2 small mb-2">
+              Copy this now — the token is shown once and expires in
+              <span id="add-node-expiry">an hour</span>.
+            </div>
+            <p class="small text-secondary mb-1">
+              Run this on the node:
+            </p>
+            <pre class="border rounded p-2 mb-2 small user-select-all text-break"><code id="add-node-command"></code></pre>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="add-node-copy">
+              Copy command
+            </button>
+            <p class="small text-secondary mt-2 mb-0">
+              If the first line fetches from this control plane, that is the node installer
+              and agent image — about 288&nbsp;MB, over this site's own network. The platform
+              still never pulls from the Internet (Rule&nbsp;4): those bytes arrived on the
+              offline bundle and this only moves them the last hop. Where no bundle was
+              staged here, the command starts at <code>install-node.sh</code> and you copy
+              the bundle to the host yourself. The node appears below once it has enrolled
+              and this control plane has confirmed it by reaching it back.
+            </p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+          <button type="submit" class="btn btn-primary" id="add-node-submit">Generate command</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="register-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="register-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Register an existing agent</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary mb-3">
+            For an agent that is already installed and running, or a node that cannot reach
+            this control plane. Otherwise use <strong>Add node</strong>, which generates an
+            install command and needs neither a URL nor a token typed by hand.
+          </p>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="reg-name">Name</label>
+            <input class="form-control" id="reg-name" placeholder="gpu-node-01" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="reg-url">Agent URL</label>
+            <input class="form-control" id="reg-url" placeholder="https://gpu-node-01:9100" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="reg-token">Agent token</label>
+            <input class="form-control" id="reg-token" type="password" required>
+            <div class="form-text small">
+              The value of <code>NODE_AGENT_AUTH_TOKEN</code> on that host.
+            </div>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="reg-verify" checked>
+            <label class="form-check-label small" for="reg-verify">Verify TLS certificate</label>
+            <div class="form-text small">
+              Uncheck only when the agent is reachable solely over a private container
+              network. A remote node must use HTTPS (§M04).
+            </div>
+          </div>
+          <div id="register-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Register</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- GPU detail modal --------------------------------------------------------->
+<div class="modal fade" id="gpu-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="gpu-modal-title">GPU</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <canvas id="gpu-chart" height="120"></canvas>
+        <div id="gpu-modal-meta" class="small text-secondary mt-3"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Register model modal ----------------------------------------------------->
+<div class="modal fade" id="model-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="model-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Register model</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="mdl-name">Name</label>
+              <input class="form-control" id="mdl-name" placeholder="qwen3-30b" required
+                     pattern="[A-Za-z0-9._-]+">
+              <div class="form-text small">The identifier callers pass as <code>model</code>.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="mdl-display">Display name</label>
+              <input class="form-control" id="mdl-display" placeholder="Qwen3 30B Instruct" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="mdl-type">Type</label>
+              <select class="form-select" id="mdl-type">
+                <option>LLM</option><option>EMBEDDING</option><option>RERANKER</option>
+                <option>ASR</option><option>TTS</option><option>OCR</option>
+                <option>VISION</option><option>MULTIMODAL</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="mdl-runtime">Runtime</label>
+              <select class="form-select" id="mdl-runtime">
+                <option value="vllm">vllm</option>
+                <option value="sglang">sglang</option>
+                <option value="tgi">tgi</option>
+                <option value="llamacpp">llamacpp</option>
+                <!-- The platform points at these rather than starting them, so they need
+                     a URL and no GPU reservation. This is how a real Whisper or Fish
+                     Speech deployment is registered (M26, M29). -->
+                <option value="external">external (already running — give a URL)</option>
+                <option value="ollama">ollama (already running — give a URL)</option>
+                <option value="mock">mock (no GPU)</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="mdl-context">Context length</label>
+              <input class="form-control" id="mdl-context" type="number" min="1" placeholder="32768">
+            </div>
+            <!-- Shown only for a runtime the platform does not start. An endpoint on a
+                 managed runtime would be ignored, and a managed path on an external one
+                 is meaningless — so the form shows exactly one of the two. -->
+            <div class="col-12 d-none" id="mdl-endpoint-row">
+              <label class="form-label small text-secondary" for="mdl-endpoint">Endpoint URL</label>
+              <input class="form-control mono" id="mdl-endpoint"
+                     placeholder="http://whisper.internal:8000">
+              <div class="form-text small">
+                Where the model is <em>already</em> served. The platform will not start,
+                stop or schedule it, and reserves no GPUs for it — it only sends requests.
+                Must be reachable from inside the platform network, not from your browser.
+              </div>
+            </div>
+            <div class="col-12" id="mdl-path-row">
+              <label class="form-label small text-secondary" for="mdl-path">Storage path</label>
+              <input class="form-control mono" id="mdl-path" placeholder="/data/models/qwen3-30b">
+              <div class="form-text small">
+                An absolute path on the node — never a URL. The platform does not download
+                models; they arrive with the offline bundle (Rule 4).
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="mdl-mem">GPU memory required (MiB)</label>
+              <input class="form-control" id="mdl-mem" type="number" min="0" placeholder="81920">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="mdl-gpus">Minimum GPUs</label>
+              <input class="form-control" id="mdl-gpus" type="number" min="0" max="16" value="1">
+            </div>
+          </div>
+          <div id="model-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Register</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Deploy modal ------------------------------------------------------------->
+<div class="modal fade" id="deploy-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="deploy-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Deploy <span id="deploy-model-name" class="mono"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">
+            Placement is automatic unless you pin it. Loading a large model takes minutes;
+            the deployment appears immediately and progresses through its lifecycle.
+          </p>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="dep-node">Node</label>
+            <select class="form-select" id="dep-node">
+              <option value="">Let the scheduler choose</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="dep-gpus">GPU indices</label>
+            <input class="form-control" id="dep-gpus" placeholder="e.g. 0,1 — blank to auto-select">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="dep-util">GPU memory utilisation</label>
+            <input class="form-control" id="dep-util" type="number" step="0.05" min="0.05" max="1"
+                   placeholder="0.90">
+          </div>
+          <div id="deploy-error" class="alert alert-danger py-2 small d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Deploy</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Alias modal -------------------------------------------------------------->
+<div class="modal fade" id="alias-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="alias-form">
+        <div class="modal-header">
+          <h5 class="modal-title">New alias</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">
+            A stable public name. Repointing it swaps the model behind every developer
+            application without any of them changing a line.
+          </p>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="alias-name">Alias</label>
+            <input class="form-control" id="alias-name" placeholder="enterprise-chat" required
+                   pattern="[A-Za-z0-9._-]+">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="alias-model">Model</label>
+            <select class="form-select" id="alias-model" required></select>
+          </div>
+          <div id="alias-error" class="alert alert-danger py-2 small d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- API key modal ------------------------------------------------------------>
+<div class="modal fade" id="key-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="key-form">
+        <div class="modal-header">
+          <h5 class="modal-title">New API key</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="key-client">Client</label>
+            <div class="input-group">
+              <select class="form-select" id="key-client"></select>
+              <button class="btn btn-outline-secondary" type="button" id="new-client">New…</button>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="key-name">Key name</label>
+            <input class="form-control" id="key-name" placeholder="production" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="key-rate">Requests per minute</label>
+            <input class="form-control" id="key-rate" type="number" min="1" max="100000" value="120">
+          </div>
+          <div id="key-error" class="alert alert-danger py-2 small d-none"></div>
+
+          <!-- Shown once, after creation. Only a hash is stored. -->
+          <div id="key-result" class="d-none">
+            <div class="alert alert-success py-2 small mb-2">
+              Copy this key now. Only its hash is stored, so it cannot be shown again.
+            </div>
+            <code id="key-secret" class="d-block p-2 border rounded user-select-all text-break"></code>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+          <button type="submit" class="btn btn-primary" id="key-submit">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Create agent modal ------------------------------------------------------>
+<div class="modal fade" id="agent-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="agent-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Create agent</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="agt-slug">Slug</label>
+              <input class="form-control" id="agt-slug" placeholder="it-support" required
+                     pattern="[a-z0-9][a-z0-9-]*[a-z0-9]">
+              <div class="form-text small">
+                Also the name in chat: <code>agent:it-support</code>. Renaming breaks
+                every caller, so choose it once.
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="agt-name">Display name</label>
+              <input class="form-control" id="agt-name" placeholder="IT Support Agent" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="agt-desc">Description</label>
+              <input class="form-control" id="agt-desc"
+                     placeholder="Answers account and access questions.">
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="agt-prompt">System prompt</label>
+              <textarea class="form-control" id="agt-prompt" rows="4" required
+                        placeholder="You are an IT support assistant for internal staff."></textarea>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="agt-model">Model</label>
+              <select class="form-select" id="agt-model" required></select>
+              <div class="form-text small">An alias, so it can be repointed later.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="agt-temp">Temperature</label>
+              <input class="form-control" id="agt-temp" type="number" step="0.1" min="0" max="2"
+                     value="0.2">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="agt-iter">Max iterations</label>
+              <input class="form-control" id="agt-iter" type="number" min="1" max="100" value="10">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="agt-tools">Tools</label>
+              <select class="form-select" id="agt-tools" multiple size="6"></select>
+              <div class="form-text small">
+                Nothing selected means no tools at all — agents get none by default.
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="agt-skills">Skills</label>
+              <select class="form-select" id="agt-skills" multiple size="6"></select>
+            </div>
+          </div>
+          <div id="agent-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Create skill modal ------------------------------------------------------>
+<div class="modal fade" id="skill-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="skill-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Create skill</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">
+            A skill is reusable instructions, shared across agents. Its text is
+            <strong>appended</strong> to an agent's own prompt, never replacing it — so an
+            agent's boundaries always win over a shared skill.
+          </p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="skl-name">Name</label>
+              <input class="form-control" id="skl-name" placeholder="active-directory-support"
+                     required pattern="[A-Za-z0-9._-]+">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="skl-display">Display name</label>
+              <input class="form-control" id="skl-display" placeholder="AD Support" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="skl-desc">Description</label>
+              <input class="form-control" id="skl-desc" required
+                     placeholder="Diagnose Active Directory account problems.">
+              <div class="form-text small">For operators choosing a skill, not for the model.</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="skl-instructions">Instructions</label>
+              <textarea class="form-control" id="skl-instructions" rows="6" required
+                        placeholder="When asked why an account cannot sign in, look the user up in the directory first, then explain the lockout state in plain language."></textarea>
+              <div class="form-text small">
+                This text the model reads. Write it as instructions to the agent.
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="skl-tools">Required tools</label>
+              <input class="form-control mono" id="skl-tools"
+                     placeholder="ldap.ldap_lookup_user, ldap.ldap_list_group_members">
+              <div class="form-text small">
+                Tool <em>names</em>, comma separated. Advisory: the skill still only works
+                if the agent is separately granted them.
+              </div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary" for="skl-version">Version</label>
+              <input class="form-control" id="skl-version" value="1.0">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary" for="skl-perm">Permission</label>
+              <input class="form-control mono" id="skl-perm" placeholder="optional">
+            </div>
+          </div>
+          <div id="skill-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Register MCP server modal ------------------------------------------------>
+<div class="modal fade" id="mcp-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="mcp-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Register MCP server</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="mcp-name">Name</label>
+            <input class="form-control" id="mcp-name" placeholder="ldap" required
+                   pattern="[a-z0-9][a-z0-9._-]*">
+            <div class="form-text small">Prefixes its tools: <code>ldap.lookup_user</code>.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="mcp-endpoint">Endpoint</label>
+            <input class="form-control mono" id="mcp-endpoint"
+                   placeholder="http://ldap-mcp:8000/" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="mcp-desc">Description</label>
+            <input class="form-control" id="mcp-desc" placeholder="Corporate directory.">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="mcp-cred">Bearer token</label>
+            <input class="form-control" id="mcp-cred" type="password">
+            <div class="form-text small">Stored encrypted. Leave blank if the server is open
+              on the internal network.</div>
+          </div>
+          <div class="alert alert-secondary py-2 small mb-0">
+            Registering does not grant anything. Discovered tools arrive <strong>disabled</strong>
+            at <strong>HIGH</strong> risk until you review them.
+          </div>
+          <div id="mcp-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Register</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Run trace modal ---------------------------------------------------------->
+<div class="modal fade" id="run-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="run-modal-title">Run</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="run-modal-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Deployment logs modal ---------------------------------------------------->
+<div class="modal fade" id="logs-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="logs-modal-title">Logs</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <pre id="logs-body" class="logs"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/bootstrap.bundle.min.js"></script>
+<script src="/vendor/chart.umd.min.js"></script>
+<script src="/js/admin.js"></script>
+</body>
+</html>

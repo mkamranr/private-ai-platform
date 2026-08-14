@@ -1,0 +1,17 @@
+# Synthetic text-to-speech. Returns a well-formed but silent WAV.
+#
+# Silence rather than arbitrary bytes on purpose: a caller that mishandles binary
+# responses, or a proxy that corrupts them, fails immediately instead of producing a file
+# that downloads and then will not play.
+name: mock-tts
+display_name: Mock Text-to-Speech (synthetic)
+type: TTS
+runtime: mock
+storage_path: /data/models/mock-tts
+required_gpu_memory_mib: 0
+min_gpu_count: 0
+description: >
+  Synthetic speech synthesis for GPU-free development (§M26). Produces real RIFF/WAVE
+  audio containing silence, with an English and an Arabic voice listed.
+aliases:
+  - enterprise-speak

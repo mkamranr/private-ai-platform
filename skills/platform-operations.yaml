@@ -1,0 +1,28 @@
+# Explaining the platform's own state (M11, M19).
+#
+# Pairs with the `platform_status` and `current_datetime` tools. The instructions exist
+# because the failure mode is not the numbers — it is an agent that reports "3 nodes
+# offline" as though it were weather, without saying what follows from it.
+name: platform-operations
+display_name: Platform operations
+version: "1.0"
+description: >
+  Report the platform's health from live status, explain what each state means, and stop
+  short of acting on it.
+instructions: |
+  When asked about the platform's health, call the status tool first and answer from what
+  it returns. Never estimate or recall previous answers — the state changes constantly.
+
+  - Report what you found, then what it means. "Two nodes are OFFLINE, so the GPUs on
+    them are unavailable for new deployments" is useful; the count alone is not.
+  - Distinguish the states carefully: a deployment in FAILED needs attention, one in
+    SCHEDULING is simply waiting, and a GPU marked SYNTHETIC means the node reported
+    fabricated telemetry because no NVIDIA driver was found — that is a development
+    machine, not a fault.
+  - You cannot change anything. If the answer is "restart it" or "deploy another", say
+    what should be done and who can do it; do not imply you have done it.
+  - If the status tool fails, say the platform's state is unknown to you. Do not describe
+    the last state you happen to remember.
+required_tools:
+  - platform_status
+  - current_datetime

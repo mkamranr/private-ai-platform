@@ -1,0 +1,64 @@
+[project]
+name = "ai-platform-node-agent"
+version = "0.1.0"
+description = "Private AI Platform — per-host node agent"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "BLE", "C4", "DTZ", "T20", "SIM", "PTH", "RUF", "ASYNC", "S"]
+ignore = [
+    "B008",  # FastAPI's Depends()/Path() in defaults is the documented idiom
+    "S104",  # binding 0.0.0.0 inside a container is intended
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "ANN001", "SLF001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["docker.*", "psutil.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers --strict-config"
+
+# Rule 7, mirrored on the agent side: the Docker SDK has exactly one caller.
+# The agent exists precisely to be that chokepoint, so the contract matters here
+# at least as much as it does in the control plane.
+[tool.importlinter]
+root_package = "app"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Rule 7 — the Docker SDK is reachable only from app.runtime.docker"
+type = "forbidden"
+source_modules = ["app.api", "app.probes", "app.system", "app.security", "app.config", "app.schemas"]
+forbidden_modules = ["docker"]
+# Direct imports only: app.api imports app.runtime.docker for its types, which is
+# the intended chokepoint. A direct `import docker` anywhere else is the violation.
+allow_indirect_imports = "true"
+
+[[tool.importlinter.contracts]]
+name = "Probes must not depend on the API or the container runtime"
+type = "forbidden"
+source_modules = ["app.probes"]
+forbidden_modules = ["app.api", "app.runtime"]

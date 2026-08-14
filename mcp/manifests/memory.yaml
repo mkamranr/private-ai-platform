@@ -1,0 +1,16 @@
+# The official knowledge-graph memory server. A useful second example because it is
+# stateful: it persists to a file, so it needs a writable volume, unlike the filesystem
+# server above.
+name: memory
+display_name: Knowledge Graph Memory
+description: >
+  A persistent knowledge graph an agent can add entities and relations to, and query later.
+  Distinct from the platform's own memory (M16), which is scoped per tenant and user — this
+  one is shared by everything that can reach it.
+npm: "@modelcontextprotocol/server-memory@2025.8.4"
+command: >
+  node /vendor/lib/node_modules/@modelcontextprotocol/server-memory/dist/index.js
+environment:
+  MEMORY_FILE_PATH: /data/mcp-memory/graph.json
+volumes:
+  - "${PLATFORM_DATA_ROOT:-./data}/mcp-memory:/data/mcp-memory"

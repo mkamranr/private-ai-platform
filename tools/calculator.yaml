@@ -1,0 +1,33 @@
+# Arithmetic, done rather than predicted (M12).
+#
+# The most common tool in any agent toolkit, and for a reason a demo never shows: a model
+# gets small sums right often enough to look reliable and long ones wrong often enough to
+# matter, with nothing in the output distinguishing the two. Handing arithmetic to Python
+# removes the whole class of error.
+#
+# INTERNAL and pure — no session, no network. The expression is parsed to an AST and
+# walked against a whitelist; `eval` on a string a model composed is arbitrary code
+# execution reachable by anyone who can talk to an agent.
+name: calculator
+display_name: Calculator
+type: INTERNAL
+description: >
+  Evaluate an arithmetic expression exactly. Use this for every calculation, including
+  ones that look simple — percentages, totals, ratios, unit sums. Supports + - * / // %
+  ** with brackets, and the functions abs, round, min, max, sum, sqrt, floor, ceil, log,
+  log10, log2, exp, plus the constants pi and e. Do not compute in your head and then
+  call this to confirm; call it and use what it returns.
+required_permission: tool.execute
+risk_level: LOW
+parameters_schema:
+  type: object
+  properties:
+    expression:
+      type: string
+      description: >
+        The expression, for example "1250 * 0.15" or "sqrt(2) * 100" or
+        "(4820 - 3915) / 3915 * 100". Numbers and operators only — no variables, no
+        assignments, no function definitions.
+  required: [expression]
+config:
+  handler: calculator

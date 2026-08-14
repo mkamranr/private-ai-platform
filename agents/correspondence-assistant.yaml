@@ -1,0 +1,30 @@
+# Bilingual drafting (M10).
+#
+# No tools and no knowledge base: it works on the text in front of it. That makes it the
+# safest agent here to give broadly — it can reach nothing, so the worst outcome is a
+# draft somebody chooses not to send.
+slug: correspondence-assistant
+display_name: Correspondence Assistant
+description: >
+  Drafts, replies to and translates official correspondence in Arabic and English.
+model: enterprise-chat
+# Higher than the others on purpose: this one writes prose, and 0.1 produces stilted,
+# repetitive drafting. It is not quoting documents, so the risk that low temperature
+# guards against does not apply.
+temperature: 0.4
+max_iterations: 3
+system_prompt: |
+  You draft official correspondence for an organisation that works in Arabic and English.
+
+  Produce the document asked for and nothing else — no preamble explaining what you are
+  about to write, no offer to revise it. If the request is ambiguous in a way that would
+  change the text materially (who it is addressed to, how formal, what outcome it should
+  ask for), ask one question rather than guessing across several drafts.
+
+  You do not know facts about the organisation beyond what is in the request. Never
+  invent a policy reference, a name, a date or an amount to fill a gap; leave a clearly
+  marked placeholder such as [DATE] instead.
+skills:
+  - arabic-english-correspondence
+tools: []
+memory_enabled: false

@@ -1,0 +1,135 @@
+# Private AI Platform — non-secret configuration defaults (M02)
+#
+# This file is COMMITTED. It must never contain a password, token, key or any
+# other secret; those come from the environment or .env (§25, Rule 5).
+#
+# Overridden by .env, which is overridden by environment variables. Nested keys
+# map to env vars with a double underscore: database.host <- DATABASE__HOST.
+#
+# An air-gapped site can mount a replacement and point PLATFORM_CONFIG_FILE at it
+# instead of rebuilding the image.
+
+platform:
+  name: Private AI Platform
+  environment: development
+  debug: false
+  version: "0.1.0"
+  api_prefix: /api/v1
+  public_base_url: http://localhost:8080
+
+database:
+  host: postgres
+  port: 5432
+  name: ai_platform
+  user: ai_platform
+  pool_size: 10
+  max_overflow: 20
+  pool_pre_ping: true
+  echo: false
+  connect_timeout_seconds: 10
+
+redis:
+  host: valkey
+  port: 6379
+  db: 0
+  socket_timeout_seconds: 5.0
+
+qdrant:
+  host: qdrant
+  port: 6333
+  grpc_port: 6334
+  prefer_grpc: false
+  timeout_seconds: 10.0
+
+minio:
+  endpoint: minio:9000
+  access_key: ai-platform
+  secure: false
+  bucket: ai-platform
+  region: us-east-1
+
+auth:
+  jwt_algorithm: HS256
+  access_token_ttl_seconds: 3600
+  refresh_token_ttl_seconds: 604800
+  jwt_issuer: private-ai-platform
+  bootstrap_admin_username: admin
+  bootstrap_admin_email: admin@ai-platform.local
+
+security:
+  argon2_time_cost: 3
+  argon2_memory_cost_kib: 65536
+  argon2_parallelism: 4
+  trusted_proxy_cidrs: []
+
+docker:
+  socket: unix:///var/run/docker.sock
+  network: ai-platform
+  managed_label: ai-platform.managed
+  api_timeout_seconds: 60
+
+# M05. `fake` is the default because the reference development machine has no
+# NVIDIA GPU; a real node sets GPU__PROBE=nvidia_smi or dcgm.
+gpu:
+  probe: fake
+  poll_interval_seconds: 15
+  metric_retention_days: 30
+  fake_device_count: 4
+  fake_device_model: NVIDIA A100-SXM4-80GB
+  fake_memory_total_mib: 81920
+
+models:
+  root_path: /data/models
+  manifest_path: /app/models/manifests
+  default_runtime: mock
+  # A 30B model can take minutes to load; the deployment worker polls rather than
+  # blocking a request (§M08).
+  deployment_health_timeout_seconds: 900
+  deployment_health_interval_seconds: 5
+
+mcp:
+  health_interval_seconds: 60
+  call_timeout_seconds: 30
+  discovery_timeout_seconds: 15
+
+agents:
+  max_iterations: 25
+  run_timeout_seconds: 600
+  default_temperature: 0.2
+  approval_required_risk_levels:
+    - HIGH
+    - CRITICAL
+  # §M12 lists COMMAND and PYTHON tool types; §25 forbids unrestricted shell
+  # execution by agents. They stay disabled until a hardened executor exists.
+  disabled_tool_types:
+    - COMMAND
+    - PYTHON
+
+logging:
+  level: INFO
+  json: true
+  redact_headers:
+    - authorization
+    - cookie
+    - x-api-key
+    - proxy-authorization
+
+airgap:
+  enforced: true
+  bundle_path: /opt/ai-platform/offline
+  allowed_egress_hosts: []
+
+# M22. Exactly one control-plane instance may run these: the Phase 1 jobs have no
+# distributed lock, so a second replica would poll every node twice and double every
+# metric row.
+workers:
+  enabled: true
+  container_sync_interval_seconds: 60
+
+health:
+  required:
+    - postgres
+    - redis
+    - qdrant
+    - minio
+  probe_timeout_seconds: 5.0

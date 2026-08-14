@@ -1,0 +1,69 @@
+# Loki (M19, Phase 7) — single-binary, filesystem storage.
+#
+# Monolithic mode with local disk, not the microservices deployment with object storage.
+# A site running this has one host, no S3 and nobody on staff who wants to operate a
+# distributed log store; the scaled topology would add five components to debug in
+# exchange for throughput this platform will not produce.
+#
+# Storage is under ${PLATFORM_DATA_ROOT} like every other stateful service (§15), so it
+# is backed up and wiped by the same mechanisms.
+
+auth_enabled: false  # single tenant; the network is the boundary, as with /metrics
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # Quiet by default: Loki at info logs a line per push, which on a busy platform means
+  # the log store's own logs become the largest stream it holds.
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Air-gapped hosts drift. A strict future-timestamp limit silently drops logs from a
+  # node whose clock is ahead, and the symptom is one machine mysteriously absent from
+  # Grafana.
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  creation_grace_period: 10m
+  # A runaway container must not be able to fill the disk with its own log lines and
+  # take the platform down with it.
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  max_streams_per_user: 5000
+  # 30 days. Long enough to investigate an incident somebody reported late, short enough
+  # that a local disk survives it.
+  retention_period: 720h
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  # Without this, retention_period above is documentation: nothing deletes anything and
+  # the disk fills at a rate nobody predicted.
+  retention_enabled: true
+
+# Reporting home about usage is the exact thing an air-gapped platform must not do
+# (Rule 4). Off explicitly rather than relying on the network being unreachable, so the
+# intent survives someone testing this on a connected machine.
+analytics:
+  reporting_enabled: false

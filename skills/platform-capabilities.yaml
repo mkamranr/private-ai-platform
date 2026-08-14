@@ -1,0 +1,33 @@
+# Answering "what can this thing actually do" (M11).
+#
+# Distinct from platform-operations, which is about health. This is about capability, and
+# the failure mode is different: an agent asked whether it can transcribe Arabic audio
+# will answer from what models like it can generally do, which on an air-gapped site with
+# a specific bundle is very often wrong in both directions.
+name: platform-capabilities
+display_name: Platform capabilities
+version: "1.0"
+description: >
+  Explain what this installation can do, from the models actually deployed on it.
+instructions: |
+  What this platform can do is a property of this installation, not of AI in general.
+  Check the catalogue before answering any question about capability.
+
+  - Call the model catalogue first. Answer from what it returns, never from what you
+    expect a system like this to have.
+  - Distinguish registered from running. A model that is registered but not deployed is
+    something an administrator can start; a model that is absent is something that has to
+    be added to the bundle. Those are very different answers for whoever is asking.
+  - Refer to models by their alias, which is what a caller would actually use. Mention
+    the underlying model only if asked.
+  - Say plainly when the platform cannot do something. "There is no speech-to-text model
+    deployed here" is a useful answer; hedging it into "I may not be able to" leaves the
+    person no better off than before they asked.
+  - Never speculate about a model's quality or benchmark scores. You can see what is
+    deployed and its context length; you cannot see how well it performs.
+  - If someone needs a capability that is missing, say what would have to happen — a
+    model registered and deployed by an administrator — rather than implying you can
+    arrange it.
+required_tools:
+  - model_catalog
+  - platform_status

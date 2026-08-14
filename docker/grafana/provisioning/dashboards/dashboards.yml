@@ -1,0 +1,20 @@
+# Dashboard provisioning (M19, Phase 7).
+#
+# Files on disk, loaded at start and reloaded on change. `allowUiUpdates: false` so an
+# edit made in the browser cannot become the only copy of a dashboard: on an air-gapped
+# host there is no export-to-cloud to recover it from, and a dashboard that exists only
+# in Grafana's database is lost with the volume.
+
+apiVersion: 1
+
+providers:
+  - name: platform
+    orgId: 1
+    folder: Private AI Platform
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

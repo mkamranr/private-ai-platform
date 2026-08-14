@@ -1,0 +1,30 @@
+# Speech-to-text for a real deployment (§M26, Phase 9).
+#
+# **faster-whisper, not openai-whisper.** Same weights, CTranslate2 runtime: roughly 4x
+# the throughput at a quarter of the VRAM, which is the difference between one GPU
+# serving transcription alongside a model and needing its own.
+#
+# **large-v3 rather than a distilled model, because of Arabic.** The distil-* checkpoints
+# are English-only; `large-v3-turbo` is multilingual and much faster but measurably weaker
+# on Arabic dialects. A platform whose users dictate in both languages should not pay for
+# its speed in the language it is least able to check.
+#
+# The server must expose OpenAI's audio API (`POST /v1/audio/transcriptions`) — several
+# wrappers do. The platform talks to that surface and nothing else, so any of them works.
+name: faster-whisper-large-v3
+display_name: Whisper large-v3 (faster-whisper)
+type: ASR
+runtime: external
+version: "3"
+architecture: whisper
+storage_path: /data/models/faster-whisper-large-v3
+# ~3 GB in float16, plus room for a batch of audio. 8 GB leaves the headroom a long
+# recording needs without reserving a whole card.
+required_gpu_memory_mib: 8192
+min_gpu_count: 1
+description: >
+  Multilingual transcription, Arabic and English (§M26). Detects the language per
+  request rather than being told: forcing the wrong one does not fail, it returns
+  confident nonsense.
+aliases:
+  - enterprise-transcribe

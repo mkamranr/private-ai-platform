@@ -1,0 +1,26 @@
+# OCR for a real deployment (§M28, Phase 9).
+#
+# PaddleOCR ships Arabic and English recognition models and runs acceptably on CPU, which
+# matters more here than raw speed: OCR runs in the ingestion queue, not in a request, so
+# it can take its time — and a site with one GPU should spend it on inference.
+#
+# **This one needs a thin server**, because OCR has no OpenAI-style standard. The platform
+# posts a multipart image to `POST /ocr` and expects `{"blocks": [{"text", "page",
+# "confidence"}], "language"}` — the shape mock-vllm implements and docs/rag.md documents.
+# That server is a site deliverable, not a platform one; the contract is small on purpose.
+name: paddleocr-v4
+display_name: PaddleOCR v4 (Arabic + English)
+type: OCR
+runtime: external
+version: "4"
+architecture: paddleocr
+storage_path: /data/models/paddleocr-v4
+# Runs on CPU. Declaring 0 means the scheduler reserves no GPU for it, so it never
+# competes with inference for a card.
+required_gpu_memory_mib: 0
+min_gpu_count: 0
+description: >
+  Text recognition in scanned pages and images, Arabic and English (§M28). Feeds the
+  §M15 ingestion pipeline: a scan becomes chunks that cite their page, like any PDF.
+aliases:
+  - enterprise-ocr

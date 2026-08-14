@@ -1,0 +1,17 @@
+# The official sequential-thinking server. The third reference server that works on an
+# air-gapped host: it is a scratchpad, not an integration, so unlike `fetch` it needs
+# nothing beyond the process itself at runtime.
+#
+# Stateless and volume-free — the thought chain lives in the server's memory for the
+# duration of a run, which is why there is no volumes: block here as there is for memory.
+#
+# Opt-in like the others: `make mcp-vendor` on the build machine, then `make mcp`.
+name: sequential-thinking
+display_name: Sequential Thinking
+description: >
+  A scratchpad for working a hard problem through in explicit steps, where a thought can
+  be revised or branched rather than only appended. Useful when the shape of the problem
+  is not clear at the start; unhelpful, and slow, on questions that are.
+npm: "@modelcontextprotocol/server-sequential-thinking@2026.7.4"
+command: >
+  node /vendor/lib/node_modules/@modelcontextprotocol/server-sequential-thinking/dist/index.js

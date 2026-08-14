@@ -1,0 +1,23 @@
+# Synthetic speech and OCR models, so the Phase 9 pipeline is exercisable without GPU
+# hardware — the same trick mock-chat and mock-embed play for chat and retrieval.
+#
+# All three are served by the one `mock-vllm` container, because they are three routes on
+# one OpenAI-compatible server rather than three engines. On a real deployment they are
+# three separate containers with three manifests; the platform cannot tell the difference,
+# which is the point.
+#
+# MUST NOT be used on a real deployment. The transcripts and recognised text are generated
+# and say so — acting on them would be acting on nothing.
+name: mock-asr
+display_name: Mock Speech-to-Text (synthetic)
+type: ASR
+runtime: mock
+storage_path: /data/models/mock-asr
+required_gpu_memory_mib: 0
+min_gpu_count: 0
+description: >
+  Synthetic transcription for GPU-free development (§M26). Echoes the uploaded file's
+  name and size, and carries the detected language through, so the audio path is
+  testable end to end without speech.
+aliases:
+  - enterprise-transcribe

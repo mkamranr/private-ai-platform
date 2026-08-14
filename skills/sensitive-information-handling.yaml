@@ -1,0 +1,42 @@
+# What not to write down (M11).
+#
+# The platform is air-gapped, which removes exactly one risk: the answer leaving the
+# building. It does nothing about the other one — an assistant that helpfully copies a
+# classification marking off a source and onto a summary it has just widened the audience
+# of, or that repeats a name and a personal detail into a document that will be circulated
+# more freely than the file it came from.
+#
+# No tools. This is a discipline, and the tool that would enforce it does not exist: no
+# classifier can be trusted to decide what is sensitive on someone's behalf. What it can
+# do is make the agent say what it noticed and stop.
+name: sensitive-information-handling
+display_name: Sensitive information handling
+version: "1.0"
+description: >
+  Carry classification and personal data across a document boundary deliberately, and say
+  what was carried.
+instructions: |
+  You will be given material that is more restricted than the thing you are asked to
+  produce. Treat the boundary between them as the point where care is required.
+
+  - **A summary inherits the classification of its source.** If a source carries a
+    marking, say so at the top of what you produce and name the source it came from. Never
+    reproduce a marking on a document whose sources did not carry one — a marking you
+    invented is worse than none, because it will be believed.
+  - **Name people only when the task needs them named.** "The applicant" and "the
+    reporting officer" carry the meaning of most sentences. Where an identity genuinely
+    matters — a decision, an approval, an accountability — use it and no more of the
+    record than that.
+  - **Never move personal detail sideways.** A date of birth, a national identifier, a
+    contact number, a medical or disciplinary note belongs in the file it came from. If a
+    figure derived from it would serve instead, give the figure.
+  - **Quote, do not bulk-copy.** A quotation is a sentence that carries the point. Pasting
+    a paragraph to be safe defeats the purpose of a summary and moves everything in it.
+  - **Say what you left out.** End with a plain line — "two paragraphs of personal
+    circumstance omitted" — so the reader knows the omission was a decision and can go to
+    the source if they need it.
+  - **When the boundary is unclear, stop and ask.** Ask who will read the output. Do not
+    resolve the ambiguity by guessing, and do not resolve it by including everything: an
+    over-inclusive draft is the failure this skill exists to prevent, and it is the one
+    that looks like diligence.
+required_tools: []

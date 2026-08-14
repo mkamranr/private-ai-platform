@@ -1,0 +1,172 @@
+{
+  "uid": "ai-platform-overview",
+  "title": "Platform overview",
+  "description": "The control plane, the gateway and the fleet. Built from ai_platform_* metrics only, so it works on a site with no exporters beyond the platform itself.",
+  "tags": ["ai-platform"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Control plane",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [{"expr": "up{job=\"ai-platform-backend\"}", "refId": "A"}],
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Version",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [{"expr": "ai_platform_build_info", "legendFormat": "{{version}}", "refId": "A"}],
+      "options": {"colorMode": "none", "graphMode": "none", "textMode": "name"}
+    },
+    {
+      "type": "stat",
+      "title": "Nodes online",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [{"expr": "sum(ai_platform_nodes{status=\"ONLINE\"})", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "Deployments serving",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [{"expr": "sum(ai_platform_deployments{state=\"SERVING\"})", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "5xx rate",
+      "description": "A rate, not a count. Fifty errors means nothing without knowing whether it was out of sixty requests or sixty thousand.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(ai_platform_http_requests_total{status=\"5xx\"}[5m])) / clamp_min(sum(rate(ai_platform_http_requests_total[5m])), 0.001)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 0.01},
+              {"color": "red", "value": 0.05}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "area"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by route",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (route) (rate(ai_platform_http_requests_total[5m]))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Request latency (p50 / p95 / p99)",
+      "description": "Quantiles over the histogram, not an average. An average hides the tail, and the tail is what users report.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(ai_platform_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(ai_platform_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(ai_platform_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens per second by model",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (model, kind) (rate(ai_platform_gateway_tokens_total[5m]))",
+          "legendFormat": "{{model}} {{kind}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Time to first token (p95)",
+      "description": "What a chat user experiences as responsiveness. Total duration is dominated by answer length and says little about it.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(ai_platform_gateway_time_to_first_token_seconds_bucket[5m])))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU utilisation",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {
+          "expr": "ai_platform_gpu_utilisation_percent",
+          "legendFormat": "{{node}} gpu{{gpu_index}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Agent runs and tool calls",
+      "description": "Denied tool calls are plotted alongside the rest on purpose: a refusal rate that moves is the signal that an agent's grants or a caller's permissions changed under it.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {"expr": "sum by (state) (rate(ai_platform_agent_runs_total[15m]))", "legendFormat": "runs {{state}}", "refId": "A"},
+        {"expr": "sum by (outcome) (rate(ai_platform_tool_calls_total[15m]))", "legendFormat": "tools {{outcome}}", "refId": "B"}
+      ]
+    },
+    {
+      "type": "logs",
+      "title": "Warnings and errors",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 28},
+      "datasource": {"type": "loki", "uid": "platform-loki"},
+      "targets": [
+        {
+          "expr": "{platform=\"ai-platform\"} | level =~ \"warning|error|critical\"",
+          "refId": "A"
+        }
+      ],
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"}
+    }
+  ]
+}

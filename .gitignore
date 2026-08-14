@@ -1,0 +1,45 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+
+# Persistent service data (§15). Never commit platform state.
+/data/
+/backend/data/
+
+# Air-gap bundle output — gigabytes of images and wheels, built by scripts/build_bundle.py.
+# The scripts in /offline/ are source and ARE committed; only what they consume is not.
+/bundle/
+/.p8/
+
+# Model weights
+/models/**/*.safetensors
+/models/**/*.bin
+/models/**/*.gguf
+/models/**/*.pt
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+.venv/
+venv/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+backups/
+

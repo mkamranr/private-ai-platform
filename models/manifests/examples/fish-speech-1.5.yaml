@@ -1,0 +1,23 @@
+# Text-to-speech for a real deployment (§M26, Phase 9).
+#
+# Fish Speech is multilingual including Arabic, and runs in well under the memory a
+# chat model needs — the two can share a card.
+#
+# **Voices are a property of the deployment, not of this manifest.** The platform asks
+# the engine what it can speak with (`GET /v1/audio/voices`), because the answer depends
+# on which reference audio the site loaded, and a list hard-coded here goes stale the
+# first time somebody adds one.
+name: fish-speech-1.5
+display_name: Fish Speech 1.5
+type: TTS
+runtime: external
+version: "1.5"
+architecture: fish-speech
+storage_path: /data/models/fish-speech-1.5
+required_gpu_memory_mib: 6144
+min_gpu_count: 1
+description: >
+  Multilingual speech synthesis, Arabic and English (§M26). Exposed through OpenAI's
+  `POST /v1/audio/speech`, so the stock client works unmodified.
+aliases:
+  - enterprise-speak

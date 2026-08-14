@@ -1,0 +1,24 @@
+# Is anything wrong right now (M12, M19).
+#
+# The same aggregates `/metrics` publishes — nodes by status, GPUs by health, deployments
+# by state — so an operations agent can answer "is the platform healthy" without an
+# operator opening Grafana.
+#
+# Read-only, and that is a boundary rather than a limitation: a tool that could stop a
+# deployment would be a privileged action taken on a model's say-so. Those belong behind
+# REST with a HIGH risk level, where the §10 pipeline suspends them for human approval.
+name: platform_status
+display_name: Platform status
+type: INTERNAL
+description: >
+  Return the platform's current fleet state: how many nodes are online or offline, GPU
+  health, and model deployments by state. Use it to answer questions about whether the
+  platform is healthy, what is deployed, or why a model might be unavailable.
+required_permission: monitoring.view
+risk_level: LOW
+parameters_schema:
+  type: object
+  properties: {}
+  required: []
+config:
+  handler: platform_status

@@ -1,0 +1,170 @@
+<!-- Developer portal (M20).
+
+     Deliberately a different thing from the admin console, not a page inside it. The
+     audience is someone who wants to call the API, not run the platform: they need a
+     key, the base URL, and a snippet that works. Everything an operator needs is
+     absent, because showing it would imply they can act on it.
+
+     Served from /developer/ on the same origin as the API, so its fetches are
+     same-origin and no CORS configuration has to exist for the portal to work. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Developer Portal — Private AI Platform</title>
+<link rel="stylesheet" href="/developer/vendor/bootstrap.min.css">
+<link rel="stylesheet" href="/developer/css/admin.css">
+<style>
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre.snippet {
+    background: var(--bs-tertiary-bg); border: 1px solid var(--bs-border-color);
+    border-radius: .375rem; padding: .75rem 1rem; font-size: .8125rem;
+    overflow-x: auto; margin-bottom: 0;
+  }
+  .key-reveal {
+    background: #fff3cd; border: 1px solid #ffc107; border-radius: .375rem; padding: 1rem;
+  }
+  [data-bs-theme="dark"] .key-reveal { background: #332701; border-color: #997404; }
+</style>
+
+<div class="container py-4" style="max-width: 60rem">
+
+  <!-- Sign in -->
+  <div id="login-view">
+    <h3 class="mb-1">Developer Portal</h3>
+    <p class="text-secondary small mb-4">
+      Sign in with your platform account to create and manage your own API keys.
+    </p>
+    <form id="login-form" class="card card-body" style="max-width: 26rem">
+      <div class="mb-3">
+        <label class="form-label small text-secondary" for="username">Username</label>
+        <input class="form-control" id="username" autocomplete="username" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label small text-secondary" for="password">Password</label>
+        <input class="form-control" id="password" type="password"
+               autocomplete="current-password" required>
+      </div>
+      <div id="login-error" class="alert alert-danger py-2 small d-none"></div>
+      <button class="btn btn-primary" type="submit">Sign in</button>
+      <div id="sso-slot" class="mt-2"></div>
+    </form>
+  </div>
+
+  <!-- Portal -->
+  <div id="app-view" class="d-none">
+    <div class="d-flex align-items-center mb-4">
+      <div>
+        <h3 class="mb-0">Developer Portal</h3>
+        <div class="small text-secondary" id="who"></div>
+      </div>
+      <button id="logout" class="btn btn-sm btn-outline-secondary ms-auto">Sign out</button>
+    </div>
+
+    <div id="alert-slot"></div>
+
+    <!-- Endpoint -->
+    <h5 class="mb-2">Your endpoint</h5>
+    <p class="small text-secondary">
+      OpenAI-compatible. Point any OpenAI SDK at this base URL — the platform speaks the
+      same protocol, so you change two lines and nothing else.
+    </p>
+    <div class="card card-body py-2 mb-4">
+      <div class="d-flex align-items-center gap-2">
+        <span class="mono" id="base-url"></span>
+        <button class="btn btn-sm btn-outline-secondary ms-auto" id="copy-base">Copy</button>
+      </div>
+    </div>
+
+    <!-- Models -->
+    <h5 class="mb-2">Models you can call</h5>
+    <p class="small text-secondary">
+      These are <strong>aliases</strong>. An operator can repoint one at a different model
+      without you changing anything — which is why you should use the alias, not whatever
+      it happens to resolve to today.
+    </p>
+    <div id="models-body" class="mb-4"></div>
+
+    <!-- Keys -->
+    <div class="d-flex align-items-center mb-2">
+      <h5 class="mb-0">Your API keys</h5>
+      <button class="btn btn-sm btn-primary ms-auto" id="new-key">Create key</button>
+    </div>
+    <div id="key-reveal" class="key-reveal mb-3 d-none"></div>
+    <div id="keys-body" class="mb-4"></div>
+
+    <!-- Snippets -->
+    <h5 class="mb-2">Calling it</h5>
+    <ul class="nav nav-tabs" role="tablist">
+      <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab"
+          data-bs-target="#tab-python" type="button">Python</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab"
+          data-bs-target="#tab-curl" type="button">curl</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab"
+          data-bs-target="#tab-js" type="button">JavaScript</button></li>
+    </ul>
+    <div class="tab-content border border-top-0 rounded-bottom p-3 mb-4">
+      <div class="tab-pane fade show active" id="tab-python"><pre class="snippet" id="snip-python"></pre></div>
+      <div class="tab-pane fade" id="tab-curl"><pre class="snippet" id="snip-curl"></pre></div>
+      <div class="tab-pane fade" id="tab-js"><pre class="snippet" id="snip-js"></pre></div>
+    </div>
+
+    <!-- Usage -->
+    <h5 class="mb-2">Your usage — last 24 hours</h5>
+    <div id="usage-body" class="mb-4"></div>
+
+    <div class="alert alert-secondary small">
+      <strong>Keys are shown once.</strong> The platform stores only a hash and the visible
+      prefix, so it genuinely cannot show a key again — that is what stops a database read
+      from being equivalent to holding every developer's credential. Lost a key? Rotate it.
+    </div>
+  </div>
+</div>
+
+<!-- Create key modal -->
+<div class="modal fade" id="key-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="key-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Create API key</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="k-name">What is it for?</label>
+            <input class="form-control" id="k-name" required placeholder="Leave request bot — staging">
+            <div class="form-text small">
+              Names the key in the list and in every audit record it causes. "test" ages badly.
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="k-scopes">Scopes</label>
+            <select class="form-select" id="k-scopes" multiple size="4"></select>
+            <div class="form-text small">
+              Nothing selected means <strong>unrestricted</strong>. Selecting only what you
+              need limits the damage if the key leaks.
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-6">
+              <label class="form-label small text-secondary" for="k-expiry">Expires in (days)</label>
+              <input class="form-control" id="k-expiry" type="number" min="1" max="3650" value="365">
+              <div class="form-text small">Blank for never — rarely the right answer.</div>
+            </div>
+            <div class="col-6">
+              <label class="form-label small text-secondary" for="k-rate">Requests / minute</label>
+              <input class="form-control" id="k-rate" type="number" min="1" value="120">
+            </div>
+          </div>
+          <div id="key-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script src="/developer/vendor/bootstrap.bundle.min.js"></script>
+<script src="/developer/js/portal.js"></script>

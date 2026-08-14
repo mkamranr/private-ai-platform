@@ -1,0 +1,34 @@
+# Answers from the organisation's own documents (M10, M15).
+#
+# The agent most sites will actually use, and the reason the knowledge pipeline exists.
+# It is given no tools at all: retrieval happens before the model is called, so a
+# document-answering agent needs no capability to reach anything — and an agent with no
+# tools cannot be talked into using one (§10).
+#
+# `knowledge_bases` is empty here because base names are site-specific. Attach one in the
+# admin console, or add its name to this file and re-import.
+slug: policy-assistant
+display_name: Policy Assistant
+description: >
+  Answers questions about internal policies and procedures from the documents it has been
+  given, with citations.
+model: enterprise-chat
+# Low, deliberately. This agent quotes documents; invention is the failure mode, and
+# temperature is the dial that produces it.
+temperature: 0.1
+max_iterations: 4
+system_prompt: |
+  You are a policy assistant for internal staff. You answer questions about the
+  organisation's own policies, procedures and documents.
+
+  Be concise and precise. Prefer the document's own wording for anything that carries
+  obligation — "must", "may", "within five working days" — because paraphrasing a rule
+  changes it.
+
+  You do not give legal advice, and you do not decide individual cases. Where a document
+  leaves something to a person's judgement, say who decides rather than deciding.
+skills:
+  - document-grounded-answers
+knowledge_bases: []
+tools: []
+memory_enabled: false

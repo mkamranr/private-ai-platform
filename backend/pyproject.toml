@@ -1,0 +1,164 @@
+[project]
+name = "private-ai-platform-backend"
+version = "0.1.0"
+description = "Private AI Platform — control plane backend"
+requires-python = ">=3.12"
+# Runtime dependencies are declared in requirements.in / requirements.txt so the
+# air-gap bundle (M23) has a single authoritative, hash-pinned source. Do not
+# duplicate them here.
+
+# ---------------------------------------------------------------------------
+# ruff — lint + format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",      # pycodestyle
+    "F",           # pyflakes
+    "I",           # isort
+    "N",           # pep8-naming
+    "UP",          # pyupgrade
+    "B",           # flake8-bugbear
+    "C4",          # comprehensions
+    "DTZ",         # flake8-datetimez — naive datetimes are a real bug source here
+    "T20",         # flake8-print — no print() in application code
+    "SIM",         # flake8-simplify
+    "PTH",         # use pathlib
+    "RUF",
+    "ASYNC",       # flake8-async
+    "S",           # bandit
+]
+ignore = [
+    "B008",        # FastAPI's Depends() in defaults is the documented idiom
+    "S104",        # binding 0.0.0.0 inside a container is intended
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use asserts and hard-coded credentials.
+"tests/**" = ["S101", "S105", "S106"]
+# This module reuses another test module's fixtures, which arrive as parameters of the same
+# name — indistinguishable from a redefinition to a linter. Scoped to the one file rather
+# than to `tests/**`, so genuine shadowing anywhere else still fails the build.
+"tests/api/test_node_enrollment.py" = ["F811"]
+# The seed/CLI scripts print to stdout by design.
+"app/utils/cli.py" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_optional = true
+strict_equality = true
+show_error_codes = true
+exclude = ["alembic/versions/"]
+
+[[tool.mypy.overrides]]
+# Third-party packages without bundled type information.
+module = ["qdrant_client.*", "minio.*", "apscheduler.*", "asyncpg.*", "ldap3.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# --timeout is not available (no pytest-timeout), so lock contention is bounded by
+# the database instead: tests/conftest.py sets a lock_timeout on every connection so
+# a deadlock fails fast with a clear error rather than hanging the suite.
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "integration: requires live Postgres/Valkey/Qdrant/MinIO (run inside Compose)",
+]
+filterwarnings = [
+    "error::DeprecationWarning",
+    # ldap3 2.9.1 reads pyasn1's pre-0.5 `tagMap`/`typeMap` names, which now warn. The
+    # import still succeeds and LDAP authentication works; this is scoped to that one
+    # module so any *other* deprecation still fails the build.
+    #
+    # The alternative was pinning pyasn1 back to 0.4.x, which would ship a 2019 ASN.1
+    # parser into an air-gapped defence deployment to work around a quiet upstream — a
+    # worse trade. Revisit if ldap3 ever moves; see docs/security.md.
+    "ignore:tagMap is deprecated:DeprecationWarning:ldap3.utils.asn1",
+    "ignore:typeMap is deprecated:DeprecationWarning:ldap3.utils.asn1",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/workers/__init__.py"]
+
+# ---------------------------------------------------------------------------
+# import-linter — enforces the spec's layering rules as a build gate.
+# Rules 6 and 7 (§18) are architectural invariants; code review is not a
+# reliable way to hold them across 28 modules, so they are machine-checked.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "app"
+# Required because some contracts forbid *external* packages (the Docker SDK,
+# qdrant_client). Without this, import-linter only graphs first-party imports and
+# cannot see a vendor SDK creeping into the wrong layer — which is precisely what
+# Rule 7 exists to prevent.
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Rule 6 — layered architecture (API -> Service -> Repository -> DB)"
+type = "layers"
+layers = [
+    "app.api",
+    "app.services",
+    "app.repositories",
+    "app.models",
+    "app.db",
+]
+
+[[tool.importlinter.contracts]]
+name = "Rule 6 — routers must never touch repositories or the database directly"
+type = "forbidden"
+source_modules = ["app.api.v1"]
+forbidden_modules = ["app.repositories", "app.db"]
+# Direct imports only. Routers legitimately reach these *through* app.api.deps,
+# which is the dependency-injection seam: deps.py builds services from a session
+# and hands routers the service. Flagging that transitive path would forbid the
+# intended design; what must stay forbidden is a router importing a repository or
+# a session itself.
+allow_indirect_imports = "true"
+
+[[tool.importlinter.contracts]]
+name = "Rule 7 — the Docker SDK is reachable only from DockerService"
+type = "forbidden"
+source_modules = ["app.api", "app.services", "app.repositories", "app.models", "app.db"]
+forbidden_modules = ["docker"]
+# Phase 1 adds app.services.docker_service as the single permitted caller. The
+# exemption is declared now so the contract is complete before the temptation
+# exists; until that module lands the ignore matches nothing, which is why
+# unmatched alerting is off rather than the default "error".
+ignore_imports = ["app.services.docker_service -> docker"]
+unmatched_ignore_imports_alerting = "none"
+
+[[tool.importlinter.contracts]]
+name = "Interfaces must not depend on their implementations"
+type = "forbidden"
+source_modules = ["app.core.interfaces"]
+forbidden_modules = [
+    "app.services",
+    "app.repositories",
+    "app.api",
+    "docker",
+    "qdrant_client",
+]

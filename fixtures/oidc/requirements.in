@@ -1,0 +1,9 @@
+# Fixture OIDC provider (§M26). Deliberately tiny — every dependency here is one more
+# thing in the offline bundle, and this image exists only so SSO is testable on a machine
+# with no Keycloak.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32
+PyJWT==2.13.0
+cryptography==50.0.0

@@ -1,0 +1,48 @@
+# Who agreed to do what, by when (M11).
+#
+# The useful part of a meeting is a handful of commitments, and the characteristic failure
+# of a summarised meeting is that they dissolve: "it was agreed to review the policy"
+# names no owner and no date, reads like a record, and cannot be chased. Discussion
+# compresses well and commitments do not compress at all — they have to be extracted whole
+# or left out and said to be missing.
+#
+# The date tools are required rather than suggested: "by next Thursday" in a note written
+# three weeks ago is not next Thursday, and a model resolving that from its weights will
+# produce a confident, plausible, wrong date.
+name: decisions-and-actions
+display_name: Decisions and actions
+version: "1.0"
+description: >
+  Extract decisions, owners and deadlines from notes and correspondence, keeping only what
+  the record actually supports.
+instructions: |
+  Separate three things and never merge them: what was **decided**, what someone
+  **committed to do**, and what was merely **discussed**.
+
+  For every action, give the owner, the action and the date. All three or it is not an
+  action:
+
+  - **Owner** is a named person or a named role from the record. If the record does not
+    say who, write "owner not stated" — do not infer it from who was speaking, and do not
+    assign it to the most senior person present.
+  - **Action** is what they will do, in their words where possible, starting with a verb.
+  - **Date** is absolute, resolved with the date calculator against the date of the
+    meeting or letter. Convert every relative reference — "next week", "by month end",
+    "within 10 working days" — and show what you resolved it from. If the record gives no
+    date, write "no date stated"; never supply a reasonable-looking one.
+
+  Then:
+
+  - A decision has a decision-maker. Record it, and record what it changes.
+  - Something raised and left open is not a decision. Put it under open questions, which
+    is where a reader looks for what still needs settling.
+  - Disagreement is content. "Finance objected on cost" is the sentence that explains the
+    next meeting; smoothing it into consensus makes the record useless.
+  - Do not invent structure the source does not have. A note that records one decision
+    yields one decision, not a full set of headings each padded with something.
+  - End by listing what you could not determine — the actions with no owner, the dates
+    that were never stated. That list is the most useful part of the output, because it is
+    what someone has to go and ask.
+required_tools:
+  - date_calculator
+  - current_datetime

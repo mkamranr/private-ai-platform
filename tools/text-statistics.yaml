@@ -1,0 +1,32 @@
+# How long the text actually is (M12).
+#
+# A length limit is the one instruction a language model cannot check its own work
+# against. Asked for "under 200 words" it produces something of roughly the right shape
+# and then reports a count it estimated rather than measured — and the documents with hard
+# limits, official letters and one-page briefs, are exactly where roughly is not enough.
+#
+# INTERNAL and pure: no session, no network, nothing to authorise beyond tool.execute.
+# Bounded input, like the calculator, because the text arrives from a model that was
+# steered by whatever the user pasted in front of it.
+name: text_statistics
+display_name: Text statistics
+type: INTERNAL
+description: >
+  Count the characters, words and sentences in a piece of text, and estimate its reading
+  time. Use this whenever a length matters — a word limit, a page limit, "keep it short"
+  — and use it on the draft you are about to send, not on the source. Counts Arabic and
+  English alike. Do not estimate a length and call this to confirm; call it and report
+  what it returns.
+required_permission: tool.execute
+risk_level: LOW
+parameters_schema:
+  type: object
+  properties:
+    text:
+      type: string
+      description: >
+        The text to measure. Pass the draft exactly as it will be sent, including
+        headings and bullets — measuring a paraphrase of it measures nothing.
+  required: [text]
+config:
+  handler: text_statistics

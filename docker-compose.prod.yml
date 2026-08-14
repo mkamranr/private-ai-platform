@@ -1,0 +1,61 @@
+# Production / air-gapped overrides.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile core up -d
+#
+# Assumes images are already present locally, loaded from the offline bundle by
+# scripts/install.sh. `pull_policy: never` makes that assumption explicit: on a host
+# with no registry access, an accidental pull attempt fails with a confusing
+# network error rather than a clear "image missing" one (M23, Rule 4).
+#
+# Set in .env on the target:
+#   PLATFORM_DATA_ROOT=/data/ai-platform
+#   PLATFORM__ENVIRONMENT=production
+#   LOGGING__JSON=true
+
+services:
+  postgres:
+    pull_policy: never
+    # Tuning belongs on the real host, where total RAM is known. These are
+    # conservative defaults, not recommendations for a 512GB GPU server.
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=3GB
+      - -c
+      - work_mem=16MB
+      # Log slow statements — the only practical way to diagnose query performance
+      # on a host where nobody can attach a profiler.
+      - -c
+      - log_min_duration_statement=1000
+
+  valkey:
+    pull_policy: never
+
+  qdrant:
+    pull_policy: never
+
+  minio:
+    pull_policy: never
+
+  backend:
+    pull_policy: never
+    environment:
+      PLATFORM__ENVIRONMENT: production
+      PLATFORM__DEBUG: "false"
+      LOGGING__JSON: "true"
+      LOGGING__LEVEL: INFO
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    # The control plane is stateless, so more than one replica is safe. Kept at 1
+    # here because Phase 0 has no leader election for the APScheduler workers that
+    # arrive in Phase 1 — running two would double every scheduled job.
+    #   replicas: 1
+
+  nginx:
+    pull_policy: never
