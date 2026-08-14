@@ -1,0 +1,26 @@
+# Private AI Platform — backend development/test dependencies (Phase 0)
+#
+# Installed only in the `dev` stage of backend/Dockerfile. Production images must
+# not contain these. Pinned for the same reason as requirements.in.
+
+-c requirements.txt
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+
+ruff==0.16.2
+mypy==2.3.0
+import-linter==2.13
+
+# Compiles requirements.in -> requirements.txt with hashes
+pip-tools==7.6.0
+
+# Type stubs for packages that ship no inline annotations.
+types-PyYAML==6.0.12.20260724
+
+# The stock OpenAI client, used by the Phase 2 gate to prove the gateway is genuinely
+# compatible — not merely compatible with our own idea of the protocol. It caught a real
+# bug curl could not: the SDK closes a stream as soon as it reads [DONE], which raised
+# GeneratorExit in the usage recorder and lost every streamed request's token count.
+openai==2.53.0

@@ -1,0 +1,658 @@
+# Private AI Platform — base composition (M27)
+#
+# AIR-GAP RULES:
+#   * Every image is pinned by DIGEST. A floating tag makes the offline bundle
+#     unreproducible and lets images drift between the build machine and target.
+#   * Nothing pulls at runtime; scripts/install.sh loads images from the bundle.
+#
+# NETWORK (§14): one dedicated bridge. Only nginx publishes a host port — the
+# database, cache, vector store and object store are reachable solely from inside
+# the network, so a misconfigured host firewall cannot expose Postgres.
+#
+# PROFILES (§M27): core | models | agents | rag | monitoring | speech | development
+#   docker compose --profile core up -d
+#   docker compose --profile core --profile monitoring up -d
+#
+# VOLUMES (§15): bind mounts under ${PLATFORM_DATA_ROOT}, default ./data.
+# NOT /data/ai-platform — Docker Desktop does not share /data by default, so that
+# path fails on a developer machine. Production sets an absolute path in .env.
+
+name: ai-platform
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+networks:
+  ai-platform:
+    name: ${DOCKER__NETWORK:-ai-platform}
+    driver: bridge
+
+services:
+  # -------------------------------------------------------------------------
+  # Data services
+  # -------------------------------------------------------------------------
+  postgres:
+    # postgres:17-alpine
+    image: postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    profiles: [core]
+    <<: [*restart, *logging]
+    environment:
+      POSTGRES_DB: ${DATABASE__NAME:-ai_platform}
+      POSTGRES_USER: ${DATABASE__USER:-ai_platform}
+      POSTGRES_PASSWORD: ${DATABASE__PASSWORD:?DATABASE__PASSWORD must be set in .env}
+      # Deterministic collation regardless of the host's locale, so index ordering
+      # is identical on the developer machine and the air-gapped target.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - ${PLATFORM_DATA_ROOT:-./data}/postgres:/var/lib/postgresql/data
+    networks: [ai-platform]
+    healthcheck:
+      # -h 127.0.0.1 forces a TCP check; without it pg_isready succeeds on the
+      # unix socket while the server is still refusing network connections.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${DATABASE__USER:-ai_platform} -d ${DATABASE__NAME:-ai_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  valkey:
+    # valkey/valkey:8-alpine — BSD-licensed Redis fork. The spec permits either
+    # ("Redis / Valkey"); Valkey avoids the RSALv2/SSPL terms, which is the safer
+    # position for an on-premises government deployment. redis-py is unchanged.
+    image: valkey/valkey@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
+    profiles: [core]
+    <<: [*restart, *logging]
+    command:
+      - valkey-server
+      - --save
+      - "60"
+      - "1"
+      - --appendonly
+      - "no"
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - ${PLATFORM_DATA_ROOT:-./data}/valkey:/data
+    networks: [ai-platform]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  qdrant:
+    # qdrant/qdrant:v1.19.0 — matches the pinned qdrant-client 1.19.0
+    image: qdrant/qdrant@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc
+    profiles: [core]
+    <<: [*restart, *logging]
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__TELEMETRY_DISABLED: "true" # air-gapped: no outbound calls (Rule 4)
+    volumes:
+      - ${PLATFORM_DATA_ROOT:-./data}/qdrant:/qdrant/storage
+    networks: [ai-platform]
+    healthcheck:
+      # The image ships neither curl nor wget; bash's /dev/tcp proves the port
+      # is accepting connections.
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  minio:
+    # minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    profiles: [core]
+    <<: [*restart, *logging]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO__ACCESS_KEY:-ai-platform}
+      MINIO_ROOT_PASSWORD: ${MINIO__SECRET_KEY:?MINIO__SECRET_KEY must be set in .env}
+      MINIO_UPDATE: "off" # no update checks on an air-gapped host
+      MINIO_BROWSER_REDIRECT: "off"
+    volumes:
+      - ${PLATFORM_DATA_ROOT:-./data}/minio:/data
+    networks: [ai-platform]
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # -------------------------------------------------------------------------
+  # Control plane
+  # -------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    image: ai-platform/backend:${PLATFORM_VERSION:-0.1.0}
+    profiles: [core]
+    <<: [*restart, *logging]
+    env_file: [.env]
+    environment:
+      # Container DNS names always win over whatever .env holds, so a developer's
+      # localhost overrides cannot leak into the containerised stack.
+      DATABASE__HOST: postgres
+      REDIS__HOST: valkey
+      QDRANT__HOST: qdrant
+      MINIO__ENDPOINT: minio:9000
+      # Observability toggles, declared here so the shell can override what .env says
+      # (an `environment:` entry beats `env_file`, a bare shell variable does not).
+      # That is what lets `TRACING__ENABLED=true docker compose up -d backend` turn
+      # tracing on for one run — the Phase 7 gate does exactly this — without editing
+      # and then having to restore an operator's .env.
+      TRACING__ENABLED: ${TRACING__ENABLED:-false}
+      LANGFUSE__ENABLED: ${LANGFUSE__ENABLED:-false}
+    # Lets the control plane reach a runtime running on the Docker host — an Ollama the
+    # operator already had, typically (M07). Docker Desktop provides this name on macOS
+    # and Windows; on Linux it has to be mapped, and without it MODELS__OLLAMA_ENDPOINT's
+    # default fails to resolve with an error that says nothing about why.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Declarative catalogues, read-only. Mounted rather than baked into the image: the
+      # backend's build context is ./backend, and an air-gapped bundle unpacks the tree and
+      # mounts it anyway. Without these, `import-manifests` finds nothing on a real install
+      # and reports success — the worst kind of failure.
+      - ./models/manifests:/app/models/manifests:ro
+      - ./mcp/manifests:/app/mcp/manifests:ro
+      # What a joining GPU node needs to install itself (M04), staged here by install.sh
+      # and served to the node by the enrolment flow. Read-only and a single directory:
+      # the control plane serves these four files and can reach nothing else on the host.
+      # Absent on a development checkout, which the endpoint reports as "not staged"
+      # rather than failing — see EnrollmentSettings.node_bundle_path.
+      - ${PLATFORM_DATA_ROOT:-./data}/node-bundle:/data/node-bundle:ro
+      # The weights, at the path MODELS__ROOT_PATH already names. `import-from-disk` scans
+      # and hashes a model's files *in this container*, so without this the backend cannot
+      # see the very directory the setting points at, and a real model imports as
+      # UNAVAILABLE — "not a directory on this host" — for a directory that is there.
+      # Nothing noticed because the `mock` runtime skips the filesystem by design, and mock
+      # is the default. Read-only: the platform catalogues weights, it never writes them
+      # (they arrive on physical media, Rule 4).
+      - ${PLATFORM_DATA_ROOT:-./data}/models:/data/models:ro
+      # Agent, skill and tool definitions (M10-M12), same arrangement.
+      - ./tools:/app/tools:ro
+      - ./skills:/app/skills:ro
+      - ./agents:/app/agents:ro
+    networks: [ai-platform]
+    # No `ports:` — reachable only through nginx (§14).
+    depends_on:
+      postgres: {condition: service_healthy}
+      valkey: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+      minio: {condition: service_healthy}
+
+  # -------------------------------------------------------------------------
+  # Node agent (M04) — one per managed host
+  # -------------------------------------------------------------------------
+  # In production this runs directly on each GPU host, not in the control plane's
+  # Compose file. It is here so a single-host deployment (and this development
+  # machine) has a node to manage.
+  node-agent:
+    build:
+      context: ./node-agent
+      target: runtime
+    image: ai-platform/node-agent:${PLATFORM_VERSION:-0.1.0}
+    profiles: [core]
+    <<: [*restart, *logging]
+    environment:
+      NODE_AGENT_NODE_NAME: ${NODE_AGENT_NODE_NAME:-local}
+      NODE_AGENT_AUTH_TOKEN: ${NODE_AGENT_AUTH_TOKEN:?NODE_AGENT_AUTH_TOKEN must be set in .env}
+      # `auto` picks DCGM, then nvidia-smi, then the synthetic probe. On a host with
+      # no NVIDIA driver that lands on `fake`, which is what lets the whole platform
+      # be developed and end-to-end tested without GPUs.
+      NODE_AGENT_GPU_PROBE: ${GPU__PROBE:-auto}
+      NODE_AGENT_FAKE_DEVICE_COUNT: ${GPU__FAKE_DEVICE_COUNT:-4}
+      NODE_AGENT_FAKE_DEVICE_MODEL: ${GPU__FAKE_DEVICE_MODEL:-NVIDIA A100-SXM4-80GB}
+      NODE_AGENT_LOG_JSON: ${LOGGING__JSON:-true}
+      NODE_AGENT_LOG_LEVEL: ${LOGGING__LEVEL:-INFO}
+    volumes:
+      # The reason this service exists. §M04 forbids handing the socket to the control
+      # plane over a network; it is mounted here, on the managed host, and reached only
+      # through the agent's authenticated API.
+      #
+      # read-only is NOT possible: container create/start/stop are writes. The
+      # containment is the agent's bearer token plus its managed-label guard, which
+      # refuses control of anything the platform did not create — including the
+      # Postgres holding the platform's own state.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [ai-platform]
+    # No `ports:` — reachable only from the control plane on the internal network.
+    # A remote node publishes 9100 and MUST enable TLS (§M04).
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:9100/health', timeout=4).status==200 else sys.exit(1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # -------------------------------------------------------------------------
+  # Mock vLLM (§M26) — `development` profile only
+  # -------------------------------------------------------------------------
+  # An OpenAI-compatible inference server with no model, so the model platform and the
+  # gateway are exercisable without a GPU. The deployment worker starts *its own*
+  # containers from this image; this long-running service exists so the image is built
+  # and present locally, since the platform never pulls (Rule 4).
+  #
+  # MUST NOT run on a real GPU host: it returns synthetic text, and a plausible-looking
+  # response from a misconfigured production deployment is worse than an outage.
+  mock-vllm:
+    build:
+      context: ./mock-vllm
+      target: runtime
+    image: ai-platform/mock-vllm:${PLATFORM_VERSION:-0.1.0}
+    profiles: [development]
+    <<: [*restart, *logging]
+    environment:
+      MOCK_VLLM_MODEL: warmup
+      MOCK_VLLM_STARTUP_SECONDS: "0"
+    networks: [ai-platform]
+
+  # A real, small model on CPU — for a machine with no GPU, which is the reference
+  # development machine (§M26 explains why `mock-vllm` exists at all). `mock-vllm` proves
+  # the plumbing but never generates meaning; this generates meaning slowly. Both are
+  # development conveniences, and neither is how a site serves production traffic.
+  #
+  # llama.cpp rather than vLLM on purpose. vLLM's CPU backend targets AVX512, publishes no
+  # prebuilt CPU image, and its official image is CUDA-only — on a 4-core Skylake laptop
+  # that is a long source build followed by seconds per token. llama.cpp needs AVX2 and
+  # runs as shipped.
+  #
+  # Its own profile, so `make up` does not pay for a language model nobody asked for. The
+  # platform points at it as an `external` runtime — compose owns the lifecycle, not the
+  # deployment state machine — so it never reserves a GPU and never gets the hosted
+  # provider's API key (see `external_key_for`).
+  llamacpp:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:2b87bde1575df56f282a6b691106d1d3c5efb6c1b7673568a286cc1331b1ef8c
+    profiles: [local-llm]
+    <<: [*restart, *logging]
+    # `--alias` is what /v1/models reports and therefore what the platform must ask for;
+    # without it llama.cpp answers to the file path, which no alias would ever match.
+    # `--threads 4` matches the reference machine's physical cores — oversubscribing hurts.
+    #
+    # 16k context, not 4k. Open WebUI does not send only what you typed: it also runs title
+    # and tag generation off large templates, and those alone exceeded a 4k window with a
+    # one-word question. The KV cache is ~28 KB per token for this model, so 16k costs
+    # ~460 MB — affordable in the 5.8 GB Docker gets on the reference machine, where 32k
+    # would not be. `make local-llm` registers this same number as the model's context, so
+    # what the platform advertises and what the engine serves cannot drift apart.
+    command: >
+      -m /models/${LOCAL_LLM_GGUF:-qwen2.5-1.5b-instruct-gguf/qwen2.5-1.5b-instruct-q4_k_m.gguf}
+      --alias ${LOCAL_LLM_NAME:-qwen2.5-1.5b-instruct}
+      --host 0.0.0.0 --port 8080
+      --ctx-size ${LOCAL_LLM_CTX:-16384} --threads 4 --parallel 1 --cont-batching
+    volumes:
+      - ${PLATFORM_DATA_ROOT:-./data}/models:/models:ro
+    networks: [ai-platform]
+    healthcheck:
+      # llama.cpp returns 503 from /health until the weights finish loading, which on CPU
+      # is tens of seconds — so the start period is generous rather than optimistic.
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+
+  # -------------------------------------------------------------------------
+  # MCP servers (M13)
+  # -------------------------------------------------------------------------
+  # The LDAP directory server the §20 MVP scenario uses. Ships answering from a fixture
+  # directory so the scenario runs without an Active Directory; every response says so.
+  # Replacing it with a real one is a change to this service, not to the platform — which
+  # is the point of MCP servers being separate processes behind a protocol.
+  ldap-mcp:
+    build:
+      context: ./mcp/ldap
+      target: runtime
+    image: ai-platform/ldap-mcp:${PLATFORM_VERSION:-0.1.0}
+    profiles: [agents]
+    <<: [*restart, *logging]
+    environment:
+      LDAP_MCP_SERVER_NAME: ldap-mcp
+    networks: [ai-platform]
+    # No `ports:` — reached only by the control plane over the internal network.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # A fixture OpenID Connect provider, so the SSO flow (M03) is testable on a machine
+  # with no Keycloak — the same reasoning as mock-vllm and the fixture LDAP server.
+  #
+  # `development` profile ONLY. It authenticates nobody: any fixture user is handed a
+  # signed token on request, with no password. Its own docstring says so, its /health
+  # says so, and it must never appear in a production profile.
+  oidc-fixture:
+    build:
+      context: ./fixtures/oidc
+      target: runtime
+    image: ai-platform/oidc-fixture:${PLATFORM_VERSION:-0.1.0}
+    profiles: [development]
+    <<: [*restart, *logging]
+    networks: [ai-platform]
+    # No `ports:` — reached by the control plane over the internal network, and by the
+    # browser through nginx, never directly.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # -------------------------------------------------------------------------
+  # Chat (M17)
+  # -------------------------------------------------------------------------
+  # Open WebUI, consuming the platform gateway and **nothing else** (§M17). Not
+  # forked, not patched: everything below is configuration, so an upgrade is a digest
+  # bump rather than a merge.
+  #
+  # Its own profile rather than `core`: the platform is fully usable through the API
+  # without a chat UI, and this image is 5 GB — which on an air-gapped install is 5 GB
+  # of physical media whether or not the site wants chat.
+  open-webui:
+    # ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui@sha256:6a773e5c3a246b65cbe74ce942b294292c0e5f81c138f703d111bc162f7d7c3d
+    profiles: [chat]
+    <<: [*restart, *logging]
+    environment:
+      # --- the platform is its only model source (§M17) ---
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_OPENAI_API: "true"
+      # The OpenAI-compatible root, reached over the internal network. Never through
+      # nginx: an internal caller has no reason to leave the network to come back in.
+      OPENAI_API_BASE_URL: http://backend:8000/v1
+      # Empty default on purpose: compose interpolates on every command, including the
+      # `make chat-key` that provisions this. `make chat` refuses to start without it.
+      OPENAI_API_KEY: ${OPEN_WEBUI__GATEWAY_API_KEY:-}
+
+      # --- who is asking (M17) ---
+      # Open WebUI holds one service key for everyone, so without this every chat in
+      # the organisation accounts to a single identity. The secret makes the forwarded
+      # identity a signature rather than a claim: holding the API key is then not
+      # enough to bill someone else's usage.
+      ENABLE_FORWARD_USER_INFO_HEADERS: "true"
+      FORWARD_USER_INFO_HEADER_JWT_SECRET: ${OPEN_WEBUI__IDENTITY_JWT_SECRET:-}
+
+      # --- air-gap (Rule 4) ---
+      # Sets HF_HUB_OFFLINE=1 and stops the version check phoning home.
+      OFFLINE_MODE: "true"
+      ENABLE_VERSION_UPDATE_CHECK: "false"
+      # Embeddings go through the gateway too, so document upload never reaches for a
+      # sentence-transformers model from HuggingFace. Needs an EMBEDDING model deployed.
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_OPENAI_API_BASE_URL: http://backend:8000/v1
+      RAG_OPENAI_API_KEY: ${OPEN_WEBUI__GATEWAY_API_KEY:-}
+
+      # --- what the UI offers ---
+      # The platform's models are the only models. The evaluation arena injects a
+      # pseudo-model that answers from nowhere the operator registered, which on a
+      # governed platform is a model nobody can account for.
+      ENABLE_EVALUATION_ARENA_MODELS: "false"
+      # Sharing a chat means uploading it to openwebui.com. On an air-gapped network the
+      # button can only fail; on a connected one it would exfiltrate the conversation.
+      ENABLE_COMMUNITY_SHARING: "false"
+      # Same origin as the UI. The default is `*`, which the image itself warns about.
+      CORS_ALLOW_ORIGIN: ${OPEN_WEBUI__PUBLIC_URL:-http://localhost:8081}
+      WEBUI_URL: ${OPEN_WEBUI__PUBLIC_URL:-http://localhost:8081}
+
+      # Open WebUI keeps its own per-model access list, administered in its own UI and
+      # stored in its own tables. Leaving it on would mean two authorisation systems for
+      # one resource, maintained separately and diverging quietly — an operator publishes
+      # an alias here and users still cannot see it, with nothing to explain why.
+      #
+      # The platform's aliases *are* the control surface: an operator exposes a model by
+      # pointing an alias at it, and the gateway serves exactly what is serving. Revisit
+      # if Phase 6 introduces per-user model policy, which would then belong in the
+      # platform's own RBAC rather than here.
+      BYPASS_MODEL_ACCESS_CONTROL: "true"
+
+      # --- configuration comes from here, always ---
+      # Open WebUI otherwise persists its settings into the database on first boot and
+      # ignores the environment ever after — so editing this file would change nothing
+      # and the operator would have no way to tell. With it off, this compose file is
+      # the single source of truth, which is what Rule 5 requires and what makes an
+      # air-gapped install reproducible from its configuration alone.
+      ENABLE_PERSISTENT_CONFIG: "false"
+
+      # --- accounts ---
+      WEBUI_AUTH: "true"
+      WEBUI_SECRET_KEY: ${OPEN_WEBUI__SECRET_KEY:-}
+      # New accounts land as `pending` until an administrator approves them, which is
+      # what makes leaving signup open safe on a closed network. Turn signup off once
+      # Phase 6 puts OIDC in front of it.
+      ENABLE_SIGNUP: ${OPEN_WEBUI__ENABLE_SIGNUP:-true}
+      DEFAULT_USER_ROLE: pending
+
+      # Its own schema, in the platform's Postgres rather than the image's default
+      # SQLite: one database to back up (M25), and one that survives 200 people
+      # chatting at once.
+      DATABASE_URL: postgresql://${DATABASE__USER:-ai_platform}:${DATABASE__PASSWORD}@postgres:5432/open_webui
+    volumes:
+      - ${PLATFORM_DATA_ROOT:-./data}/open-webui:/app/backend/data
+    networks: [ai-platform]
+    # No `ports:` — reached through nginx (§14).
+    healthcheck:
+      # Its own liveness only. `make wait` blocks on this, and a chat UI that is up but
+      # cannot reach a model should report healthy — that is the gateway's problem to
+      # report, not a reason to hold the container down.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      # First boot runs its own schema migrations against Postgres.
+      start_period: 120s
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # -------------------------------------------------------------------------
+  # Observability (M19, Phase 7). Every service here is `profiles: [monitoring]`, so
+  # `make up` runs a platform with none of it and the stack costs nothing until asked
+  # for. The platform is fully functional without them: /metrics is always exposed,
+  # traces are always recorded in the database, and the collectors below are what turn
+  # those into history, search and graphs.
+  # -------------------------------------------------------------------------
+  prometheus:
+    # prom/prometheus:v3.6.0
+    image: prom/prometheus@sha256:76947e7ef22f8a698fc638f706685909be425dbe09bd7a2cd7aca849f79b5f64
+    profiles: [monitoring]
+    <<: [*restart, *logging]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 30 days, matching Loki. Beyond that the platform's own usage_records answer
+      # capacity questions better, and they are backed up (M25) whereas this is not.
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/rules:/etc/prometheus/rules:ro
+      - ${PLATFORM_DATA_ROOT:-./data}/prometheus:/prometheus
+    networks: [ai-platform]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  loki:
+    # grafana/loki:3.5.7
+    image: grafana/loki@sha256:0eaee7bf39cc83aaef46914fb58f287d4f4c4be6ec96b86c2ed55719a75e49c8
+    profiles: [monitoring]
+    <<: [*restart, *logging]
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./docker/loki/loki.yml:/etc/loki/loki.yml:ro
+      - ${PLATFORM_DATA_ROOT:-./data}/loki:/loki
+    networks: [ai-platform]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      # Loki reports not-ready for ~15s after start while its ring settles. A shorter
+      # start_period makes every `make monitoring` look like a failed boot.
+      start_period: 45s
+
+  tempo:
+    # grafana/tempo:2.9.0
+    image: grafana/tempo@sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4
+    profiles: [monitoring]
+    <<: [*restart, *logging]
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    # Tempo's image runs as a non-root user that does not own a fresh bind mount, so
+    # without this it exits immediately on "permission denied" creating its WAL.
+    user: root
+    volumes:
+      - ./docker/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - ${PLATFORM_DATA_ROOT:-./data}/tempo:/var/tempo
+    networks: [ai-platform]
+    # No healthcheck, deliberately. The image is distroless: no shell, no wget, no curl,
+    # so nothing can run inside it to probe /ready. A `["CMD", "/tempo", "--version"]`
+    # would pass while Tempo was refusing every write, which is worse than no check —
+    # it would report healthy during exactly the outage it exists to catch. Readiness is
+    # visible in Grafana, which fails its Tempo datasource test if this is not serving.
+
+  alloy:
+    # grafana/alloy:v1.12.0 — ships container logs to Loki
+    image: grafana/alloy@sha256:85e4a706181741dd735d9a69bea81f9e03e16d5349bff46dd9640379f143c007
+    profiles: [monitoring]
+    <<: [*restart, *logging]
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./docker/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ${PLATFORM_DATA_ROOT:-./data}/alloy:/var/lib/alloy/data
+      # Read-only, and the only service besides the node agent given the socket. The
+      # reason is in docker/alloy/config.alloy: routing logs through the agent would put
+      # the control path inside the observability path.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [ai-platform]
+    depends_on:
+      loki: {condition: service_started}
+    healthcheck:
+      # The image ships bash but neither wget nor curl, so this proves the port is
+      # accepting connections the same way the qdrant check does.
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/12345' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  grafana:
+    # grafana/grafana:12.3.0
+    image: grafana/grafana@sha256:70d9599b186ce287be0d2c5ba9a78acb2e86c1a68c9c41449454d0fc3eeb84e8
+    profiles: [monitoring]
+    <<: [*restart, *logging]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA__ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA__ADMIN_PASSWORD:?GRAFANA__ADMIN_PASSWORD must be set in .env}
+      # Served under a path on the platform's own host rather than its own name, so
+      # there is still exactly one published port (§14).
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # An air-gapped Grafana that checks for updates and loads Gravatars spends every
+      # page load timing out against hosts it cannot reach (Rule 4).
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_USERS_DEFAULT_THEME: dark
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ${PLATFORM_DATA_ROOT:-./data}/grafana:/var/lib/grafana
+    networks: [ai-platform]
+    depends_on:
+      prometheus: {condition: service_started}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  langfuse:
+    # langfuse/langfuse:2.95.0 — the v2 line, which needs only Postgres.
+    #
+    # v3 splits into web plus worker and adds ClickHouse, which would make the air-gap
+    # bundle roughly three times larger and put a second database in front of an
+    # operator who has to back it up offline. v2 reuses the platform's own Postgres,
+    # in its own `langfuse` database (see DATABASE__COMPANION_DATABASES).
+    image: langfuse/langfuse@sha256:4ba90fe9e69674c094deca11d72a4cb745ffe5fdd8519176afd1a2edf82c7b41
+    profiles: [monitoring]
+    <<: [*restart, *logging]
+    environment:
+      DATABASE_URL: postgresql://${DATABASE__USER:-ai_platform}:${DATABASE__PASSWORD:?DATABASE__PASSWORD must be set in .env}@postgres:5432/langfuse
+      NEXTAUTH_URL: ${LANGFUSE__PUBLIC_URL:-http://localhost:8082}
+      NEXTAUTH_SECRET: ${LANGFUSE__NEXTAUTH_SECRET:?LANGFUSE__NEXTAUTH_SECRET must be set in .env}
+      SALT: ${LANGFUSE__SALT:?LANGFUSE__SALT must be set in .env}
+      ENCRYPTION_KEY: ${LANGFUSE__ENCRYPTION_KEY:?LANGFUSE__ENCRYPTION_KEY must be set in .env}
+      TELEMETRY_ENABLED: "false"          # Rule 4
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      # No sign-ups on a closed network: the platform provisions the one project and
+      # its keys, and an open registration page on an internal service is a way in.
+      AUTH_DISABLE_SIGNUP: "true"
+      NEXT_PUBLIC_SIGN_UP_DISABLED: "true"
+    networks: [ai-platform]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      # Against $(hostname), not 127.0.0.1: the Next.js standalone server binds to the
+      # container's own hostname, so a loopback probe is refused while the service is
+      # perfectly healthy.
+      test: ["CMD-SHELL", "wget -q -O- http://$$(hostname):3000/api/public/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      # Runs its own Prisma migrations against Postgres on first boot.
+      start_period: 120s
+
+  nginx:
+    # nginx:1.27-alpine
+    image: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    profiles: [core]
+    <<: [*restart, *logging]
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Shared by both API roots. Mounted as its own file rather than folded into
+      # default.conf so /api/ and /v1/ cannot drift apart.
+      # NOT under conf.d/ — nginx auto-includes conf.d/*.conf at the http level, where
+      # proxy_pass is invalid and the container would refuse to start.
+      - ./docker/nginx/backend_proxy.conf:/etc/nginx/backend_proxy.conf:ro
+      - ./docker/nginx/chat_proxy.conf:/etc/nginx/chat_proxy.conf:ro
+      - ./frontend:/usr/share/nginx/html/ui:ro
+    ports:
+      # The one and only published port.
+      - "${PLATFORM_HTTP_PORT:-8080}:80"
+    networks: [ai-platform]
+    depends_on:
+      backend: {condition: service_started}
+    healthcheck:
+      # nginx:alpine ships curl but no bash, so this cannot use /dev/tcp like the
+      # qdrant check does. Hits nginx's own stub endpoint, not the backend — this
+      # check answers "is the proxy up?", and conflating it with backend health
+      # would restart the proxy whenever the API was busy.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/nginx-health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

@@ -1,0 +1,94 @@
+// Grafana Alloy (M19, Phase 7) — ships container logs to Loki.
+//
+// Alloy rather than Promtail: Promtail is end-of-life, and an air-gapped site cannot
+// casually swap its log shipper in three years when nobody remembers why it was chosen.
+//
+// **It reads the Docker socket, and that is a deliberate exception.** The platform's
+// standing rule is that only the node agent holds the socket, so the control plane
+// cannot touch containers. Alloy's access is read-only and used for exactly two things:
+// listing containers and reading their log streams. It is granted here rather than
+// routed through the node agent because the alternative — the agent proxying every
+// container's log stream — would put the platform's own control path in the middle of
+// its observability, so an incident that breaks the agent also blinds the operator.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// Discover the platform's own containers. Everything else on the host is somebody
+// else's business and must not be swept into this platform's log store.
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=ai-platform"]
+  }
+}
+
+// Turn Docker's metadata into labels worth querying by. Labels are bounded on purpose,
+// exactly as in the Prometheus metrics: a label per container ID would create a new log
+// stream on every restart, and Loki charges for streams in memory and index size.
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = {platform = "ai-platform"}
+  forward_to = [loki.process.platform.receiver]
+}
+
+// The backend logs JSON (see app/core/logging.py). Parsing it here is what makes
+// `trace_id` a queryable label, and that label is the whole point: it is how a log line
+// in Loki links to its trace in Tempo.
+loki.process "platform" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.json {
+    expressions = {
+      level    = "level",
+      trace_id = "trace_id",
+      logger   = "logger",
+    }
+  }
+
+  // Only level and trace_id become labels. `logger` stays a field: it has hundreds of
+  // distinct values and would multiply the stream count for no query anyone runs.
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  // A structured metadata field rather than a label — trace ids are unbounded, and one
+  // stream per trace would be the single worst thing to do to a Loki instance.
+  stage.structured_metadata {
+    values = {
+      trace_id = "",
+    }
+  }
+
+  // Lines that are not JSON — Postgres, nginx, Valkey — pass through untouched. The
+  // stages above simply find nothing, which is the intended behaviour and not an error.
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

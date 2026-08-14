@@ -1,0 +1,73 @@
+# Private AI Platform — backend direct dependencies (Phase 0)
+#
+# AIR-GAP RULE (spec §M23, Rule 3/4): every direct dependency is pinned with `==`.
+# This file is the human-edited input. `make lock` compiles it into requirements.txt
+# with the full transitive closure and hashes, which is what the Dockerfile installs.
+# Never add a dependency here without also regenerating requirements.txt.
+
+# --- Web framework (M01) ---
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32
+
+# --- Configuration (M02) ---
+pydantic==2.13.4
+pydantic-settings==2.15.0
+email-validator==2.3.0
+PyYAML==6.0.3
+
+# --- Persistence (M01) ---
+SQLAlchemy[asyncio]==2.0.51
+asyncpg==0.31.0
+alembic==1.19.0
+
+# --- Platform data services (M01) ---
+redis==8.1.0
+qdrant-client==1.19.0
+minio==7.2.20
+
+# --- Observability (M01, M19; the collectors land in Phase 7) ---
+structlog==26.1.0
+
+# Prometheus exposition for GET /metrics. The client library only — the platform
+# exposes, Prometheus scrapes; nothing here ever dials out (Rule 4).
+prometheus-client==0.24.1
+
+# Tracing to Tempo over OTLP. The HTTP/protobuf exporter rather than gRPC: one
+# fewer transport to keep working on a closed network, and it goes through the same
+# proxy rules as everything else. Instrumentation is per-library and explicit —
+# opentelemetry-instrumentation's auto-loader scans entry points at import time,
+# which is how an unrelated dependency's instrumentation gets switched on by
+# accident and starts emitting spans nobody asked for.
+opentelemetry-sdk==1.40.0
+opentelemetry-exporter-otlp-proto-http==1.40.0
+opentelemetry-instrumentation-fastapi==0.61b0
+opentelemetry-instrumentation-sqlalchemy==0.61b0
+opentelemetry-instrumentation-httpx==0.61b0
+
+# --- Security (M03, M24) ---
+argon2-cffi==25.1.0
+PyJWT==2.13.0
+# cryptography backs the Fernet envelope encryption for tool credentials at rest
+# (see docs/architecture.md "Secrets at rest"). Declared in Phase 0 so the
+# dependency is bundled before Phase 4 needs it.
+cryptography==50.0.0
+
+# LDAP/Active Directory authentication (M03, Phase 6). Chosen over python-ldap and
+# bonsai because it is **pure Python**: both alternatives are C extensions, and an
+# air-gapped bundle must ship wheels built for the target architecture. That outweighs
+# ldap3 being quiet upstream — the opposite call to the one made on passlib in Phase 0,
+# where a maintained pure-Python alternative existed. See docs/security.md.
+ldap3==2.9.1
+
+# --- Scheduling (M22; workers land in Phase 1) ---
+APScheduler==3.11.3
+
+# --- HTTP client (node-agent + MCP calls; also used by TestClient) ---
+httpx==0.28.1
+
+# Document parsing (M15). PDF only — DOCX and PPTX are ZIP archives of XML and are read
+# with stdlib zipfile + xml.etree instead, which avoids pulling lxml and its C extension
+# into an air-gapped bundle that must build for the target architecture. Text extraction
+# does not need layout fidelity.
+pypdf==5.1.0

@@ -1,0 +1,16 @@
+# Reference manifest: the official filesystem MCP server.
+#
+# Mounted read-only. An MCP server the agents can reach is, in effect, a capability granted
+# to every agent that is later given its tools — a writable mount would let a
+# prompt-injected instruction modify files on a shared volume.
+name: filesystem
+display_name: Filesystem
+description: >
+  Read, list and search files beneath a shared directory. Useful for agents that answer
+  from documents an operator has placed on disk rather than ingested into a knowledge base.
+npm: "@modelcontextprotocol/server-filesystem@2025.8.21"
+command: >
+  node /vendor/lib/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js
+  /data/shared
+volumes:
+  - "${PLATFORM_DATA_ROOT:-./data}/shared:/data/shared:ro"

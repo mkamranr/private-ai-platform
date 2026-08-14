@@ -1,0 +1,62 @@
+# Grafana datasources (M19, Phase 7), provisioned from a file.
+#
+# Provisioned rather than clicked: an air-gapped site should be able to rebuild the
+# whole observability stack from the compose file and this repository, with no manual
+# setup step that somebody has to remember and nobody wrote down.
+#
+# The `derivedFields` and `tracesToLogs` sections below are the part that matters. They
+# are what turn three separate tools into one investigation: a log line links to its
+# trace, and a span links back to the logs around it. Without them an operator has three
+# search boxes and has to paste ids between them.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: platform-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+      # Lets a metric exemplar jump straight to the trace it came from.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: platform-tempo
+
+  - name: Loki
+    type: loki
+    uid: platform-loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        # `trace_id` arrives as structured metadata from Alloy, and as a JSON field in
+        # the raw line. Matching the raw line too means the link still works for a log
+        # written before the parsing stage existed.
+        - name: TraceID
+          matcherRegex: '"trace_id":\s*"(\w+)"'
+          url: "${__value.raw}"
+          datasourceUid: platform-tempo
+
+  - name: Tempo
+    type: tempo
+    uid: platform-tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: platform-loki
+        # A span's own time window, widened slightly: the log line that explains a
+        # failure is often written just after the span closes.
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+        tags:
+          - key: service.name
+            value: service
+      tracesToMetrics:
+        datasourceUid: platform-prometheus
+      nodeGraph:
+        enabled: true

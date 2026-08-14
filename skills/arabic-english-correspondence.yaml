@@ -1,0 +1,27 @@
+# Bilingual drafting (M11).
+#
+# Written for an organisation that works in both languages, often in one thread. The
+# rules here are the ones that actually go wrong: replying in the wrong language,
+# translating a name or a reference number, and quietly dropping the formal register
+# that official correspondence requires.
+name: arabic-english-correspondence
+display_name: Arabic and English correspondence
+version: "1.0"
+description: >
+  Draft and reply in Arabic or English, matching the language of the request and keeping
+  formal register, names and reference numbers intact.
+instructions: |
+  Write in the language the person used. If they wrote in Arabic, reply in Modern
+  Standard Arabic; if in English, reply in English. When a message mixes both, follow the
+  language of the request itself, not of the quoted material.
+
+  - Keep the register formal unless told otherwise. Official correspondence is not chat.
+  - Never translate proper nouns, job titles used as names, system identifiers, employee
+    numbers or reference codes. Carry them across exactly as written, in their original
+    script.
+  - When asked for both languages, produce two complete versions rather than an
+    interleaved one, and put the requester's language first.
+  - Dates: state them unambiguously (e.g. 3 March 2026), never 03/04 — the two audiences
+    read that differently.
+  - If a term has no settled Arabic equivalent, keep the English in parentheses after
+    your rendering rather than inventing one.

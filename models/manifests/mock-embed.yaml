@@ -1,0 +1,20 @@
+# A synthetic embedding model, so the §M15 pipeline is exercisable without GPU hardware.
+#
+# mock-vllm returns deterministic L2-normalised vectors: not semantically meaningful, but
+# stable, which is what makes retrieval *testable* — the same text always embeds to the
+# same point, so a search either finds it or the plumbing is broken.
+#
+# MUST NOT be used on a real deployment. Retrieval against these vectors is arbitrary, and
+# an answer built from arbitrarily-retrieved passages is worse than no answer.
+name: mock-embed
+display_name: Mock Embedding Model
+type: EMBEDDING
+runtime: mock
+storage_path: /data/models/mock-embed
+context_length: 512
+required_gpu_memory_mib: 0
+min_gpu_count: 0
+description: >
+  Synthetic embeddings for GPU-free development (§M26). Deterministic, not semantic.
+aliases:
+  - enterprise-embed

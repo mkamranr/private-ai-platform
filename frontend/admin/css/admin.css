@@ -1,0 +1,357 @@
+/* Private AI Platform — admin UI styles (M21).
+   Layered over Bootstrap; only what Bootstrap does not already provide. */
+
+:root {
+  --sidebar-width: 15rem;
+  --ok: #2ea043;
+  --warn: #d29922;
+  --crit: #f85149;
+  --idle: #6e7681;
+}
+
+/* Theme ------------------------------------------------------------------- */
+/* The status colours above are GitHub's, so the rest of the palette is taken from the
+   same system rather than a second one invented alongside it — two palettes in one
+   console is how "green" ends up meaning a slightly different green in three places.
+
+   Set as Bootstrap's own variables, not as new classes: every card, table, modal and
+   form control already reads these, so the whole surface moves together and nothing
+   has to be restyled component by component.
+
+   Dark is the default because this is watched on a wall for hours; `data-bs-theme`
+   still switches the whole thing to light for anyone who wants it. */
+[data-bs-theme="dark"] {
+  --bs-body-bg: #0d1117;
+  --bs-body-color: #e6edf3;
+  --bs-emphasis-color: #ffffff;
+  --bs-secondary-color: #8b949e;
+  --bs-secondary-bg: #161b22;
+  --bs-tertiary-bg: #10151c;
+  --bs-border-color: #30363d;
+  --bs-border-color-translucent: #30363d;
+  --bs-primary: #2f81f7;
+  --bs-primary-rgb: 47, 129, 247;
+  --bs-primary-bg-subtle: #12233d;
+  --bs-primary-border-subtle: #1f4b8f;
+  --bs-primary-text-emphasis: #79b8ff;
+  --bs-link-color: #79b8ff;
+  --bs-link-hover-color: #a5d0ff;
+  --bs-code-color: #ff9bce;
+  /* One step above the page, used for anything that should read as a raised panel.
+     Bootstrap has no token for this, and without it cards on a near-black page are
+     distinguishable only by their border. */
+  --surface-raised: #161b22;
+  --surface-hover: #1c2330;
+}
+
+[data-bs-theme="light"] {
+  --surface-raised: #ffffff;
+  --surface-hover: #f2f5f9;
+}
+
+body {
+  /* A very low-contrast wash, so a full-screen dashboard is not a flat black rectangle.
+     Fixed, because scrolling a gradient is a repaint on every frame for no benefit. */
+  background-image:
+    radial-gradient(60rem 30rem at 15% -10%, rgba(47, 129, 247, .07), transparent 60%),
+    radial-gradient(50rem 25rem at 100% 0%, rgba(46, 160, 67, .05), transparent 55%);
+  background-attachment: fixed;
+}
+
+.card,
+.stat-card {
+  background-color: var(--surface-raised);
+}
+
+/* Typography -------------------------------------------------------------- */
+h4 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+
+/* Focus ring. Bootstrap's default is a wide translucent slab that swamps a dense
+   table; this is tighter and reads as a ring rather than a glow. */
+.btn:focus-visible,
+.form-control:focus,
+.form-select:focus {
+  box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb), .35);
+  border-color: var(--bs-primary);
+}
+
+body {
+  min-height: 100vh;
+}
+
+.brand-dot {
+  display: inline-block;
+  width: .55rem;
+  height: .55rem;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-right: .4rem;
+  vertical-align: middle;
+  /* A live indicator should look live. Kept slow and subtle: this sits in the corner of
+     a screen someone stares at all day. */
+  box-shadow: 0 0 0 0 rgba(46, 160, 67, .55);
+  animation: brand-pulse 3.2s ease-out infinite;
+}
+
+@keyframes brand-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(46, 160, 67, .5); }
+  70%  { box-shadow: 0 0 0 .45rem rgba(46, 160, 67, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0); }
+}
+
+/* Anyone who has asked the OS to stop moving things means it. */
+@media (prefers-reduced-motion: reduce) {
+  .brand-dot { animation: none; }
+  .meter-fill { transition: none; }
+}
+
+/* The mark itself. Inline SVG rather than an image file: it inherits the theme through
+   currentColor, costs no request, and cannot be the one asset a bundle forgets. */
+.brand-mark {
+  width: 1.4rem;
+  height: 1.4rem;
+  vertical-align: -.28rem;
+  margin-right: .45rem;
+  color: var(--bs-primary);
+}
+
+.navbar {
+  background-color: var(--surface-raised);
+}
+
+.login-art svg {
+  width: 100%;
+  max-width: 13rem;
+  height: auto;
+  color: var(--bs-primary);
+}
+
+/* Sidebar ----------------------------------------------------------------- */
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  min-height: calc(100vh - 3.5rem);
+}
+
+.nav-section {
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--bs-secondary-color);
+  margin-bottom: .35rem;
+}
+
+.nav-item {
+  /* Flex rather than block now the items carry an icon: it aligns the glyph to the text
+     baseline without magic margins, and lets the Approvals count sit hard right instead
+     of trailing the label. */
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .34rem .6rem;
+  border-radius: .3rem;
+  color: var(--bs-body-color);
+  text-decoration: none;
+  font-size: .9rem;
+}
+
+.nav-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  /* Dimmed until the row matters. An icon at full strength on every row competes with
+     the label it is supposed to be helping you find. */
+  opacity: .6;
+  transition: opacity .15s ease;
+}
+
+.nav-item:hover:not(.disabled) .nav-icon,
+.nav-item.active .nav-icon {
+  opacity: 1;
+}
+
+/* The pending count belongs at the end of the row, not glued to the word. */
+.nav-item .badge {
+  margin-left: auto;
+}
+
+.nav-item:hover:not(.disabled) {
+  background: var(--bs-secondary-bg);
+}
+
+.nav-item.active {
+  background: var(--bs-primary-bg-subtle);
+  color: var(--bs-primary-text-emphasis);
+  font-weight: 500;
+}
+
+/* Sections whose module has not landed yet. Shown rather than hidden so the
+   platform's shape is legible from the start, with a title explaining which
+   phase delivers each one. */
+.nav-item.disabled {
+  color: var(--bs-secondary-color);
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* Cards and stats --------------------------------------------------------- */
+.stat-card {
+  border: 1px solid var(--bs-border-color);
+  border-radius: .5rem;
+  padding: .85rem 1rem;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.stat-label {
+  font-size: .75rem;
+  color: var(--bs-secondary-color);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+/* Status ------------------------------------------------------------------ */
+.status-dot {
+  display: inline-block;
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  margin-right: .35rem;
+  vertical-align: middle;
+}
+
+.status-ONLINE, .status-HEALTHY, .status-RUNNING { background: var(--ok); }
+.status-DEGRADED, .status-WARNING, .status-RESTARTING { background: var(--warn); }
+.status-OFFLINE, .status-CRITICAL, .status-DEAD { background: var(--crit); }
+.status-UNKNOWN, .status-EXITED, .status-CREATED, .status-PAUSED { background: var(--idle); }
+
+/* Utilisation bars -------------------------------------------------------- */
+.meter {
+  height: .4rem;
+  border-radius: .2rem;
+  background: var(--bs-secondary-bg);
+  overflow: hidden;
+  min-width: 5rem;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: .2rem;
+  transition: width .4s ease;
+}
+
+.meter-fill.low { background: var(--ok); }
+.meter-fill.mid { background: var(--warn); }
+.meter-fill.high { background: var(--crit); }
+
+/* Tables ------------------------------------------------------------------ */
+.table > :not(caption) > * > * {
+  padding: .55rem .6rem;
+}
+
+.table thead th {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  font-weight: 500;
+}
+
+.mono {
+  font-family: var(--bs-font-monospace);
+  font-size: .82rem;
+}
+
+.gpu-row {
+  cursor: pointer;
+}
+
+.gpu-row:hover {
+  background: var(--bs-secondary-bg);
+}
+
+/* A node reporting fabricated telemetry must be unmistakable — presenting
+   synthetic numbers as real capacity is the single most misleading thing this
+   UI could do. */
+.badge-synthetic {
+  background: #7a4b00;
+  color: #ffd8a8;
+}
+
+/* An empty table is the first thing a new operator sees on most of these screens, and
+   a bare dashed box tells them nothing. The illustration marks it as "nothing here yet"
+   rather than "something failed to load" — which is the ambiguity worth removing, since
+   the two look identical and want opposite responses. */
+.empty-state {
+  border: 1px dashed var(--bs-border-color);
+  border-radius: .5rem;
+  padding: 2.25rem 1rem;
+  text-align: center;
+  color: var(--bs-secondary-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .75rem;
+}
+
+.empty-state svg {
+  width: 3.25rem;
+  height: 3.25rem;
+  opacity: .5;
+  color: var(--bs-secondary-color);
+}
+
+.empty-state-text {
+  max-width: 34rem;
+  font-size: .875rem;
+  line-height: 1.5;
+}
+
+/* Sidebar and table polish ------------------------------------------------ */
+.sidebar {
+  background-color: var(--surface-raised);
+}
+
+/* A 3px rail on the active item. On a screen of near-identical rows, position is read
+   faster than a background tint alone. */
+.nav-item.active {
+  box-shadow: inset .18rem 0 0 var(--bs-primary);
+}
+
+.table > tbody > tr:hover > * {
+  background-color: var(--surface-hover);
+}
+
+.table thead th {
+  border-bottom-color: var(--bs-border-color);
+}
+
+/* Container logs. A model that fails to load leaves its only explanation here, so the
+   pane is tall enough to read a stack trace without scrolling a line at a time, and
+   never wraps — vLLM output is column-aligned and wrapping destroys it. */
+.logs {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre;
+  font-size: .78rem;
+  line-height: 1.45;
+  margin: 0;
+  padding: .75rem;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: .375rem;
+}
+
+/* Dashboard headline figures. Colour carries meaning here — a green "0 GPUs free" would
+   be worse than no colour at all. */
+.dash-ok   { color: var(--ok); }
+.dash-warn { color: var(--warn); }
+.dash-crit { color: var(--crit); }

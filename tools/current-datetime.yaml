@@ -1,0 +1,31 @@
+# What day is it (M12).
+#
+# Worth a tool because a language model genuinely cannot know: its weights are fixed, so
+# asked for "today" it either refuses or invents a date that reads as entirely plausible.
+# Anything reasoning about deadlines, leave balances or expiry needs this, and gets it
+# wrong silently without it.
+#
+# INTERNAL, so it resolves to a handler in the control plane rather than a network call:
+# the closed table in app/services/tool_executors.py, not dynamic dispatch.
+name: current_datetime
+display_name: Current date and time
+type: INTERNAL
+# Written for the model, not for an operator — this is the text the LLM reads when
+# deciding whether to call it.
+description: >
+  Return the current date and time in UTC, with the day of the week. Call this before
+  any reasoning about dates, deadlines or how long ago something happened; you cannot
+  know the current date otherwise.
+required_permission: tool.execute
+risk_level: LOW
+parameters_schema:
+  type: object
+  properties:
+    timezone:
+      type: string
+      description: >
+        Optional. Only "UTC" is supported; anything else returns UTC with a note saying
+        it was not applied, rather than a confidently wrong local time.
+  required: []
+config:
+  handler: current_datetime

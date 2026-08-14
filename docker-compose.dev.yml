@@ -1,0 +1,103 @@
+# Development overrides.
+#
+# Applied by every Makefile target:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml ...
+#
+# Two things differ from the base composition:
+#   1. The backend builds the `dev` image target (test + lint tooling) and mounts
+#      the source for live reload.
+#   2. Data-service ports are published to the host so a developer can attach psql
+#      or a Qdrant dashboard. Never do this in production — the base file
+#      deliberately publishes nothing but nginx (§14).
+
+services:
+  backend:
+    build:
+      target: dev
+    environment:
+      PLATFORM__DEBUG: "true"
+      # Readable console output locally, but overridable: hard-coding "false" here made
+      # the Phase 7 gate unable to assert what production actually does. Alloy parses the
+      # log line as JSON to promote `level` to a Loki label, and console output has no
+      # JSON to parse — so the label simply never existed and the gate failed on a
+      # correctly-configured platform.
+      LOGGING__JSON: "${LOGGING__JSON:-false}"
+      LOGGING__LEVEL: DEBUG
+      PLATFORM__ENVIRONMENT: development
+      # Tool caches go to /tmp. /app holds bind mounts owned by the host user, so
+      # the non-root container user cannot reliably create cache directories there.
+      RUFF_CACHE_DIR: /tmp/ruff-cache
+      MYPY_CACHE_DIR: /tmp/mypy-cache
+      PYTEST_ADDOPTS: -p no:cacheprovider
+    volumes:
+      # Live reload. Also means `make test` runs the working tree, not the image.
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini:ro
+      - ./backend/pyproject.toml:/app/pyproject.toml:ro
+      # Manifests are mounted by the base compose file for every environment.
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/app
+
+  node-agent:
+    build:
+      target: dev
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./node-agent/app:/app/app
+    environment:
+      NODE_AGENT_LOG_JSON: "false"
+      NODE_AGENT_LOG_LEVEL: DEBUG
+    ports:
+      # Published locally so `curl localhost:9100/health` works while developing.
+      # Never published in production — the base file deliberately exposes nothing.
+      - "${DEV_NODE_AGENT_PORT:-9100}:9100"
+
+  postgres:
+    ports:
+      - "${DEV_POSTGRES_PORT:-5432}:5432"
+
+  valkey:
+    ports:
+      - "${DEV_VALKEY_PORT:-6379}:6379"
+
+  qdrant:
+    ports:
+      - "${DEV_QDRANT_PORT:-6333}:6333"
+
+  minio:
+    ports:
+      - "${DEV_MINIO_PORT:-9000}:9000"
+      - "${DEV_MINIO_CONSOLE_PORT:-9001}:9001"
+
+  nginx:
+    ports:
+      # The chat site, published locally so a developer with no DNS entry for
+      # `chat.ai-platform.local` can just open a browser. Production publishes only
+      # port 80 and routes chat by name (§14).
+      - "${DEV_CHAT_PORT:-8081}:8081"
+      # Langfuse (M19), for the same reason: no DNS entry for `langfuse.ai-platform.local`
+      # on a developer machine. Only reachable when the monitoring profile is running.
+      #
+      # 8084 rather than the 8082 the listener uses, because 8082/8083 are commonly taken
+      # on a developer machine already running something else — and a port clash here
+      # stops NGINX itself from starting, which reads as the whole platform being broken.
+      # Override with DEV_LANGFUSE_PORT.
+      - "${DEV_LANGFUSE_PORT:-8084}:8082"
+
+  open-webui:
+    environment:
+      # New accounts are usable immediately here. Production keeps Open WebUI's own
+      # default of `pending`, so an administrator approves each person — which is the
+      # right posture for a real deployment and the wrong one for a developer who just
+      # wants to send a message.
+      DEFAULT_USER_ROLE: user

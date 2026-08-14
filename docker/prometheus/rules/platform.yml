@@ -1,0 +1,67 @@
+# Alerting rules (M19, Phase 7).
+#
+# Deliberately few. A rule that fires often enough to be ignored is worse than no rule,
+# because it teaches an operator that alerts do not mean anything — so what is here is
+# limited to conditions a human should act on tonight.
+#
+# No Alertmanager is deployed: an air-gapped site has no SMTP relay, no PagerDuty and no
+# Slack. These surface in Grafana's alert list and on the platform dashboard. A site with
+# an internal notification channel can add an Alertmanager and point these at it.
+
+groups:
+  - name: platform
+    interval: 30s
+    rules:
+      - alert: ControlPlaneDown
+        # `up` is Prometheus's own view of the scrape, so this fires when the backend is
+        # unreachable — including when it is too busy to answer, which a health endpoint
+        # polled by Docker may still be passing.
+        expr: up{job="ai-platform-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: The control plane has not been scrapeable for two minutes.
+          runbook: docs/troubleshooting.md
+
+      - alert: HighServerErrorRate
+        # A rate, never a count: "50 errors" means nothing without knowing whether that
+        # was out of 60 requests or 60,000.
+        expr: |
+          sum(rate(ai_platform_http_requests_total{status="5xx"}[5m]))
+            / clamp_min(sum(rate(ai_platform_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 5% of requests have failed for ten minutes.
+
+      - alert: NodesOffline
+        expr: ai_platform_nodes{status="OFFLINE"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A GPU node has been offline for five minutes.
+          runbook: docs/troubleshooting.md
+
+      - alert: DeploymentsFailing
+        expr: ai_platform_deployments{state="FAILED"} > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A model deployment has been in FAILED for fifteen minutes.
+
+      - alert: AgentRunsFailing
+        # Agents fail for ordinary reasons — a refused tool, a model that declined. This
+        # is about a *change* in that rate, which is why the window is long and the
+        # threshold is a quarter of all runs rather than any failure at all.
+        expr: |
+          sum(rate(ai_platform_agent_runs_total{state="FAILED"}[15m]))
+            / clamp_min(sum(rate(ai_platform_agent_runs_total[15m])), 0.001) > 0.25
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A quarter of agent runs have failed over the last fifteen minutes.

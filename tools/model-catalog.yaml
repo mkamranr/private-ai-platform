@@ -1,0 +1,31 @@
+# What this installation can actually do (M12, M07).
+#
+# A model cannot know which models a site deployed — on an air-gapped platform that is
+# whatever came off the bundle, decided long after the weights were frozen. Without this
+# an assistant asked "can you transcribe audio here" either refuses or invents a
+# capability, and both answers are wrong.
+#
+# Returns aliases, because aliases are what callers use. Whether the alias resolves to
+# something currently *running* is reported separately: that difference is usually the
+# reason somebody asked.
+name: model_catalog
+display_name: Model catalogue
+type: INTERNAL
+description: >
+  List the AI models this platform serves, by the alias used to call them, with the
+  model type, context length and whether it is currently deployed and running. Call this
+  before telling anyone what the platform can or cannot do — the answer is specific to
+  this installation and you cannot know it otherwise.
+required_permission: tool.execute
+risk_level: LOW
+parameters_schema:
+  type: object
+  properties:
+    type:
+      type: string
+      description: >
+        Optional filter on model type, for example LLM, EMBEDDING, STT, TTS, VISION.
+        Omit to list everything.
+  required: []
+config:
+  handler: model_catalog

@@ -1,0 +1,27 @@
+# Development model manifest.
+#
+# Registers a model served by the `mock` runtime, which needs no weights and no GPU.
+# This is what makes the whole model platform — registry, scheduler, deployment state
+# machine, gateway, and from Phase 4 agents — exercisable end to end on a machine with
+# no NVIDIA hardware.
+#
+# A real model's manifest looks the same but with `runtime: vllm`, a real
+# `storage_path`, and GPU requirements. Manifests ship alongside the weights in the
+# offline bundle so an operator never has to retype metadata on an air-gapped host.
+
+name: mock-chat
+display_name: Mock Chat Model (synthetic)
+type: LLM
+runtime: mock
+version: "1.0"
+architecture: mock
+context_length: 32768
+storage_path: /data/models/mock-chat
+min_gpu_count: 0
+description: >
+  Synthetic model for GPU-free development. Returns structured placeholder text that
+  announces itself as fake — never use it to evaluate model quality.
+
+aliases:
+  - enterprise-chat
+  - enterprise-fast

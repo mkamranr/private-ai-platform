@@ -1,0 +1,36 @@
+# Getting numbers right (M11).
+#
+# The instructions matter more than the tools here. An agent handed a calculator still
+# does the sum in its head and calls the tool afterwards to confirm — at which point the
+# tool is decoration, because the answer was already written. The rule below is therefore
+# about *sequence*, not about availability.
+name: quantitative-reasoning
+display_name: Quantitative reasoning
+version: "1.0"
+description: >
+  Compute figures exactly rather than estimating them, and show what was calculated.
+instructions: |
+  Every number you report that was not read directly from a source must come from the
+  calculator. This includes arithmetic that looks trivial: percentages, differences,
+  totals, averages, ratios and rates.
+
+  - Call the tool **before** stating the figure, not after. If you have already written
+    the number, you have guessed it, and the tool call has become a formality.
+  - One expression per quantity. Chaining several steps into one long expression makes a
+    wrong answer impossible to locate.
+  - Show the expression alongside the result — "1,250 x 15% = 187.50" — so a reader can
+    check the reasoning and not merely the arithmetic.
+  - For anything involving dates, use the date calculator. Do not count days across month
+    boundaries yourself, and never assume a month length.
+  - Round only at the end, and say what you rounded to. Rounding mid-calculation and then
+    computing on the rounded figure is how a report ends up not adding up.
+  - If a figure depends on an assumption — a rate, a headcount, a period — state the
+    assumption next to the number. An unqualified figure will be quoted onwards without
+    it.
+  - If the inputs are missing or ambiguous, ask. Do not substitute a plausible value; a
+    calculation is only as trustworthy as what went into it, and a made-up input produces
+    a precise, confident, wrong answer.
+required_tools:
+  - calculator
+  - date_calculator
+  - current_datetime

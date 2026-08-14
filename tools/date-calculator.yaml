@@ -1,0 +1,43 @@
+# Date arithmetic (M12).
+#
+# `current_datetime` tells an agent what today is; it does not tell it how many days
+# remain until a deadline, and counting across month boundaries is exactly the arithmetic
+# a model does fluently and wrongly. The two are meant to be used together.
+#
+# Calendar days in UTC, matching current_datetime. No working-day or holiday logic: that
+# varies by country and by employer, and a confident wrong answer about when something is
+# due is worse than no answer.
+name: date_calculator
+display_name: Date calculator
+type: INTERNAL
+description: >
+  Do exact date arithmetic in UTC. Operations: "difference" returns the number of days
+  between start_date and end_date; "add" returns the date a number of days after
+  start_date (negative counts backwards); "weekday" returns the day of the week for a
+  date. Call current_datetime first if you need today's date. Counts calendar days, not
+  working days.
+required_permission: tool.execute
+risk_level: LOW
+parameters_schema:
+  type: object
+  properties:
+    operation:
+      type: string
+      enum: [difference, add, weekday]
+      description: Which calculation to perform.
+    start_date:
+      type: string
+      description: >
+        ISO date such as 2026-03-01, or the word "today". The first date for "difference",
+        the base date for "add", the date in question for "weekday".
+    end_date:
+      type: string
+      description: ISO date, or "today". Only used by "difference".
+    days:
+      type: integer
+      description: >
+        Number of days to add for "add". Negative counts backwards. Ignored by the other
+        operations.
+  required: [operation]
+config:
+  handler: date_calculator
