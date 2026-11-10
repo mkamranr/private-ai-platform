@@ -233,3 +233,6 @@ class ApiKeyService:
 
     async def usage_by_end_user(self, *, since: dt.datetime, limit: int = 100) -> list[dict]:
         return await self._usage.by_end_user(since=since, limit=limit)
+
+    async def usage_by_key(self, *, since: dt.datetime, limit: int = 100) -> list[dict]:
+        return await self._usage.by_api_key(since=since, limit=limit)

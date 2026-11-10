@@ -71,7 +71,11 @@ from app.repositories.models_registry import (
     ModelRepository,
     UsageRepository,
 )
-from app.repositories.operations import AlertRepository, InferenceBackendRepository
+from app.repositories.operations import (
+    AlertRepository,
+    GatewayQuotaRepository,
+    InferenceBackendRepository,
+)
 from app.repositories.user import PermissionRepository, RoleRepository, UserRepository
 from app.repositories.voice import (
     VoiceEventRepository,
@@ -97,6 +101,7 @@ from app.services.deployment import DeploymentService
 from app.services.docker_service import DockerService, build_runtime_factory
 from app.services.federation import FederationService
 from app.services.gateway import GatewayContext, GatewayService
+from app.services.gateway_policy import GatewayPolicy
 from app.services.health import HealthService
 from app.services.identity import resolve_forwarded_identity
 from app.services.inference_backends import InferenceBackendService
@@ -107,6 +112,7 @@ from app.services.memory import MemoryService
 from app.services.model_registry import ModelRegistryService
 from app.services.monitoring import MonitoringService, TraceService
 from app.services.node_enrollment import NodeEnrollmentService
+from app.services.quotas import QuotaService
 from app.services.retrieval import RetrievalService
 from app.services.tool_pipeline import ToolPipeline
 from app.services.user import UserService
@@ -563,6 +569,23 @@ def get_inference_backend_service(
 InferenceBackendServiceDep = Annotated[
     InferenceBackendService, Depends(get_inference_backend_service)
 ]
+
+
+def get_quota_service(
+    request: Request, session: SessionDep, settings: SettingsDep, audit: AuditDep
+) -> QuotaService:
+    quotas = GatewayQuotaRepository(session)
+    return QuotaService(
+        quotas,
+        ApiKeyRepository(session),
+        ModelRepository(session),
+        InferenceBackendRepository(session),
+        GatewayPolicy(settings.gateway, request.app.state.redis.client, quotas),
+        audit,
+    )
+
+
+QuotaServiceDep = Annotated[QuotaService, Depends(get_quota_service)]
 
 
 def get_deployment_service(

@@ -368,21 +368,23 @@ class TestDiscovery:
         await session.refresh(model)
         assert model.backend_id is None
 
-    async def test_register_refused_for_keyed_backend(
+    async def test_register_allowed_for_keyed_backend(
         self,
         client: AsyncClient,
         tokens,
         backend_admin: User,
         fake_backend: dict[str, Handler],
     ) -> None:
+        """Refused in E1; allowed since E2 made the gateway send the backend's key."""
         headers = auth_header(tokens, backend_admin)
-        fake_backend["ollama-host"] = _ollama(["m:latest"])
+        tag = f"e2key{uuid.uuid4().hex[:6]}:latest"
+        fake_backend["ollama-host"] = _ollama([tag])
         created = await _create(client, headers, api_key="sk-local")
         response = await client.post(
             f"/api/v1/backends/{created['id']}/models/register", json={}, headers=headers
         )
-        assert response.status_code == 422
-        assert "E2" in response.text
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["status"] == "registered"
 
     async def test_register_unknown_model_id_refused(
         self,

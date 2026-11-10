@@ -491,6 +491,19 @@ class GatewaySettings(BaseModel):
     #: a per-user one — sized for a room full of people, not for one application.
     chat_rate_limit_per_minute: int = 6_000
 
+    # --- E2: resilience and quotas ---------------------------------------
+    #: Upstream failures within `circuit_window_seconds` that open a backend's circuit.
+    #: While open, calls fail fast (or go to the alias's fallback) instead of each
+    #: waiting out a timeout against a server that is already known to be down.
+    circuit_failure_threshold: int = Field(default=5, ge=1, le=1000)
+    circuit_window_seconds: float = Field(default=60.0, gt=0, le=3600)
+    #: How long an open circuit refuses traffic before letting a trial request through.
+    circuit_open_seconds: float = Field(default=30.0, gt=0, le=3600)
+    #: Upper bound on how long one request may hold a concurrency slot. A crashed
+    #: replica cannot release its slots, so they lapse after this instead of shrinking
+    #: the limit forever. Longer than any sane generation.
+    concurrency_lease_seconds: int = Field(default=1800, ge=60, le=86_400)
+
 
 class KnowledgeSettings(BaseModel):
     """Knowledge bases and memory (M15, M16)."""

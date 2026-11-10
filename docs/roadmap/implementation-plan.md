@@ -35,10 +35,16 @@ dashboard real signals.
 
 ## E2: Gateway policy and quotas (P0/P1)
 
-- Token-per-minute and daily/monthly budgets per key and per user (Valkey counters, usage records as source of truth).
-- Gateway sends the stored backend API key for models linked by `backend_id`.
-- Per-model concurrency limit; circuit breaker per backend; explicit `fallback_alias` on aliases (never implicit). Record the actual deployment served.
-- Admin Usage page with breakdown by key, user and model.
+- [x] Migration `7c2e4f9a1d30`: `gateway_quotas` (scope `api_key`/`end_user`/`model`, subject or `*`, tokens per minute/day/month, max concurrency), `model_aliases.fallback_alias_id`, `usage_records.fallback_from`.
+- [x] Token budgets in Valkey counters, seeded from `usage_records` (the source of truth). Checked before a call and charged after it. Valkey down: budgets read the DB, other limits fail open. End-user quotas apply to trusted identities only.
+- [x] Gateway sends a linked backend's stored API key, only to that backend's URL. The external-attach health probe uses it too, and E1's refusal to register models from keyed backends is lifted.
+- [x] Concurrency limit per key, end user or model (Valkey leases that lapse on their own).
+- [x] Circuit breaker per backend (or deployment), in process per replica; open circuits skip that deployment.
+- [x] Explicit one-hop `fallback_alias` used when nothing is serving, a circuit is open, or a buffered call fails upstream. The actual model and `fallback_from` are recorded.
+- [x] `Retry-After` header on 429/503 errors that know when to retry.
+- [x] Admin: Usage & Quotas page (totals, quotas with usage bars, by model/key/end user, open circuits) and a fallback picker on aliases. Permissions `quota.view|manage`, seeded and audited.
+- [x] Tests: `tests/unit/test_gateway_policy.py`, `tests/api/test_gateway_policy.py`. Doc: [docs/gateway-policy.md](../gateway-policy.md).
+- [ ] Soft warnings (an alert at 80% of a budget) — not done.
 
 ## E3: Teams and scope (P1, a migration with high blast radius)
 

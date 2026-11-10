@@ -176,6 +176,8 @@ class AliasCreateRequest(BaseModel):
     model_id: uuid.UUID
     description: str | None = None
     enabled: bool = True
+    #: Alias to serve from when this one's model cannot (E2). Explicit, one hop.
+    fallback_alias_id: uuid.UUID | None = None
 
 
 class AliasUpdateRequest(BaseModel):
@@ -185,6 +187,8 @@ class AliasUpdateRequest(BaseModel):
     model_id: uuid.UUID | None = None
     description: str | None = None
     enabled: bool | None = None
+    #: Send ``null`` to remove the fallback; omit the field to leave it unchanged.
+    fallback_alias_id: uuid.UUID | None = None
 
 
 class AliasRead(ORMModel):
@@ -193,6 +197,7 @@ class AliasRead(ORMModel):
     model_id: uuid.UUID
     description: str | None = None
     enabled: bool
+    fallback_alias_id: uuid.UUID | None = None
     created_at: dt.datetime
 
 
@@ -200,6 +205,7 @@ class AliasDetail(AliasRead):
     # Derived, like DeploymentDetail's — see the note there.
     model_name: str = ""
     serving: bool = False
+    fallback_alias: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +327,10 @@ class UsageSummaryRow(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     avg_latency_ms: float
+    #: Calls that ended in an error status (E2).
+    errors: int = 0
+    #: Calls this model answered as an alias's fallback (E2).
+    fallbacks: int = 0
 
 
 class UsageSummaryResponse(BaseModel):

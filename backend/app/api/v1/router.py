@@ -21,6 +21,7 @@ from app.api.v1 import (
     knowledge,
     models,
     monitoring,
+    quotas,
     users,
     voice,
 )
@@ -54,6 +55,8 @@ api_router.include_router(voice.router)
 # E1: inference backends and in-app alerts.
 api_router.include_router(backends.router)
 api_router.include_router(alerts.router)
+# E2: gateway quotas, per-key usage and circuit breakers.
+api_router.include_router(quotas.router)
 
 # The OpenAI-compatible gateway is deliberately NOT here. It mounts at `/v1` in
 # app.main, because the SDK derives its paths from base_url and `GET {base}/models`

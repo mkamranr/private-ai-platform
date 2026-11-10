@@ -1568,10 +1568,10 @@ function renderAliases(aliases) {
     <div class="table-responsive">
       <table class="table table-sm align-middle">
         <thead><tr>
-          <th>Alias</th><th>Target model</th><th>Serving</th><th>Enabled</th>
+          <th>Alias</th><th>Target model</th><th>Fallback</th><th>Serving</th><th>Enabled</th>
           <th class="text-end">Actions</th>
         </tr></thead>
-        <tbody>${aliases.map(aliasRow).join('')}</tbody>
+        <tbody>${aliases.map((a) => aliasRow(a, aliases)).join('')}</tbody>
       </table>
     </div>`;
 
@@ -1590,6 +1590,22 @@ function renderAliases(aliases) {
     };
   });
 
+  document.querySelectorAll('[data-fallback]').forEach((select) => {
+    select.onchange = async () => {
+      try {
+        await api(`/model-aliases/${select.dataset.fallback}`, {
+          method: 'PUT', body: JSON.stringify({ fallback_alias_id: select.value || null }),
+        });
+        alert(select.value
+          ? 'Fallback set. If this alias cannot serve, its fallback answers instead.'
+          : 'Fallback removed.', 'success');
+      } catch (err) {
+        alert(err.message);
+      }
+      await renderEndpoints();
+    };
+  });
+
   document.querySelectorAll('[data-delete-alias]').forEach((button) => {
     button.onclick = () => guard(button, async () => {
       if (!confirm(
@@ -1602,9 +1618,14 @@ function renderAliases(aliases) {
   });
 }
 
-function aliasRow(alias) {
+function aliasRow(alias, aliases = []) {
   const options = modelCache.map((m) =>
     `<option value="${esc(m.id)}" ${m.id === alias.model_id ? 'selected' : ''}>${esc(m.name)}</option>`
+  ).join('');
+  // Explicit, one hop (E2): the fallback's own fallback is never followed.
+  const fallbacks = ['<option value="">None</option>'].concat(aliases
+    .filter((a) => a.id !== alias.id)
+    .map((a) => `<option value="${esc(a.id)}" ${a.id === alias.fallback_alias_id ? 'selected' : ''}>${esc(a.alias)}</option>`)
   ).join('');
 
   return `<tr>
@@ -1612,6 +1633,11 @@ function aliasRow(alias) {
     <td>
       <select class="form-select form-select-sm" data-repoint="${esc(alias.id)}"
               style="max-width:16rem">${options}</select>
+    </td>
+    <td>
+      <select class="form-select form-select-sm" data-fallback="${esc(alias.id)}"
+              style="max-width:12rem" aria-label="Fallback alias for ${esc(alias.alias)}"
+              title="Used when this alias's model is not serving or fails">${fallbacks}</select>
     </td>
     <td>${alias.serving
       ? '<span class="badge text-bg-success">yes</span>'
@@ -2766,6 +2792,261 @@ onModalSubmit('backend-form', 'backend-error', async (form) => {
   updateAlertBadge();
 });
 
+/* -------------------------------------------------------------------------- */
+/* Usage, quotas and circuit breakers (E2)                                    */
+/* -------------------------------------------------------------------------- */
+const fmtInt = (n) => (n == null ? '—' : Number(n).toLocaleString());
+const QUOTA_SCOPE_LABEL = { api_key: 'API key', end_user: 'End user', model: 'Model' };
+
+async function renderUsagePage() {
+  const body = document.getElementById('usage-page-body');
+  const addButton = document.querySelector('[data-bs-target="#quota-modal"]');
+  addButton.classList.toggle('d-none', !can('quota.manage'));
+  if (!can('usage.view') && !can('quota.view')) {
+    body.innerHTML = empty('You do not have permission to view usage (usage.view) or quotas (quota.view).');
+    return;
+  }
+  const hours = document.getElementById('usage-range').value;
+  const [summary, byKey, byUser, quotas, circuits] = await Promise.all([
+    can('usage.view') ? api(`/usage?since_hours=${hours}`) : null,
+    can('usage.view') ? api(`/usage/by-key?since_hours=${hours}`) : null,
+    can('usage.view') ? api(`/usage/by-user?since_hours=${hours}`) : null,
+    can('quota.view') ? api('/quotas') : null,
+    can('monitoring.view') ? api('/gateway/circuits') : null,
+  ]);
+
+  let html = '';
+  if (summary) {
+    const errors = summary.rows.reduce((n, r) => n + (r.errors || 0), 0);
+    const fallbacks = summary.rows.reduce((n, r) => n + (r.fallbacks || 0), 0);
+    const rate = summary.total_requests ? (100 * errors) / summary.total_requests : 0;
+    html += `
+      <div class="row g-3 mb-4">
+        ${kpiTile({ label: 'Requests', value: fmtInt(summary.total_requests), tone: 'blue', iconId: 'i-usage',
+                    note: `${summary.rows.length} model(s)` })}
+        ${kpiTile({ label: 'Tokens', value: fmtInt(summary.total_tokens), tone: 'violet', iconId: 'i-models',
+                    note: 'prompt + completion' })}
+        ${kpiTile({ label: 'Error rate', value: `${rate.toFixed(rate && rate < 1 ? 2 : 1)}%`,
+                    tone: rate >= 5 ? 'red' : rate > 0 ? 'amber' : 'green', iconId: 'i-alerts',
+                    note: `${fmtInt(errors)} failed call(s)` })}
+        ${kpiTile({ label: 'Fallbacks', value: fmtInt(fallbacks), tone: fallbacks ? 'amber' : 'green',
+                    iconId: 'i-gauge', note: 'served by a fallback alias' })}
+      </div>`;
+  }
+
+  if (circuits) html += circuitsCard(circuits);
+  if (quotas) html += quotasCard(quotas);
+  if (summary) html += usageByModelCard(summary.rows);
+  if (byKey) html += usageByKeyCard(byKey.rows);
+  if (byUser) html += usageByUserCard(byUser.rows);
+  body.innerHTML = html;
+  wireQuotaActions();
+}
+
+function sectionCard(title, subtitle, inner) {
+  return `
+    <div class="card mb-4">
+      <div class="card-body pb-0">
+        <h6 class="mb-1">${esc(title)}</h6>
+        ${subtitle ? `<p class="small text-secondary mb-2">${esc(subtitle)}</p>` : ''}
+      </div>
+      ${inner}
+    </div>`;
+}
+
+function tableHtml(head, rows) {
+  return `<div class="table-responsive"><table class="table align-middle mb-0">
+    <thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function circuitsCard(data) {
+  const tripped = data.items.filter((c) => c.state !== 'closed');
+  if (!tripped.length) {
+    return `<div class="alert alert-success small py-2 mb-4">${icon('i-check')}
+      Every backend is answering normally — no circuit breaker is open on this replica.</div>`;
+  }
+  const rows = tripped.map((c) => `<tr>
+      <td>${pill(c.state === 'open' ? 'CRITICAL' : 'WARNING', c.state === 'open' ? 'Open' : 'Half-open')}</td>
+      <td class="fw-medium">${esc(c.label || c.target)}</td>
+      <td class="text-end">${c.recent_failures}</td>
+      <td class="text-end">${c.state === 'open' ? `${Math.ceil(c.retry_in_seconds)} s` : 'now'}</td>
+      <td class="small text-secondary">${esc(c.last_error || '')}</td>
+    </tr>`).join('');
+  return sectionCard('Circuit breakers',
+    'Backends that failed repeatedly. Calls to them fail fast (or go to a fallback alias) ' +
+    'until a trial request succeeds. ' + data.scope_note,
+    tableHtml('<th>State</th><th>Backend</th><th class="text-end">Failures</th>' +
+              '<th class="text-end">Retry in</th><th>Last error</th>', rows));
+}
+
+/** used/limit as a thin bar; red once the budget is spent. */
+function budgetCell(used, limit) {
+  if (limit == null) return '<span class="text-secondary">—</span>';
+  if (used == null) return `<span class="small">${fmtInt(limit)}</span>`;
+  const pct = Math.min(100, Math.round((100 * used) / limit));
+  const tone = pct >= 100 ? 'bg-danger' : pct >= 80 ? 'bg-warning' : 'bg-primary';
+  return `<div class="small">${fmtInt(used)} <span class="text-secondary">/ ${fmtInt(limit)}</span></div>
+    <div class="progress" style="height:4px" role="progressbar" aria-label="Budget used"
+         aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+      <div class="progress-bar ${tone}" style="width:${pct}%"></div></div>`;
+}
+
+function quotasCard(quotas) {
+  const manage = can('quota.manage');
+  if (!quotas.length) {
+    return sectionCard('Quotas', null, `<div class="card-body pt-0">${empty(
+      'No quotas yet, so the per-key request rate is the only limit. Add one to cap tokens per ' +
+      'minute, day or month, or how many requests a key, a person or a model handles at once.')}</div>`);
+  }
+  const rows = quotas.map((q) => `<tr class="${q.enabled ? '' : 'text-secondary'}">
+      <td><span class="chip">${esc(QUOTA_SCOPE_LABEL[q.scope] || q.scope)}</span></td>
+      <td class="min-w-0">
+        <div class="fw-medium text-truncate" style="max-width:16rem" title="${esc(q.subject)}">
+          ${esc(q.subject_label || q.subject)}</div>
+        ${q.description ? `<div class="small text-secondary">${esc(q.description)}</div>` : ''}
+      </td>
+      <td>${budgetCell(q.usage.minute, q.tokens_per_minute)}</td>
+      <td>${budgetCell(q.usage.day, q.daily_tokens)}</td>
+      <td>${budgetCell(q.usage.month, q.monthly_tokens)}</td>
+      <td class="text-end">${q.max_concurrency ?? '—'}</td>
+      <td>${q.enabled ? pill('HEALTHY', 'On') : pill('DISABLED', 'Off')}</td>
+      <td class="text-end text-nowrap">${manage ? `
+        <button class="btn btn-sm btn-outline-secondary" data-quota-toggle="${esc(q.id)}"
+                data-quota-enabled="${q.enabled}">${q.enabled ? 'Disable' : 'Enable'}</button>
+        <button class="btn btn-sm btn-outline-danger" data-quota-delete="${esc(q.id)}"
+                data-quota-name="${esc(q.subject_label || q.subject)}">Remove</button>` : ''}</td>
+    </tr>`).join('');
+  return sectionCard('Quotas',
+    'Usage is counted from the usage records. A specific row wins over the "every …" row for its scope.',
+    tableHtml('<th>Scope</th><th>Subject</th><th>Per minute</th><th>Today</th><th>This month</th>' +
+              '<th class="text-end">At once</th><th>Status</th><th></th>', rows));
+}
+
+function usageByModelCard(rows) {
+  if (!rows.length) return sectionCard('By model', null, `<div class="card-body pt-0">${empty('No gateway traffic in this period.')}</div>`);
+  return sectionCard('By model', 'The model that answered, whichever alias was asked for.',
+    tableHtml('<th>Model</th><th class="text-end">Requests</th><th class="text-end">Tokens</th>' +
+              '<th class="text-end">Avg latency</th><th class="text-end">Errors</th><th class="text-end">Fallbacks</th>',
+      rows.map((r) => `<tr>
+        <td class="mono">${esc(r.model)}</td>
+        <td class="text-end">${fmtInt(r.requests)}</td>
+        <td class="text-end">${fmtInt(r.prompt_tokens + r.completion_tokens)}</td>
+        <td class="text-end">${Math.round(r.avg_latency_ms)} ms</td>
+        <td class="text-end ${r.errors ? 'text-danger' : ''}">${fmtInt(r.errors)}</td>
+        <td class="text-end">${fmtInt(r.fallbacks)}</td>
+      </tr>`).join('')));
+}
+
+function usageByKeyCard(rows) {
+  if (!rows.length) return '';
+  return sectionCard('By API key', null,
+    tableHtml('<th>Key</th><th>Application</th><th class="text-end">Requests</th>' +
+              '<th class="text-end">Tokens</th><th class="text-end">Errors</th><th>Last used</th>',
+      rows.map((r) => `<tr>
+        <td><span class="fw-medium">${esc(r.key_name)}</span> <span class="mono small text-secondary">${esc(r.prefix)}…</span></td>
+        <td>${esc(r.client_name)}</td>
+        <td class="text-end">${fmtInt(r.requests)}</td>
+        <td class="text-end">${fmtInt(r.prompt_tokens + r.completion_tokens)}</td>
+        <td class="text-end ${r.errors ? 'text-danger' : ''}">${fmtInt(r.errors)}</td>
+        <td class="small">${esc(ago(r.last_used_at))}</td>
+      </tr>`).join('')));
+}
+
+function usageByUserCard(rows) {
+  if (!rows.length) return '';
+  return sectionCard('By end user',
+    'People behind a shared frontend. "Self-reported" names come from the request and were not verified.',
+    tableHtml('<th>User</th><th>Identity</th><th class="text-end">Requests</th><th class="text-end">Tokens</th><th>Last seen</th>',
+      rows.map((r) => `<tr>
+        <td class="fw-medium">${esc(r.end_user)}</td>
+        <td>${r.trusted ? pill('HEALTHY', 'Verified') : pill('WARNING', 'Self-reported')}</td>
+        <td class="text-end">${fmtInt(r.requests)}</td>
+        <td class="text-end">${fmtInt(r.prompt_tokens + r.completion_tokens)}</td>
+        <td class="small">${esc(ago(r.last_seen_at))}</td>
+      </tr>`).join('')));
+}
+
+function wireQuotaActions() {
+  document.querySelectorAll('[data-quota-toggle]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      const enabled = button.dataset.quotaEnabled !== 'true';
+      await api(`/quotas/${button.dataset.quotaToggle}`, {
+        method: 'PATCH', body: JSON.stringify({ enabled }),
+      });
+      alert(enabled ? 'Quota enabled.' : 'Quota disabled — it no longer limits anything.', 'success');
+      await refresh({ force: true });
+    });
+  });
+  document.querySelectorAll('[data-quota-delete]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(`Remove the quota for ${button.dataset.quotaName}?`)) return;
+      await api(`/quotas/${button.dataset.quotaDelete}`, { method: 'DELETE' });
+      alert('Quota removed.', 'success');
+      await refresh({ force: true });
+    });
+  });
+}
+
+/** The subject picker follows the scope: keys and models are chosen from lists (a typo
+ *  would silently limit nothing), end users are typed. */
+async function syncQuotaSubject() {
+  const scope = document.getElementById('q-scope').value;
+  const select = document.getElementById('q-subject-select');
+  const text = document.getElementById('q-subject-text');
+  const help = document.getElementById('q-subject-help');
+  const typed = scope === 'end_user';
+  select.classList.toggle('d-none', typed);
+  text.classList.toggle('d-none', !typed);
+  if (typed) {
+    help.textContent = 'The verified identity a trusted frontend forwards (for example an email). ' +
+      'Use * for every user individually. Self-reported names are never limited.';
+    return;
+  }
+  const every = scope === 'api_key' ? 'Every API key (each its own budget)' : 'Every model (each its own limit)';
+  let options = [`<option value="*">${every}</option>`];
+  try {
+    if (scope === 'api_key') {
+      const keys = await api('/api-keys');
+      options = options.concat(keys.filter((k) => !k.revoked_at).map((k) =>
+        `<option value="${esc(k.id)}">${esc(k.name)} (${esc(k.prefix)}…)</option>`));
+      help.textContent = 'A specific key wins over "every API key".';
+    } else {
+      const models = await api('/models?limit=200');
+      options = options.concat(models.items.map((m) =>
+        `<option value="${esc(m.name)}">${esc(m.name)}</option>`));
+      help.textContent = 'The model that answers, not an alias — repointing an alias cannot escape it.';
+    }
+  } catch (err) {
+    help.textContent = err.message;
+  }
+  select.innerHTML = options.join('');
+}
+
+document.getElementById('q-scope').addEventListener('change', syncQuotaSubject);
+document.getElementById('quota-modal').addEventListener('show.bs.modal', syncQuotaSubject);
+document.getElementById('usage-range').addEventListener('change', () => refresh({ force: true }));
+
+onModalSubmit('quota-form', 'quota-error', async (form) => {
+  const scope = document.getElementById('q-scope').value;
+  const subject = scope === 'end_user' ? field('q-subject-text') : document.getElementById('q-subject-select').value;
+  await api('/quotas', {
+    method: 'POST',
+    body: JSON.stringify({
+      scope,
+      subject,
+      tokens_per_minute: numberField('q-tpm'),
+      daily_tokens: numberField('q-daily'),
+      monthly_tokens: numberField('q-monthly'),
+      max_concurrency: numberField('q-conc'),
+      description: field('q-desc') || null,
+    }),
+  });
+  closeModal('quota-modal');
+  form.reset();
+  alert('Quota added. It applies from the next gateway call.', 'success');
+  await refresh({ force: true });
+});
+
 document.getElementById('alert-filter').addEventListener('change', () => refresh({ force: true }));
 
 const RENDERERS = {
@@ -2783,6 +3064,7 @@ const RENDERERS = {
   models: renderModels,
   deployments: renderDeployments,
   endpoints: renderEndpoints,
+  usage: renderUsagePage,
   knowledge: renderKnowledge,
   memory: renderMemory,
   voice: renderVoice,

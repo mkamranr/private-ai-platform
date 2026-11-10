@@ -694,3 +694,12 @@ body.app-active main {
 
 .min-w-0 { min-width: 0; }
 .table thead th { white-space: nowrap; }
+
+/* -------------------------------------------------------------------------- */
+/* E2: usage & quotas                                                         */
+/* -------------------------------------------------------------------------- */
+.alert > svg { width: 1.05rem; height: 1.05rem; vertical-align: -3px; margin-right: .35rem; }
+.progress { background: var(--bs-secondary-bg); border-radius: 999px; margin-top: .25rem; min-width: 6rem; }
+.progress-bar { border-radius: 999px; }
+.progress-bar.bg-primary { background: var(--brand-gradient) !important; }
+.card > .card-body + .table-responsive .table thead th { border-top: 1px solid var(--bs-border-color); }

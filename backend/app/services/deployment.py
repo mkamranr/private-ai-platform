@@ -32,6 +32,7 @@ from app.core.interfaces.compute import ComputeBackend, DeploymentHandle, Deploy
 from app.core.interfaces.compute import DeploymentState as BackendState
 from app.core.interfaces.scheduler import Placement, PlacementFailure, PlacementRequest
 from app.core.logging import get_logger
+from app.core.security import SecretCipher
 from app.models.audit import AuditAction
 from app.models.auth import User
 from app.models.infrastructure import Node, NodeStatus
@@ -43,9 +44,11 @@ from app.models.models_registry import (
 )
 from app.repositories.infrastructure import NodeRepository
 from app.repositories.models_registry import ModelDeploymentRepository, ModelRepository
+from app.repositories.operations import InferenceBackendRepository
 from app.schemas.models_registry import DeploymentDetail
 from app.services.audit import AuditService
 from app.services.compute_backend import CONTAINER_PORT
+from app.services.inference_backends import backend_api_key
 from app.services.infrastructure import GpuService
 from app.services.llm_provider import wait_until_serving
 from app.services.scheduler import SimpleGpuScheduler, gpu_resources_for
@@ -248,7 +251,15 @@ class DeploymentService:
             # reject a hosted endpoint that authenticates its model list and blame the URL;
             # probing a local engine *with* the key would post it somewhere it does not
             # belong. See `GatewayService._provider`.
-            api_key=external_key_for(self._settings, runtime, endpoint),
+            api_key=(
+                await backend_api_key(
+                    InferenceBackendRepository(self._models.session),
+                    SecretCipher(self._settings.security),
+                    backend_id=model.backend_id,
+                    endpoint=endpoint,
+                )
+                or external_key_for(self._settings, runtime, endpoint)
+            ),
         )
         if not healthy:
             raise ValidationError(

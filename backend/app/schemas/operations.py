@@ -1,4 +1,4 @@
-"""Wire contracts for inference backends and alerts (E1)."""
+"""Wire contracts for inference backends and alerts (E1) and gateway quotas (E2)."""
 
 from __future__ import annotations
 
@@ -144,3 +144,102 @@ class AlertSummary(BaseModel):
     WARNING: int = 0
     CRITICAL: int = 0
     total: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Gateway quotas and usage (E2)
+# ---------------------------------------------------------------------------
+QuotaScopeLiteral = Literal["api_key", "end_user", "model"]
+
+_TPM = Field(default=None, ge=1, le=100_000_000)
+_BUDGET = Field(default=None, ge=1, le=10**15)
+_CONCURRENCY = Field(default=None, ge=1, le=100_000)
+
+
+class QuotaCreateRequest(BaseModel):
+    scope: QuotaScopeLiteral
+    subject: str = Field(
+        min_length=1,
+        max_length=255,
+        description=(
+            "API key id, trusted end-user identity, or model name — or '*' for each one "
+            "individually that has no row of its own."
+        ),
+    )
+    description: str | None = Field(default=None, max_length=2000)
+    tokens_per_minute: int | None = _TPM
+    daily_tokens: int | None = _BUDGET
+    monthly_tokens: int | None = _BUDGET
+    max_concurrency: int | None = _CONCURRENCY
+    enabled: bool = True
+
+
+class QuotaUpdateRequest(BaseModel):
+    """Partial update. Send ``null`` for a limit to remove it; omit it to keep it."""
+
+    description: str | None = Field(default=None, max_length=2000)
+    tokens_per_minute: int | None = _TPM
+    daily_tokens: int | None = _BUDGET
+    monthly_tokens: int | None = _BUDGET
+    max_concurrency: int | None = _CONCURRENCY
+    enabled: bool | None = None
+
+
+class QuotaUsage(BaseModel):
+    """Consumption so far, from usage records. Null where it cannot be known (a ``*``
+    row has no single subject; the per-minute counter lives only in Valkey)."""
+
+    minute: int | None = None
+    day: int | None = None
+    month: int | None = None
+
+
+class QuotaRead(ORMModel):
+    id: uuid.UUID
+    scope: str
+    subject: str
+    #: A readable name for the subject — the key's name and prefix for an API key.
+    subject_label: str | None = None
+    description: str | None = None
+    tokens_per_minute: int | None = None
+    daily_tokens: int | None = None
+    monthly_tokens: int | None = None
+    max_concurrency: int | None = None
+    enabled: bool
+    usage: QuotaUsage = Field(default_factory=QuotaUsage)
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+class KeyUsageRow(BaseModel):
+    api_key_id: uuid.UUID
+    key_name: str
+    prefix: str
+    client_name: str
+    requests: int
+    prompt_tokens: int
+    completion_tokens: int
+    errors: int
+    last_used_at: dt.datetime | None = None
+
+
+class KeyUsageResponse(BaseModel):
+    since: dt.datetime
+    rows: list[KeyUsageRow]
+
+
+class CircuitRead(BaseModel):
+    target: str
+    #: closed | open | half_open
+    state: str
+    recent_failures: int
+    retry_in_seconds: float
+    last_error: str | None = None
+    #: The backend or model behind ``target``, when it can be named.
+    label: str | None = None
+
+
+class CircuitsResponse(BaseModel):
+    #: Circuits are held per control-plane replica; this is the one that answered.
+    scope_note: str = "Per control-plane replica: this view is the replica that answered."
+    items: list[CircuitRead]

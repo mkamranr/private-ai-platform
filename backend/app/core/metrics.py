@@ -85,6 +85,31 @@ GATEWAY_TTFT = Histogram(
     registry=REGISTRY,
 )
 
+# Gateway policy (E2) — recorded by app.services.gateway_policy and app.services.gateway.
+GATEWAY_QUOTA_REJECTIONS = Counter(
+    "ai_platform_gateway_quota_rejections_total",
+    "Gateway calls refused by a quota.",
+    # Scope and limit kind only — never the subject, which would be one series per key
+    # or per person.
+    ("scope", "quota"),
+    registry=REGISTRY,
+)
+
+GATEWAY_CIRCUIT_OPENS = Counter(
+    "ai_platform_gateway_circuit_opens_total",
+    "Times a backend circuit breaker opened after repeated upstream failures.",
+    registry=REGISTRY,
+)
+
+GATEWAY_FALLBACKS = Counter(
+    "ai_platform_gateway_fallbacks_total",
+    "Calls served by an alias's explicit fallback.",
+    # unavailable: primary had nothing serving or its circuit was open;
+    # upstream_error: primary failed the call and it was retried on the fallback.
+    ("reason",),
+    registry=REGISTRY,
+)
+
 # ---------------------------------------------------------------------------
 # Agents (M10-M12) - recorded by the runtime
 # ---------------------------------------------------------------------------

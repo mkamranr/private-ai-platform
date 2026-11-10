@@ -232,6 +232,37 @@ def normalise_base_url(url: str, backend_type: str) -> str:
     return cleaned
 
 
+async def backend_api_key(
+    backends: InferenceBackendRepository,
+    cipher: SecretCipher,
+    *,
+    backend_id: uuid.UUID | None,
+    endpoint: str | None,
+) -> str | None:
+    """The stored API key of a model's inference backend, for that backend only (E2).
+
+    Returned only when ``endpoint`` is the backend's own URL (or beneath it). A model's
+    endpoint can be edited independently of its backend link, and a credential belongs
+    to the server that issued it — sending it anywhere else is how a key leaks. The same
+    rule ``external_key_for`` applies to the hosted-provider key.
+    """
+    if backend_id is None:
+        return None
+    backend = await backends.get(backend_id)
+    if backend is None or not backend.api_key_encrypted:
+        return None
+    base = backend.base_url.rstrip("/")
+    url = (endpoint or "").rstrip("/")
+    if url != base and not url.startswith(base + "/"):
+        log.warning("backend_key_withheld", backend=backend.name, reason="endpoint_mismatch")
+        return None
+    try:
+        return cipher.decrypt(backend.api_key_encrypted)
+    except ValueError:
+        log.error("backend_key_undecryptable", backend=backend.name)
+        return None
+
+
 def platform_model_name(raw: str) -> str:
     """Sanitise a backend's model id into a platform model name (same rule as Ollama
     import: ``llama3.1:8b`` -> ``llama3-1-8b``)."""
@@ -492,15 +523,6 @@ class InferenceBackendService:
         backend = await self.get(backend_id)
         if not backend.enabled:
             raise ValidationError("Enable this backend before registering its models.")
-        if backend.has_api_key:
-            raise ValidationError(
-                "This backend needs an API key, and the gateway does not yet send a "
-                "backend's own key when serving inference (planned for expansion phase "
-                "E2). Registering its models now would add catalogue entries that fail "
-                "on first use, so it is refused. Discovery and health checks work.",
-                details={"backend_id": str(backend_id)},
-            )
-
         discovered = await self.discover(backend_id)
         wanted = set(model_ids) if model_ids is not None else None
         if wanted is not None:

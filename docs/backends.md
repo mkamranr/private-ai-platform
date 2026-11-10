@@ -42,12 +42,11 @@ At most one open alert exists per fingerprint (partial unique index).
 
 `POST /backends/{id}/models/register` registers selected models with runtime `ollama` or
 `external` and links them via `models.backend_id`. Names already in the registry are
-skipped.
+skipped. Calls the gateway makes to these models share one circuit breaker per backend (E2).
 
 ## Known limitations
 
-- **Backend API keys are not yet sent by the gateway** — that arrives with E2. Until then,
-  registering models from a backend that has an API key is refused, and the key is used
-  only for health checks and discovery.
+- Since E2 the gateway sends a backend's API key to that backend (and only to it). See
+  [gateway-policy.md](gateway-policy.md#backend-api-keys).
 - Existing models are not backfilled with a `backend_id`.
 - GPU-threshold alerts and the MCP URL check are not wired to the shared policy yet.

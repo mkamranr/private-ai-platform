@@ -1,4 +1,4 @@
-"""Inference backend and alert repositories (E1)."""
+"""Inference backend, alert (E1) and gateway quota (E2) repositories."""
 
 from __future__ import annotations
 
@@ -8,15 +8,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, literal_column, select, text, update
+from sqlalchemy import func, literal_column, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models.models_registry import Model
+from app.models.models_registry import Model, UsageRecord
 from app.models.operations import (
     OPEN_ALERT_STATES,
+    QUOTA_WILDCARD,
     Alert,
     AlertState,
+    GatewayQuota,
     InferenceBackend,
+    QuotaScope,
 )
 from app.repositories.base import BaseRepository
 
@@ -163,3 +166,66 @@ class AlertRepository(BaseRepository[Alert]):
         )
         result = await self.session.execute(stmt)
         return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+
+class GatewayQuotaRepository(BaseRepository[GatewayQuota]):
+    model = GatewayQuota
+
+    async def list_quotas(self, *, scope: str | None = None) -> Sequence[GatewayQuota]:
+        stmt = select(GatewayQuota)
+        if scope is not None:
+            stmt = stmt.where(GatewayQuota.scope == scope)
+        stmt = stmt.order_by(GatewayQuota.scope, GatewayQuota.subject)
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def get_by_subject(self, scope: str, subject: str) -> GatewayQuota | None:
+        stmt = select(GatewayQuota).where(
+            GatewayQuota.scope == scope, GatewayQuota.subject == subject
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def applicable(self, subjects: Sequence[tuple[str, str]]) -> dict[str, GatewayQuota]:
+        """The enabled quota governing each ``(scope, subject)``, keyed by scope.
+
+        A row naming the subject wins over the scope's ``*`` row. One query for every
+        scope at once, because this runs on the hot path of every gateway call.
+        """
+        if not subjects:
+            return {}
+        clauses = [
+            (GatewayQuota.scope == scope) & GatewayQuota.subject.in_((subject, QUOTA_WILDCARD))
+            for scope, subject in subjects
+        ]
+        stmt = select(GatewayQuota).where(GatewayQuota.enabled.is_(True), or_(*clauses))
+        rows = (await self.session.execute(stmt)).scalars().all()
+
+        chosen: dict[str, GatewayQuota] = {}
+        for row in rows:
+            current = chosen.get(row.scope)
+            if current is None or current.subject == QUOTA_WILDCARD:
+                chosen[row.scope] = row
+        return chosen
+
+    async def tokens_since(self, scope: str, subject: str, since: dt.datetime) -> int:
+        """Tokens billed to a subject since ``since``, from ``usage_records``.
+
+        The source of truth behind every budget counter: whenever a counter is missing
+        (a new day, a Valkey restart, a quota created mid-month) it is seeded from here.
+        Each scope is backed by an existing ``(column, recorded_at)`` index.
+        """
+        column: Any
+        if scope == QuotaScope.API_KEY:
+            try:
+                key_id = uuid.UUID(subject)
+            except ValueError:
+                return 0
+            condition = UsageRecord.api_key_id == key_id
+        elif scope == QuotaScope.END_USER:
+            condition = (UsageRecord.end_user == subject) & UsageRecord.end_user_trusted.is_(True)
+        else:
+            condition = UsageRecord.model == subject
+        column = func.coalesce(
+            func.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens), 0
+        )
+        stmt = select(column).where(condition, UsageRecord.recorded_at >= since)
+        return int((await self.session.execute(stmt)).scalar_one())

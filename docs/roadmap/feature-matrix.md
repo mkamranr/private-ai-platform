@@ -9,7 +9,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 1 | Unified dashboard | P0 | Partial | `api/v1/dashboard.py`, `services/dashboard.py`, `frontend/admin` | Time range, alerts, ingestion and agent failure counts, "unavailable" vs zero audit |
 | 2 | Backend registry | P0 | Existing (E1) | `services/inference_backends.py`, `api/v1/backends.py`, `core/url_policy.py` | Gateway use of backend API keys (E2); deploy/stop/metrics capabilities |
 | 3 | Model registry | P0 | Partial | `models/models_registry.py`, `services/model_registry.py` | License, approval status (approved/experimental/deprecated/blocked), version grouping, team access, offline manifest import UI (`models/manifests/` exists) |
-| 4 | OpenAI-compatible gateway | P0 | Existing | `api/v1/gateway.py`, `services/gateway.py` | Circuit breaker, fallback policy, per-model concurrency |
+| 4 | OpenAI-compatible gateway | P0 | Existing | `api/v1/gateway.py`, `services/gateway.py`, `services/gateway_policy.py` | Round-robin across replicas; mid-stream failover |
 | 5 | API key management | P0 | Existing | `services/api_keys.py`, `frontend/developer` | Expiry and allowed-alias scopes: verify against `test_api_key_scopes.py` |
 | 6 | vLLM / Ollama adapters | P0 | Existing | `services/llm_provider.py`; `ollama` is an external runtime | Declared-capability contract per adapter |
 | 7 | Basic RBAC | P0 | Existing | `core/permissions.py`, `models/auth.py`, `services/seed.py` | Map to the plan's 8 built-in roles |
@@ -22,7 +22,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 14 | MCP registry / policies | P1 | Existing | `models/agents.py`, `services/tool_pipeline.py`, `mcp/` | Shared SSRF policy, MCP Servers page |
 | 15 | Agent builder | P1 | Existing | `services/agent_registry.py`, `agent_runtime.py`, `agents/*.yaml` | Global kill switch |
 | 16 | Human approval | P1 | Existing | `agent_runs` approval state, Approvals page | Approval inbox shared with workflows |
-| 17 | Usage quotas | P1 | Partial | `usage_records`, per-key `rate_limit_per_minute` | Token/min, daily/monthly budgets, soft warnings |
+| 17 | Usage quotas | P1 | Existing (E2) | `gateway_quotas`, `services/gateway_policy.py`, Usage & Quotas page | Soft warnings at a budget threshold; team-level quotas (E3) |
 | 18 | Backup / restore | P1 | Partial | `scripts/backup.py`, `docs/backup.md` | Audited API and UI |
 | 19 | Workflow visual builder | P2 | Planned | none | Engine, then editor |
 | 20 | OIDC / LDAP / AD | P2 | Existing | `services/auth_providers.py`, `fixtures/oidc` | none |

@@ -67,12 +67,15 @@ from app.models.models_registry import (
 )
 from app.models.operations import (
     OPEN_ALERT_STATES,
+    QUOTA_WILDCARD,
     Alert,
     AlertSeverity,
     AlertState,
     BackendStatus,
     BackendType,
+    GatewayQuota,
     InferenceBackend,
+    QuotaScope,
 )
 from app.models.system import SystemSetting
 from app.models.voice import (
@@ -86,6 +89,7 @@ from app.models.voice import (
 __all__ = [
     "ACTIVE_STATES",
     "OPEN_ALERT_STATES",
+    "QUOTA_WILDCARD",
     "TERMINAL_STATES",
     "TERMINAL_VOICE_STATES",
     "Agent",
@@ -115,6 +119,7 @@ __all__ = [
     "DocumentStatus",
     "EmbeddingModel",
     "EnrollmentStatus",
+    "GatewayQuota",
     "Gpu",
     "GpuAllocation",
     "GpuHealth",
@@ -137,6 +142,7 @@ __all__ = [
     "NodeRole",
     "NodeStatus",
     "Permission",
+    "QuotaScope",
     "Role",
     "RunState",
     "Skill",

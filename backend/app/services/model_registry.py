@@ -43,6 +43,9 @@ from app.services.audit import AuditService
 
 log = get_logger(__name__)
 
+#: "Leave this field unchanged" for partial updates where `None` is a meaningful value.
+UNSET: Any = object()
+
 # Files that make a directory look like a model. Anything else in the directory is
 # catalogued for completeness but does not by itself mark the model available.
 _WEIGHT_SUFFIXES = frozenset({".safetensors", ".bin", ".gguf", ".pt", ".pth", ".onnx"})
@@ -591,12 +594,32 @@ class ModelRegistryService:
         from app.schemas.models_registry import AliasDetail
 
         details = []
-        for alias in await self._aliases.list_all():
+        aliases = await self._aliases.list_all()
+        names = {a.id: a.alias for a in aliases}
+        for alias in aliases:
             detail = AliasDetail.model_validate(alias)
             detail.model_name = alias.model.name
             detail.serving = bool(await self._deployments.serving_for_model(alias.model_id))
+            if alias.fallback_alias_id is not None:
+                detail.fallback_alias = names.get(alias.fallback_alias_id)
             details.append(detail)
         return details
+
+    async def _check_fallback(self, fallback_alias_id: uuid.UUID, *, alias_id: Any) -> None:
+        """A fallback must exist and must not be the alias itself (E2).
+
+        Chains are allowed to exist but are never followed past one hop at request time,
+        so a cycle is harmless; refusing self-reference just catches the obvious typo.
+        """
+        if alias_id is not None and fallback_alias_id == alias_id:
+            raise ValidationError(
+                "An alias cannot fall back to itself.", details={"field": "fallback_alias_id"}
+            )
+        if await self._aliases.get(fallback_alias_id) is None:
+            raise NotFoundError(
+                f"No alias with id {fallback_alias_id} to fall back to.",
+                details={"field": "fallback_alias_id"},
+            )
 
     async def create_alias(
         self,
@@ -606,6 +629,7 @@ class ModelRegistryService:
         description: str | None,
         enabled: bool,
         actor: User,
+        fallback_alias_id: uuid.UUID | None = None,
     ) -> Any:
         from app.models.models_registry import ModelAlias
 
@@ -622,8 +646,15 @@ class ModelRegistryService:
                 details={"field": "alias"},
             )
 
+        if fallback_alias_id is not None:
+            await self._check_fallback(fallback_alias_id, alias_id=None)
+
         record = ModelAlias(
-            alias=alias, model_id=model_id, description=description, enabled=enabled
+            alias=alias,
+            model_id=model_id,
+            description=description,
+            enabled=enabled,
+            fallback_alias_id=fallback_alias_id,
         )
         self._aliases.add(record)
         await self._aliases.flush()
@@ -635,7 +666,11 @@ class ModelRegistryService:
             resource_type="model_alias",
             resource_id=str(record.id),
             message=f"Alias {alias!r} created",
-            metadata={"alias": alias, "model_id": str(model_id)},
+            metadata={
+                "alias": alias,
+                "model_id": str(model_id),
+                "fallback_alias_id": str(fallback_alias_id) if fallback_alias_id else None,
+            },
         )
         return record
 
@@ -647,12 +682,20 @@ class ModelRegistryService:
         description: str | None,
         enabled: bool | None,
         actor: User,
+        fallback_alias_id: uuid.UUID | object | None = UNSET,
     ) -> Any:
         record = await self._aliases.get(alias_id)
         if record is None:
             raise NotFoundError(f"No alias with id {alias_id}.")
 
         previous = str(record.model_id)
+        previous_fallback = str(record.fallback_alias_id) if record.fallback_alias_id else None
+        if fallback_alias_id is not UNSET:
+            if isinstance(fallback_alias_id, uuid.UUID):
+                await self._check_fallback(fallback_alias_id, alias_id=record.id)
+                record.fallback_alias_id = fallback_alias_id
+            else:
+                record.fallback_alias_id = None
         if model_id is not None:
             if await self._models.get(model_id) is None:
                 raise NotFoundError(f"No model with id {model_id}.")
@@ -669,8 +712,15 @@ class ModelRegistryService:
             resource_type="model_alias",
             resource_id=str(record.id),
             message=f"Alias {record.alias!r} updated",
-            metadata={"from_model": previous, "to_model": str(record.model_id)},
+            metadata={
+                "from_model": previous,
+                "to_model": str(record.model_id),
+                "from_fallback": previous_fallback,
+                "to_fallback": str(record.fallback_alias_id) if record.fallback_alias_id else None,
+            },
         )
+        await self._aliases.flush()
+        await self._aliases.session.refresh(record)
         return record
 
     async def delete_alias(self, alias_id: uuid.UUID, *, actor: User) -> None:

@@ -292,6 +292,11 @@ class ModelAlias(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "model_aliases"
+    __table_args__ = (
+        CheckConstraint(
+            "fallback_alias_id IS NULL OR fallback_alias_id <> id", name="fallback_not_self"
+        ),
+    )
 
     alias: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     model_id: Mapped[uuid.UUID] = mapped_column(
@@ -299,6 +304,13 @@ class ModelAlias(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     description: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    #: Where to send a request when this alias's model cannot serve it (E2). Explicit,
+    #: never inferred: an operator decides that `enterprise-chat` may fall back to a
+    #: smaller model, because only they know whether that answer is acceptable. One hop
+    #: only — the fallback's own fallback is not followed, so a cycle cannot loop.
+    fallback_alias_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("model_aliases.id", ondelete="SET NULL")
+    )
 
     model: Mapped[Model] = relationship()
 
@@ -452,6 +464,9 @@ class UsageRecord(Base):
     # True when a streamed response ended early. Its token counts are a lower bound,
     # and a report that silently mixed those with complete ones would understate usage.
     client_disconnected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: The alias that could not serve this call, when its fallback answered instead (E2).
+    #: `requested_model` stays what the caller asked for and `model` what answered.
+    fallback_from: Mapped[str | None] = mapped_column(String(128))
 
     # Who the call was *for*, behind a shared frontend (M17). Distinct from `user_id`,
     # which is a platform account: an Open WebUI user need not have one.

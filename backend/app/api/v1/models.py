@@ -48,6 +48,7 @@ from app.schemas.models_registry import (
     UsageSummaryRow,
 )
 from app.services.deployment import DeploymentRequestSpec
+from app.services.model_registry import UNSET
 
 router = APIRouter(tags=["models"])
 
@@ -448,6 +449,7 @@ async def create_alias(
         description=payload.description,
         enabled=payload.enabled,
         actor=actor,
+        fallback_alias_id=payload.fallback_alias_id,
     )
     return AliasRead.model_validate(alias)
 
@@ -469,6 +471,10 @@ async def update_alias(
         description=payload.description,
         enabled=payload.enabled,
         actor=actor,
+        # Omitted means "leave it"; an explicit null removes the fallback.
+        fallback_alias_id=(
+            payload.fallback_alias_id if "fallback_alias_id" in payload.model_fields_set else UNSET
+        ),
     )
     return AliasRead.model_validate(alias)
 

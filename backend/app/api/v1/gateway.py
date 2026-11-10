@@ -121,7 +121,7 @@ async def chat_completions(
 
     # Resolve before streaming starts, so an unknown or undeployed model still produces a
     # real 404/503 rather than a mid-stream SSE error the caller has to parse.
-    target = await service.prepare_stream(body)
+    target = await service.prepare_stream(body, context)
     accounting = StreamAccounting()
 
     return StreamingResponse(

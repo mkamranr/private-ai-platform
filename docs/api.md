@@ -532,3 +532,25 @@ Under `/api/v1`, authenticated with the platform JWT. See [backends.md](backends
 
 Backend API keys are stored Fernet-encrypted and never returned; responses carry only
 `has_api_key`.
+
+## Gateway policy — Expansion E2
+
+Under `/api/v1`, authenticated with the platform JWT. See [gateway-policy.md](gateway-policy.md).
+
+| method | path | permission |
+|---|---|---|
+| GET | `/quotas` | `quota.view` — each with today's and this month's usage |
+| POST | `/quotas` | `quota.manage` — `scope` is `api_key`, `end_user` or `model`; subject `*` means each one |
+| PATCH | `/quotas/{id}` | `quota.manage` — send `null` to remove a limit; at least one must remain |
+| DELETE | `/quotas/{id}` | `quota.manage` |
+| GET | `/usage/by-key` | `usage.view` — requests, tokens and errors per API key |
+| GET | `/gateway/circuits` | `monitoring.view` — circuit breakers on the replica that answered |
+
+Changes to existing routes, all backwards-compatible:
+
+- `POST /model-aliases` and `PUT /model-aliases/{id}` accept `fallback_alias_id`. On PUT,
+  omitting it leaves it unchanged and `null` removes it. Alias responses include it, and
+  `GET /model-aliases` also gives `fallback_alias` (the name).
+- `GET /usage` rows gain `errors` and `fallbacks`.
+- Gateway (`/v1`) calls may now return **429** for a quota (`details.scope`,
+  `details.quota`) and **503** while a backend's circuit is open. Both send `Retry-After`.

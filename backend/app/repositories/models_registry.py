@@ -146,6 +146,15 @@ class ModelAliasRepository(BaseRepository[ModelAlias]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_enabled(self, alias_id: uuid.UUID) -> ModelAlias | None:
+        """An enabled alias by id with its model loaded — how a fallback is followed."""
+        stmt = (
+            select(ModelAlias)
+            .where(ModelAlias.id == alias_id, ModelAlias.enabled.is_(True))
+            .options(selectinload(ModelAlias.model))
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list_all(self) -> Sequence[ModelAlias]:
         stmt = select(ModelAlias).options(selectinload(ModelAlias.model)).order_by(ModelAlias.alias)
         return (await self.session.execute(stmt)).scalars().all()
@@ -208,6 +217,8 @@ class UsageRepository(BaseRepository[UsageRecord]):
                 func.sum(UsageRecord.prompt_tokens).label("prompt_tokens"),
                 func.sum(UsageRecord.completion_tokens).label("completion_tokens"),
                 func.avg(UsageRecord.latency_ms).label("avg_latency_ms"),
+                func.count().filter(UsageRecord.status_code >= 400).label("errors"),
+                func.count().filter(UsageRecord.fallback_from.isnot(None)).label("fallbacks"),
             )
             .where(UsageRecord.recorded_at >= since)
             .group_by(UsageRecord.model)
@@ -223,6 +234,49 @@ class UsageRepository(BaseRepository[UsageRecord]):
                 "prompt_tokens": int(row.prompt_tokens or 0),
                 "completion_tokens": int(row.completion_tokens or 0),
                 "avg_latency_ms": round(float(row.avg_latency_ms or 0), 2),
+                "errors": int(row.errors or 0),
+                "fallbacks": int(row.fallbacks or 0),
+            }
+            for row in (await self.session.execute(stmt)).all()
+        ]
+
+    async def by_api_key(self, *, since: dt.datetime, limit: int = 100) -> list[dict]:
+        """Aggregate usage per API key (E2), named by key and client.
+
+        Joined rather than resolved afterwards, so a revoked or rotated key still shows
+        under its own name. Calls with no key (internal callers) are left out.
+        """
+        tokens = func.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens)
+        stmt = (
+            select(
+                UsageRecord.api_key_id,
+                ApiKey.name.label("key_name"),
+                ApiKey.prefix,
+                ApiClient.name.label("client_name"),
+                func.count().label("requests"),
+                func.sum(UsageRecord.prompt_tokens).label("prompt_tokens"),
+                func.sum(UsageRecord.completion_tokens).label("completion_tokens"),
+                func.count().filter(UsageRecord.status_code >= 400).label("errors"),
+                func.max(UsageRecord.recorded_at).label("last_used_at"),
+            )
+            .join(ApiKey, ApiKey.id == UsageRecord.api_key_id)
+            .join(ApiClient, ApiClient.id == ApiKey.client_id)
+            .where(UsageRecord.recorded_at >= since)
+            .group_by(UsageRecord.api_key_id, ApiKey.name, ApiKey.prefix, ApiClient.name)
+            .order_by(tokens.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "api_key_id": row.api_key_id,
+                "key_name": row.key_name,
+                "prefix": row.prefix,
+                "client_name": row.client_name,
+                "requests": row.requests,
+                "prompt_tokens": int(row.prompt_tokens or 0),
+                "completion_tokens": int(row.completion_tokens or 0),
+                "errors": int(row.errors or 0),
+                "last_used_at": row.last_used_at,
             }
             for row in (await self.session.execute(stmt)).all()
         ]

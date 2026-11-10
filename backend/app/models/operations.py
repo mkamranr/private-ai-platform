@@ -1,4 +1,5 @@
-"""Inference backends and in-app alerts (expansion E1; plan §5.2, §5.15).
+"""Inference backends, in-app alerts and gateway quotas (expansion E1/E2; plan §5.2,
+§5.14, §5.15).
 
 Two operational tables that share a theme: things the platform watches.
 
@@ -22,6 +23,7 @@ import enum
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -31,6 +33,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -167,3 +170,72 @@ class Alert(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return f"<Alert {self.fingerprint} {self.severity} {self.state}>"
+
+
+class QuotaScope(enum.StrEnum):
+    #: ``subject`` is an API key id.
+    API_KEY = "api_key"
+    #: ``subject`` is a *trusted* forwarded end-user identity (M17). Self-reported
+    #: identities are never subject to a quota: anyone could exhaust someone else's
+    #: budget simply by putting their name in the request's ``user`` field.
+    END_USER = "end_user"
+    #: ``subject`` is the name of the model that answers (not the alias asked for), so
+    #: repointing an alias cannot move traffic out from under a model's limit.
+    MODEL = "model"
+
+
+#: Subject meaning "each one individually, unless it has its own row". A ``*`` daily
+#: budget on ``end_user`` gives every person behind the chat frontend their own budget;
+#: it is never one pool shared by all of them.
+QUOTA_WILDCARD = "*"
+
+
+class GatewayQuota(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Limits the gateway enforces beyond the per-key request rate (E2, plan §5.14).
+
+    Every limit is optional; a row sets whichever it needs. Token budgets are counted in
+    Valkey for speed and seeded from ``usage_records`` — the source of truth — whenever a
+    counter is missing, so a Valkey restart forgets nothing that was billed.
+    """
+
+    __tablename__ = "gateway_quotas"
+    __table_args__ = (
+        UniqueConstraint("scope", "subject"),
+        CheckConstraint("scope IN ('api_key','end_user','model')", name="scope_valid"),
+        CheckConstraint(
+            "tokens_per_minute IS NOT NULL OR daily_tokens IS NOT NULL "
+            "OR monthly_tokens IS NOT NULL OR max_concurrency IS NOT NULL",
+            name="has_a_limit",
+        ),
+        CheckConstraint(
+            "(tokens_per_minute IS NULL OR tokens_per_minute > 0) "
+            "AND (daily_tokens IS NULL OR daily_tokens > 0) "
+            "AND (monthly_tokens IS NULL OR monthly_tokens > 0) "
+            "AND (max_concurrency IS NULL OR max_concurrency > 0)",
+            name="limits_positive",
+        ),
+    )
+
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    tokens_per_minute: Mapped[int | None] = mapped_column(Integer)
+    daily_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    monthly_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    #: Requests in flight at once. Streams count until they finish.
+    max_concurrency: Mapped[int | None] = mapped_column(Integer)
+
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    @property
+    def has_token_limits(self) -> bool:
+        return any(
+            v is not None for v in (self.tokens_per_minute, self.daily_tokens, self.monthly_tokens)
+        )
+
+    def __repr__(self) -> str:
+        return f"<GatewayQuota {self.scope}:{self.subject}>"

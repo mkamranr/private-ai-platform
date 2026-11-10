@@ -18,6 +18,10 @@ easy and the failure is quiet:
 3. **A client disconnect still records usage.** The tokens were generated and the GPU
    time was spent whether or not anyone read the response.
 4. **Rate limiting is per key**, in Redis, so it holds across control-plane replicas.
+
+Expansion E2 adds policy around the call (see app/services/gateway_policy.py): token
+budgets and concurrency limits per key, trusted end user and model; a circuit breaker per
+backend; an alias's explicit fallback; and a backend's own API key, sent only to it.
 """
 
 from __future__ import annotations
@@ -28,9 +32,9 @@ import json
 import math
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -47,8 +51,9 @@ from app.core.errors import (
 )
 from app.core.interfaces.llm import ChatMessage
 from app.core.logging import get_logger
-from app.core.security import hash_api_key
-from app.models.models_registry import ApiKey, Model, ModelDeployment, UsageRecord
+from app.core.security import SecretCipher, hash_api_key
+from app.models.models_registry import ApiKey, Model, ModelAlias, ModelDeployment, UsageRecord
+from app.models.operations import QuotaScope
 from app.repositories.models_registry import (
     ApiKeyRepository,
     ModelAliasRepository,
@@ -56,13 +61,18 @@ from app.repositories.models_registry import (
     ModelRepository,
     UsageRepository,
 )
+from app.repositories.operations import GatewayQuotaRepository, InferenceBackendRepository
+from app.services.gateway_policy import BREAKERS, Admission, GatewayPolicy
 from app.services.identity import self_reported_identity
+from app.services.inference_backends import backend_api_key
 from app.services.llm_provider import ProviderError, VLLMProvider
 from app.services.media_provider import HttpOcrEngine, HttpSpeechToText, HttpTextToSpeech
 
 log = get_logger(__name__)
 
 SSE_DONE = "data: [DONE]\n\n"
+
+_T = TypeVar("_T")
 
 
 @dataclass(slots=True)
@@ -75,6 +85,23 @@ class ResolvedTarget:
     internal_url: str
     # The name the runtime itself answers to, which may differ from the alias.
     served_model_name: str
+    #: The inference backend's own key (E2), already checked to belong to `internal_url`.
+    api_key: str | None = None
+    #: Set when the requested alias could not serve and its fallback is serving instead.
+    fallback_from: str | None = None
+    #: The requested alias's fallback, still available to try if this target fails.
+    fallback_alias_id: uuid.UUID | None = None
+    #: Which circuit breaker this call reports to — see CircuitBreakers.
+    breaker_key: str = ""
+
+
+class _UpstreamFailedError(Exception):
+    """A provider call failed on every target tried; carries the last one for accounting."""
+
+    def __init__(self, target: ResolvedTarget, error: ProviderError) -> None:
+        super().__init__(str(error))
+        self.target = target
+        self.error = error
 
 
 @dataclass(slots=True)
@@ -112,6 +139,9 @@ class GatewayContext:
     end_user: str | None = None
     end_user_trusted: bool = False
 
+    #: Budgets and concurrency slots this call was admitted against (E2).
+    admission: Admission = field(default_factory=Admission)
+
 
 class GatewayService:
     def __init__(
@@ -135,6 +165,13 @@ class GatewayService:
         # Usage records are written on their own session, never the request's — see
         # _record for why that is a correctness requirement rather than a preference.
         self._session_factory = session_factory
+        # E2 collaborators share the request's session through the model repository,
+        # so every construction site gets them without a signature change.
+        self._backends = InferenceBackendRepository(models.session)
+        self._cipher = SecretCipher(settings.security)
+        self._policy = GatewayPolicy(
+            settings.gateway, redis, GatewayQuotaRepository(models.session)
+        )
 
     # -- authentication ----------------------------------------------------
     async def authenticate(self, credential: str) -> ApiKey:
@@ -231,6 +268,10 @@ class GatewayService:
         Accepts an alias or a model name. Aliases win: that is what lets an operator
         repoint `enterprise-chat` from Qwen3-30B to Qwen3-235B without any developer
         application changing.
+
+        When the alias's model has nothing serving, or every deployment's circuit is
+        open, its explicit fallback alias is used instead (E2). One hop only: the
+        fallback's own fallback is never followed, so a cycle cannot loop.
         """
         model: Model | None = None
 
@@ -247,6 +288,36 @@ class GatewayService:
                 details={"available": sorted(available)[:20]},
             )
 
+        try:
+            return await self._target(requested, model, alias)
+        except DependencyUnavailableError:
+            fallback = await self._fallback_alias(alias)
+            if fallback is None:
+                raise
+            target = await self._target(requested, fallback.model, None)
+            target.fallback_from = requested
+            metrics.GATEWAY_FALLBACKS.labels("unavailable").inc()
+            log.info(
+                "alias_fallback", alias=requested, fallback=fallback.alias, reason="unavailable"
+            )
+            return target
+
+    async def _fallback_alias(self, alias: ModelAlias | None) -> ModelAlias | None:
+        if alias is None or alias.fallback_alias_id is None:
+            return None
+        return await self._aliases.get_enabled(alias.fallback_alias_id)
+
+    @staticmethod
+    def _breaker_key(model: Model, deployment: ModelDeployment) -> str:
+        # Per backend when the model is linked to one, so every model on a dead server
+        # trips together; otherwise per deployment, the narrowest thing that can fail.
+        if model.backend_id is not None:
+            return f"backend:{model.backend_id}"
+        return f"deployment:{deployment.id}"
+
+    async def _target(
+        self, requested: str, model: Model, alias: ModelAlias | None
+    ) -> ResolvedTarget:
         serving = await self._deployments.serving_for_model(model.id)
         live = [d for d in serving if d.internal_url]
         if not live:
@@ -255,25 +326,122 @@ class GatewayService:
                 details={"model": model.name},
             )
 
-        if len(live) > 1:
-            # V1 is deterministic: first by creation order, so repeated calls hit the
-            # same instance and a debugging session is reproducible. Round-robin and
-            # failover are V2 and slot in exactly here.
+        # Deployments whose circuit is open are skipped, so a second replica of the same
+        # model takes over from a failing one without waiting for a timeout.
+        waits = {d.id: BREAKERS.open_for(self._breaker_key(model, d)) for d in live}
+        usable = [d for d in live if waits[d.id] is None]
+        if not usable:
+            retry = math.ceil(min(w for w in waits.values() if w is not None))
+            raise DependencyUnavailableError(
+                f"{model.name!r} is temporarily unavailable: its backend failed repeatedly "
+                f"and is being left alone for {retry}s before it is tried again.",
+                details={"model": model.name, "retry_after_seconds": retry},
+            )
+
+        if len(usable) > 1:
+            # Deterministic: first by creation order, so repeated calls hit the same
+            # instance and a debugging session is reproducible.
             log.warning(
                 "multiple_deployments_for_model",
                 model=model.name,
-                count=len(live),
-                chosen=str(live[0].id),
+                count=len(usable),
+                chosen=str(usable[0].id),
             )
 
-        deployment = live[0]
+        deployment = usable[0]
         return ResolvedTarget(
             requested_model=requested,
             model=model,
             deployment=deployment,
             internal_url=deployment.internal_url or "",
             served_model_name=model.served_model_name,
+            api_key=await backend_api_key(
+                self._backends,
+                self._cipher,
+                backend_id=model.backend_id,
+                endpoint=deployment.internal_url,
+            ),
+            fallback_alias_id=alias.fallback_alias_id if alias is not None else None,
+            breaker_key=self._breaker_key(model, deployment),
         )
+
+    # -- policy (E2) -------------------------------------------------------
+    async def _admit(self, context: GatewayContext, target: ResolvedTarget) -> None:
+        """Check budgets and take concurrency slots for this call, or refuse with 429.
+
+        Called by the gateway's own call methods, so `/v1` and the voice assistant are
+        admitted (voice carries no key, so only model limits apply to it). Agents and
+        ingestion reach a model through `provider_for_model` and are not admitted.
+        """
+        subjects: list[tuple[str, str]] = []
+        if context.api_key is not None:
+            subjects.append((QuotaScope.API_KEY, str(context.api_key.id)))
+        if context.end_user and context.end_user_trusted:
+            subjects.append((QuotaScope.END_USER, context.end_user))
+        subjects.append((QuotaScope.MODEL, target.model.name))
+        await self._policy.admit(context.admission, subjects)
+
+    async def release(self, context: GatewayContext) -> None:
+        await self._policy.release(context.admission)
+
+    def _upstream_failed(self, target: ResolvedTarget, exc: ProviderError) -> None:
+        if target.breaker_key:
+            BREAKERS.record_failure(target.breaker_key, self._settings.gateway, str(exc))
+
+    async def _runtime_fallback(
+        self, target: ResolvedTarget, context: GatewayContext
+    ) -> ResolvedTarget | None:
+        """The alias's fallback, after the primary failed a call it was serving."""
+        if target.fallback_from is not None or target.fallback_alias_id is None:
+            return None
+        alias = await self._aliases.get_enabled(target.fallback_alias_id)
+        if alias is None:
+            return None
+        try:
+            fallback = await self._target(target.requested_model, alias.model, None)
+            # The model that failed is neither charged nor kept busy; the fallback must
+            # fit its own model limits like any other call.
+            await self._policy.drop_scope(context.admission, QuotaScope.MODEL)
+            await self._policy.admit(context.admission, [(QuotaScope.MODEL, fallback.model.name)])
+        except (DependencyUnavailableError, RateLimitError):
+            return None
+        fallback.fallback_from = target.requested_model
+        metrics.GATEWAY_FALLBACKS.labels("upstream_error").inc()
+        log.info(
+            "alias_fallback",
+            alias=target.requested_model,
+            fallback=alias.alias,
+            reason="upstream_error",
+        )
+        return fallback
+
+    async def _attempt(
+        self,
+        target: ResolvedTarget,
+        context: GatewayContext,
+        call: Callable[[ResolvedTarget], Awaitable[_T]],
+    ) -> tuple[_T, ResolvedTarget]:
+        """Run one upstream call, feeding the breaker; retry once on the fallback.
+
+        Only for buffered calls: once a stream has sent bytes there is no retrying it.
+        Raises `_UpstreamFailedError` naming the last target tried.
+        """
+        try:
+            result = await call(target)
+        except ProviderError as exc:
+            self._upstream_failed(target, exc)
+            fallback = await self._runtime_fallback(target, context)
+            if fallback is None:
+                raise _UpstreamFailedError(target, exc) from exc
+            try:
+                result = await call(fallback)
+            except ProviderError as exc2:
+                self._upstream_failed(fallback, exc2)
+                raise _UpstreamFailedError(fallback, exc2) from exc2
+            BREAKERS.record_success(fallback.breaker_key)
+            return result, fallback
+        BREAKERS.record_success(target.breaker_key)
+        return result, target
 
     async def list_available(self) -> list[dict[str, Any]]:
         """The OpenAI-shaped model list.
@@ -357,7 +525,10 @@ class GatewayService:
         # are `external`; only one issued the key. Keying on the runtime would post an
         # OpenRouter token to localhost, which is how a credential ends up somewhere nobody
         # meant to put it.
-        api_key = external_key_for(
+        #
+        # A linked inference backend's own key comes first (E2); it was matched to this
+        # exact endpoint when the target was resolved.
+        api_key = target.api_key or external_key_for(
             self._settings,
             target.model.runtime,
             target.model.endpoint_url or target.internal_url,
@@ -390,21 +561,31 @@ class GatewayService:
         filename: str = "audio.wav",
     ) -> dict[str, Any]:
         target = await self.resolve(str(body.get("model") or ""))
-        engine = HttpSpeechToText(target.internal_url)
+        await self._admit(context, target)
         try:
-            transcript = await engine.transcribe(
-                audio,
-                model=target.served_model_name,
-                filename=filename,
-                language=body.get("language") or None,
-                prompt=body.get("prompt") or None,
-                timestamps=bool(body.get("timestamp_granularities")),
+            transcript, target = await self._attempt(
+                target,
+                context,
+                lambda t: HttpSpeechToText(t.internal_url).transcribe(
+                    audio,
+                    model=t.served_model_name,
+                    filename=filename,
+                    language=body.get("language") or None,
+                    prompt=body.get("prompt") or None,
+                    timestamps=bool(body.get("timestamp_granularities")),
+                ),
             )
-        except ProviderError as exc:
+        except _UpstreamFailedError as failed:
             await self._record(
-                context, target, streamed=False, status_code=502, endpoint="audio.transcriptions"
+                context,
+                failed.target,
+                streamed=False,
+                status_code=502,
+                endpoint="audio.transcriptions",
             )
-            raise DependencyUnavailableError(str(exc)) from exc
+            raise DependencyUnavailableError(str(failed.error)) from failed.error
+        finally:
+            await self.release(context)
 
         # Audio has no tokens. Seconds are what an ASR engine costs and what a site
         # meters, so the duration is recorded where prompt_tokens would be for chat —
@@ -438,20 +619,26 @@ class GatewayService:
         if not text:
             raise ValidationError("'input' is required.")
         target = await self.resolve(str(body.get("model") or ""))
-        engine = HttpTextToSpeech(target.internal_url)
+        await self._admit(context, target)
         try:
-            speech = await engine.synthesize(
-                text,
-                model=target.served_model_name,
-                voice=str(body.get("voice") or "alloy"),
-                audio_format=str(body.get("response_format") or "wav"),
-                speed=float(body.get("speed") or 1.0),
+            speech, target = await self._attempt(
+                target,
+                context,
+                lambda t: HttpTextToSpeech(t.internal_url).synthesize(
+                    text,
+                    model=t.served_model_name,
+                    voice=str(body.get("voice") or "alloy"),
+                    audio_format=str(body.get("response_format") or "wav"),
+                    speed=float(body.get("speed") or 1.0),
+                ),
             )
-        except ProviderError as exc:
+        except _UpstreamFailedError as failed:
             await self._record(
-                context, target, streamed=False, status_code=502, endpoint="audio.speech"
+                context, failed.target, streamed=False, status_code=502, endpoint="audio.speech"
             )
-            raise DependencyUnavailableError(str(exc)) from exc
+            raise DependencyUnavailableError(str(failed.error)) from failed.error
+        finally:
+            await self.release(context)
 
         # Characters in, for the same reason seconds are recorded above: it is what TTS
         # engines charge by and the only quantity known before synthesis.
@@ -506,17 +693,24 @@ class GatewayService:
         if not messages:
             raise ValidationError("'messages' must contain at least one message.")
 
+        await self._admit(context, target)
         try:
-            completion = await self._provider(target).chat(
-                messages,
-                model=target.served_model_name,
-                temperature=body.get("temperature"),
-                max_tokens=body.get("max_tokens"),
-                tools=body.get("tools"),
+            completion, target = await self._attempt(
+                target,
+                context,
+                lambda t: self._provider(t).chat(
+                    messages,
+                    model=t.served_model_name,
+                    temperature=body.get("temperature"),
+                    max_tokens=body.get("max_tokens"),
+                    tools=body.get("tools"),
+                ),
             )
-        except ProviderError as exc:
-            await self._record(context, target, streamed=False, status_code=502)
-            raise DependencyUnavailableError(str(exc)) from exc
+        except _UpstreamFailedError as failed:
+            await self._record(context, failed.target, streamed=False, status_code=502)
+            raise DependencyUnavailableError(str(failed.error)) from failed.error
+        finally:
+            await self.release(context)
 
         await self._record(
             context,
@@ -556,17 +750,25 @@ class GatewayService:
             },
         }
 
-    async def prepare_stream(self, body: dict[str, Any]) -> ResolvedTarget:
-        """Resolve and validate before any bytes are sent.
+    async def prepare_stream(
+        self, body: dict[str, Any], context: GatewayContext | None = None
+    ) -> ResolvedTarget:
+        """Resolve, validate and admit before any bytes are sent.
 
         Deliberately separate from the generator: once a StreamingResponse begins, the
-        status code is already on the wire, so an unknown model or an undeployed one
-        could only be reported as a mid-stream SSE error. Resolving here means those
-        still produce a proper 404 or 503.
+        status code is already on the wire, so an unknown model, an undeployed one or a
+        spent budget could only be reported as a mid-stream SSE error. Doing it here
+        means those still produce a proper 404, 503 or 429.
+
+        Slots taken here are released by `finalise_stream`. A stream can only fall back
+        at this point — once it has sent bytes there is nothing to retry.
         """
         if not body.get("messages"):
             raise ValidationError("'messages' must contain at least one message.")
-        return await self.resolve(body.get("model", ""))
+        target = await self.resolve(body.get("model", ""))
+        if context is not None:
+            await self._admit(context, target)
+        return target
 
     async def stream_chunks(
         self, target: ResolvedTarget, body: dict[str, Any], accounting: StreamAccounting
@@ -638,11 +840,13 @@ class GatewayService:
                 )
 
             yield SSE_DONE
+            BREAKERS.record_success(target.breaker_key)
 
         except ProviderError as exc:
             # Headers are already sent, so no status code is available. The OpenAI SDKs
             # can surface a final error event, which is the best available signal.
             accounting.status_code = 502
+            self._upstream_failed(target, exc)
             log.warning("stream_failed", model=target.requested_model, error=str(exc)[:200])
             yield _sse({"error": {"message": str(exc)[:300], "type": "upstream_error"}})
             yield SSE_DONE
@@ -663,6 +867,7 @@ class GatewayService:
         A disconnected stream's counts are a lower bound, and are flagged as such: the
         tokens were generated and the GPU time was spent whether or not anyone read them.
         """
+        await self.release(context)
         if accounting.first_token_at is not None:
             metrics.GATEWAY_TTFT.labels(target.model.name).observe(
                 accounting.first_token_at - context.started
@@ -686,13 +891,20 @@ class GatewayService:
             raise ValidationError("'input' is required.")
         inputs = [raw] if isinstance(raw, str) else list(raw)
 
+        await self._admit(context, target)
         try:
-            result = await self._provider(target).embeddings(inputs, model=target.served_model_name)
-        except ProviderError as exc:
-            await self._record(
-                context, target, streamed=False, status_code=502, endpoint="embeddings"
+            result, target = await self._attempt(
+                target,
+                context,
+                lambda t: self._provider(t).embeddings(inputs, model=t.served_model_name),
             )
-            raise DependencyUnavailableError(str(exc)) from exc
+        except _UpstreamFailedError as failed:
+            await self._record(
+                context, failed.target, streamed=False, status_code=502, endpoint="embeddings"
+            )
+            raise DependencyUnavailableError(str(failed.error)) from failed.error
+        finally:
+            await self.release(context)
 
         await self._record(
             context,
@@ -748,6 +960,7 @@ class GatewayService:
             client_disconnected=client_disconnected,
             end_user=context.end_user,
             end_user_trusted=context.end_user_trusted,
+            fallback_from=target.fallback_from,
         )
 
         # Prometheus counters alongside the usage row (M19). Both, not one: the row is
@@ -788,6 +1001,11 @@ class GatewayService:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
             )
+
+        # Budgets are charged after the row is committed: a counter seeded from the
+        # database at the same moment then cannot count this call twice. Audio is charged
+        # in the unit it is recorded in (seconds, characters), consistent with the row.
+        await self._policy.charge(context.admission, prompt_tokens + completion_tokens)
 
 
 def _sse(payload: dict[str, Any]) -> str:

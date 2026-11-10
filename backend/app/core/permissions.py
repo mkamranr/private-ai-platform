@@ -70,6 +70,9 @@ class Permission:
     APIKEY_VIEW: Final = "apikey.view"
     APIKEY_MANAGE: Final = "apikey.manage"
     USAGE_VIEW: Final = "usage.view"
+    # Gateway quotas and budgets (E2, plan §5.14).
+    QUOTA_VIEW: Final = "quota.view"
+    QUOTA_MANAGE: Final = "quota.manage"
 
     # --- administration (M03, M24, M25) ---
     USER_VIEW: Final = "user.view"
@@ -123,6 +126,8 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.APIKEY_VIEW: "View own API keys",
     Permission.APIKEY_MANAGE: "Create and revoke API keys",
     Permission.USAGE_VIEW: "View API usage records",
+    Permission.QUOTA_VIEW: "View gateway quotas and budgets",
+    Permission.QUOTA_MANAGE: "Create, change and remove gateway quotas and budgets",
     Permission.USER_VIEW: "View users",
     Permission.USER_MANAGE: "Create, modify and delete users",
     Permission.ROLE_MANAGE: "Manage roles and their permissions",
@@ -192,6 +197,9 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.BACKEND_MANAGE,
                 Permission.ALERT_VIEW,
                 Permission.ALERT_MANAGE,
+                Permission.QUOTA_VIEW,
+                Permission.QUOTA_MANAGE,
+                Permission.USAGE_VIEW,
                 Permission.KNOWLEDGE_VIEW,
                 Permission.KNOWLEDGE_MANAGE,
                 Permission.DOCUMENT_UPLOAD,
@@ -254,6 +262,7 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.APIKEY_VIEW,
                 Permission.APIKEY_MANAGE,
                 Permission.USAGE_VIEW,
+                Permission.QUOTA_VIEW,
                 Permission.DOCUMENT_UPLOAD,
             }
         )
@@ -281,6 +290,7 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.INFRASTRUCTURE_VIEW,
                 Permission.BACKEND_VIEW,
                 Permission.ALERT_VIEW,
+                Permission.QUOTA_VIEW,
             }
         )
         | _VIEWER,

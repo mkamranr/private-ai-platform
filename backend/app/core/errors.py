@@ -131,7 +131,13 @@ async def _app_error_handler(request: Request, exc: Exception) -> JSONResponse:
         method=request.method,
         details=exc.details or None,
     )
-    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    headers = None
+    # 429s and 503s that know when to come back say so in the standard header, which
+    # the OpenAI SDKs' retry logic reads; the body carries the same number for humans.
+    retry_after = (exc.details or {}).get("retry_after_seconds")
+    if isinstance(retry_after, int | float) and retry_after > 0:
+        headers = {"Retry-After": str(int(retry_after))}
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload(), headers=headers)
 
 
 async def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:

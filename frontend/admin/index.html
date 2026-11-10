@@ -71,6 +71,10 @@
             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
     <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 5 12 2.5-6H21"/></symbol>
+    <symbol id="i-usage" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 17a8.5 8.5 0 1 1 15 0"/><path d="m12 13 4-4"/><circle cx="12" cy="13" r="1.2"/></symbol>
   </defs>
 </svg>
 
@@ -189,6 +193,7 @@
       <a class="nav-item" data-page="backends" href="#backends"><svg class="nav-icon" aria-hidden="true"><use href="#i-backends"/></svg>Inference Backends</a>
       <a class="nav-item" data-page="deployments" href="#deployments"><svg class="nav-icon" aria-hidden="true"><use href="#i-deployments"/></svg>Deployments</a>
       <a class="nav-item" data-page="endpoints" href="#endpoints"><svg class="nav-icon" aria-hidden="true"><use href="#i-endpoints"/></svg>Endpoints &amp; Keys</a>
+      <a class="nav-item" data-page="usage" href="#usage"><svg class="nav-icon" aria-hidden="true"><use href="#i-usage"/></svg>Usage &amp; Quotas</a>
 
       <div class="nav-section mt-4">Agents</div>
       <a class="nav-item" data-page="agents" href="#agents"><svg class="nav-icon" aria-hidden="true"><use href="#i-agents"/></svg>Agents</a>
@@ -272,6 +277,28 @@
           </div>
         </div>
         <div id="backends-body"></div>
+      </section>
+
+      <!-- Usage, quotas and circuit breakers (E2) -->
+      <section id="page-usage" class="page d-none">
+        <div class="page-header">
+          <div>
+            <h4 class="mb-0">Usage &amp; Quotas</h4>
+            <p class="page-subtitle">Who is using the gateway, and the limits that keep one caller
+              from starving the rest. Budgets reset at 00:00 UTC (daily) and on the 1st (monthly).</p>
+          </div>
+          <div class="page-actions">
+            <select id="usage-range" class="form-select form-select-sm" style="width:auto"
+                    aria-label="Time range">
+              <option value="24" selected>Last 24 hours</option>
+              <option value="168">Last 7 days</option>
+              <option value="720">Last 30 days</option>
+            </select>
+            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#quota-modal">
+              + Add quota</button>
+          </div>
+        </div>
+        <div id="usage-page-body"></div>
       </section>
 
       <!-- Chat -->
@@ -950,6 +977,65 @@
 
 <!-- Register model modal ----------------------------------------------------->
 <!-- Add an inference backend (E1) -->
+<div class="modal fade" id="quota-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="quota-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Add quota</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="q-scope">Applies to</label>
+              <select class="form-select" id="q-scope">
+                <option value="api_key">An API key</option>
+                <option value="end_user">A trusted end user</option>
+                <option value="model">A model</option>
+              </select>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label small text-secondary" for="q-subject">Which one</label>
+              <select class="form-select" id="q-subject-select"></select>
+              <input class="form-control d-none" id="q-subject-text" maxlength="255"
+                     placeholder="alice@example.com">
+              <div class="form-text small" id="q-subject-help"></div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary" for="q-tpm">Tokens / minute</label>
+              <input class="form-control" id="q-tpm" type="number" min="1" placeholder="no limit">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary" for="q-daily">Tokens / day</label>
+              <input class="form-control" id="q-daily" type="number" min="1" placeholder="no limit">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary" for="q-monthly">Tokens / month</label>
+              <input class="form-control" id="q-monthly" type="number" min="1" placeholder="no limit">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary" for="q-conc">Requests at once</label>
+              <input class="form-control" id="q-conc" type="number" min="1" placeholder="no limit">
+            </div>
+            <div class="col-12 form-text small mt-0">Set at least one limit. A call that crosses a
+              budget is allowed to finish; the next one is refused with 429.</div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="q-desc">Description</label>
+              <input class="form-control" id="q-desc" maxlength="2000">
+            </div>
+          </div>
+          <div id="quota-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" type="submit">Add quota</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="backend-modal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
