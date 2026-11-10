@@ -276,6 +276,44 @@ class VLLMProvider(LLMProvider):
             usage=_usage(body.get("usage")),
         )
 
+    async def rerank(self, query: str, documents: Sequence[str], *, model: str) -> list[float]:
+        """Score ``documents`` against ``query`` with a cross-encoder (E5).
+
+        Two wire formats exist and both are local engines: vLLM's ``/v1/rerank`` (the
+        Jina/Cohere shape: ``results[].index`` and ``relevance_score``) and Hugging Face
+        TEI's ``/rerank`` (a bare list of ``index`` and ``score``). The first is tried, and
+        a 404 falls through to the second.
+        """
+        if not documents:
+            return []
+        try:
+            async with self._client() as client:
+                response = await client.post(
+                    "/v1/rerank",
+                    json={"model": model, "query": query, "documents": list(documents)},
+                )
+                if response.status_code == 404:
+                    response = await client.post(
+                        "/rerank", json={"query": query, "texts": list(documents)}
+                    )
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Inference runtime unreachable: {type(exc).__name__}") from exc
+
+        self._raise_for_status(response)
+        body = response.json()
+        rows = body.get("results") if isinstance(body, dict) else body
+        scores: list[float | None] = [None] * len(documents)
+        for row in rows or []:
+            index = row.get("index")
+            score = row.get("relevance_score", row.get("score"))
+            if isinstance(index, int) and 0 <= index < len(documents) and score is not None:
+                scores[index] = float(score)
+        if any(score is None for score in scores):
+            # A partial answer cannot be ordered honestly; the caller falls back to
+            # vector order rather than guessing the missing scores.
+            raise ProviderError("The reranker did not score every passage.")
+        return [float(score) for score in scores if score is not None]
+
     async def list_models(self) -> list[ModelDescriptor]:
         try:
             async with self._client(timeout=HEALTH_TIMEOUT) as client:

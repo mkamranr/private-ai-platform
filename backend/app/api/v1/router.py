@@ -22,6 +22,7 @@ from app.api.v1 import (
     models,
     monitoring,
     quotas,
+    retrieval,
     teams,
     users,
     voice,
@@ -43,6 +44,8 @@ api_router.include_router(dashboard.router)
 api_router.include_router(agents.router)
 # Phase 5: knowledge bases, documents and memory.
 api_router.include_router(knowledge.router)
+# E5: retrieval playground and evaluation sets.
+api_router.include_router(retrieval.router)
 # Phase 6: the audit log, read-only.
 api_router.include_router(audit.router)
 # Phase 7: the observability overview and one trace at a time. The Prometheus scrape

@@ -117,6 +117,8 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_knowledge_bases_tenant", "tenant_id"),
         CheckConstraint("chunk_size > 0 AND chunk_size <= 8000", name="chunk_size_sane"),
         CheckConstraint("chunk_overlap >= 0", name="chunk_overlap_sane"),
+        CheckConstraint("retrieval_top_k BETWEEN 1 AND 50", name="retrieval_top_k_sane"),
+        CheckConstraint("rerank_candidates BETWEEN 1 AND 200", name="rerank_candidates_sane"),
     )
 
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
@@ -150,6 +152,18 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # -- retrieval (E5, plan §5.7) ------------------------------------------
+    #: A RERANKER model (alias or name) that reorders the vector candidates. None: vector
+    #: order is final, which is how every base behaved before E5.
+    reranker_model: Mapped[str | None] = mapped_column(String(128))
+    #: Passages returned per search.
+    retrieval_top_k: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    #: Vector candidates handed to the reranker. Only used with a reranker: it can only
+    #: promote a passage that vector search found in the first place.
+    rerank_candidates: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    #: Minimum vector similarity. None leaves the caller's floor (agents use 0.25).
+    min_score: Mapped[float | None] = mapped_column(Float)
+
     documents: Mapped[list[Document]] = relationship(
         back_populates="knowledge_base", cascade="all, delete-orphan"
     )
@@ -164,6 +178,9 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "documents"
     __table_args__ = (
         Index("ix_documents_kb_status", "knowledge_base_id", "status"),
+        Index("ix_documents_lineage", "knowledge_base_id", "lineage_id"),
+        UniqueConstraint("lineage_id", "version", name="lineage_version"),
+        CheckConstraint("version >= 1", name="version_positive"),
         CheckConstraint(
             "status IN ('UPLOADED','PARSING','OCR','CHUNKING','EMBEDDING','INDEXED',"
             "'FAILED','NO_TEXT')",
@@ -199,6 +216,18 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     indexed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+
+    # -- versions (E5) -------------------------------------------------------
+    #: Shared by every version of one document: the first version's id. Not a foreign
+    #: key, so deleting an old version does not orphan the newer ones.
+    lineage_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    #: Whether this version is the one searched. A new version becomes current only when
+    #: it is fully indexed, so the old one keeps answering until then.
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    #: When a newer version replaced this one. Superseded versions keep their stored
+    #: original and metadata but have no chunks or vectors.
+    superseded_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
     chunks: Mapped[list[DocumentChunk]] = relationship(
@@ -351,3 +380,82 @@ class MemoryEntry(UUIDPrimaryKeyMixin, Base):
 
     def __repr__(self) -> str:
         return f"<MemoryEntry {self.kind} {self.text[:40]!r}>"
+
+
+# ---------------------------------------------------------------------------
+# Retrieval evaluation (E5, plan §5.7)
+# ---------------------------------------------------------------------------
+class RagEvalSet(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Test questions for one knowledge base, labelled with the documents that answer them."""
+
+    __tablename__ = "rag_eval_sets"
+    __table_args__ = (UniqueConstraint("knowledge_base_id", "name", name="kb_name"),)
+
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    cases: Mapped[list[RagEvalCase]] = relationship(
+        back_populates="eval_set", cascade="all, delete-orphan", order_by="RagEvalCase.created_at"
+    )
+
+
+class RagEvalCase(UUIDPrimaryKeyMixin, Base):
+    """One test question. Its ground truth is a list of documents, not of passages."""
+
+    __tablename__ = "rag_eval_cases"
+
+    eval_set_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("rag_eval_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Document *lineages* that answer it, so a case keeps working after a new version of
+    #: the document is uploaded. Empty: unlabelled, run but left out of the metrics.
+    expected_lineage_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    #: For the reader of a run. Not scored: scoring an answer needs a judge model.
+    expected_answer: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    eval_set: Mapped[RagEvalSet] = relationship(back_populates="cases")
+
+
+class RagEvalRun(UUIDPrimaryKeyMixin, Base):
+    """One execution of a set: the settings used, per-question results and the summary.
+
+    Results are stored, not recomputed, so a run stays readable after the documents or
+    the set change. That is what makes two runs comparable.
+    """
+
+    __tablename__ = "rag_eval_runs"
+
+    eval_set_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("rag_eval_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    #: top_k, candidates, score threshold and reranker actually used.
+    config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    summary: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    results: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    case_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )

@@ -555,6 +555,51 @@ async def embeddings(request: EmbeddingRequest) -> dict[str, Any]:
     }
 
 
+class RerankRequest(BaseModel):
+    model: str = "mock-reranker"
+    query: str
+    documents: list[str] = Field(default_factory=list)
+    top_n: int | None = None
+
+
+def _terms(text: str) -> set[str]:
+    return {t for t in _TOKEN.findall(text.lower()) if len(t) >= 3 and t not in _STOPWORDS}
+
+
+@app.post("/v1/rerank")
+async def rerank(request: RerankRequest) -> dict[str, Any]:
+    """Deterministic reranking in vLLM's ``/v1/rerank`` shape (E5).
+
+    The score is **query-term coverage**: the share of the query's terms a passage
+    contains, with a small bonus for density so a short passage that holds every term
+    beats a long one that mentions them in passing. Deliberately a different signal from
+    the bag-of-words embedding above, so a reranked list really is reordered and the
+    rerank stage can be tested for what it does rather than only for not crashing.
+
+    Not a cross-encoder: like the embeddings, it gives correctness, not quality.
+    """
+    _require_ready()
+    query = _terms(request.query)
+    results = []
+    for index, document in enumerate(request.documents):
+        terms = _terms(document)
+        coverage = len(query & terms) / len(query) if query else 0.0
+        density = len(query & terms) / (len(terms) or 1)
+        results.append(
+            {"index": index, "relevance_score": round(0.9 * coverage + 0.1 * density, 6)}
+        )
+    results.sort(key=lambda r: r["relevance_score"], reverse=True)
+    if request.top_n:
+        results = results[: request.top_n]
+    tokens = _estimate_tokens(request.query) + sum(_estimate_tokens(d) for d in request.documents)
+    return {
+        "id": f"rerank-{uuid.uuid4().hex[:12]}",
+        "model": request.model,
+        "results": results,
+        "usage": {"total_tokens": tokens},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Speech, OCR (§M26, §M28 — Phase 9)
 # ---------------------------------------------------------------------------

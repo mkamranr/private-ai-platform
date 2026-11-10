@@ -2570,7 +2570,7 @@ async function renderKnowledge() {
       <table class="table table-sm align-middle">
         <thead><tr>
           <th>Knowledge base</th><th>Tenant</th><th>Embedding model</th>
-          <th>Chunking</th><th class="text-end">Actions</th>
+          <th>Chunking</th><th>Retrieval</th><th class="text-end">Actions</th>
         </tr></thead>
         <tbody>${bases.map(baseRow).join('')}</tbody>
       </table>
@@ -2597,8 +2597,73 @@ async function renderKnowledge() {
     });
   });
 
+  document.querySelectorAll('[data-kb-settings]').forEach((button) => {
+    button.onclick = () => openBaseSettings(bases.find((b) => b.id === button.dataset.kbSettings));
+  });
+
   await renderBaseDetail(bases.find((b) => b.id === selectedBaseId));
 }
+
+/** One line: what an agent's retrieval from this base does (E5). */
+function retrievalSummary(base) {
+  const parts = [`top ${esc(base.retrieval_top_k)}`];
+  if (base.min_score != null) parts.push(`min ${esc(base.min_score)}`);
+  const rerank = base.reranker_model
+    ? `<span class="badge badge-soft-violet">rerank</span> <span class="mono">${esc(base.reranker_model)}</span>
+       <span class="text-secondary">of ${esc(base.rerank_candidates)}</span>`
+    : '<span class="text-secondary">vector order</span>';
+  return `${rerank}<div class="text-secondary">${parts.join(' · ')}</div>`;
+}
+
+/* RERANKER models for the pickers, fetched once a minute at most. */
+let rerankerCache = { at: 0, names: [] };
+async function loadRerankers() {
+  if (Date.now() - rerankerCache.at < 60_000) return rerankerCache.names;
+  try {
+    const page = await api('/models?type=RERANKER&limit=100');
+    rerankerCache = { at: Date.now(), names: (page.items || []).map((m) => m.name) };
+  } catch { rerankerCache = { at: Date.now(), names: [] }; }
+  document.getElementById('reranker-models').innerHTML =
+    rerankerCache.names.map((n) => `<option value="${esc(n)}">`).join('');
+  return rerankerCache.names;
+}
+
+function openBaseSettings(base) {
+  if (!base) return;
+  loadRerankers();
+  const form = document.getElementById('kb-settings-form');
+  form.dataset.baseId = base.id;
+  form.dataset.hadMin = base.min_score != null ? '1' : '';
+  document.getElementById('kbs-name').textContent = base.name;
+  document.getElementById('kb-settings-error').classList.add('d-none');
+  const set = (id, value) => { document.getElementById(id).value = value ?? ''; };
+  set('kbs-display', base.display_name);
+  set('kbs-desc', base.description);
+  set('kbs-reranker', base.reranker_model);
+  set('kbs-topk', base.retrieval_top_k);
+  set('kbs-cand', base.rerank_candidates);
+  set('kbs-min', base.min_score);
+  document.getElementById('kbs-enabled').checked = base.enabled;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('kb-settings-modal')).show();
+}
+
+onModalSubmit('kb-settings-form', 'kb-settings-error', async (form) => {
+  const min = numberField('kbs-min');
+  const body = {
+    display_name: field('kbs-display'),
+    description: field('kbs-desc'),
+    enabled: document.getElementById('kbs-enabled').checked,
+    reranker_model: field('kbs-reranker'),
+    retrieval_top_k: numberField('kbs-topk'),
+    rerank_candidates: numberField('kbs-cand'),
+  };
+  if (min != null) body.min_score = min;
+  else if (form.dataset.hadMin) body.clear_min_score = true;
+  await api(`/knowledge-bases/${form.dataset.baseId}`, { method: 'PATCH', body: JSON.stringify(body) });
+  closeModal('kb-settings-modal');
+  alert('Settings saved. Agents use them from their next retrieval.', 'success');
+  await refresh({ force: true });
+});
 
 function baseRow(base) {
   const selected = base.id === selectedBaseId;
@@ -2615,7 +2680,10 @@ function baseRow(base) {
       <div class="small text-secondary">${esc(base.embedding_dimensions)} dimensions</div>
     </td>
     <td class="small text-secondary">${esc(base.chunk_size)} / ${esc(base.chunk_overlap)} overlap</td>
-    <td class="text-end">
+    <td class="small">${retrievalSummary(base)}</td>
+    <td class="text-end text-nowrap">
+      ${can('knowledge.manage') ? `<button class="btn btn-sm btn-outline-secondary"
+        data-kb-settings="${esc(base.id)}">Settings</button>` : ''}
       <button class="btn btn-sm btn-outline-danger" data-kb-delete="${esc(base.id)}"
               data-kb-name="${esc(base.name)}">Delete</button>
     </td>
@@ -2638,8 +2706,15 @@ async function renderBaseDetail(base) {
       ${statCard('Indexed', detail.indexed, detail.indexed ? 'text-success' : '')}
       ${statCard('Pending', detail.pending, detail.pending ? 'text-warning' : '')}
       ${statCard('Failed', detail.failed, detail.failed ? 'text-danger' : '')}
-      ${statCard('Chunks', detail.chunks)}
+      ${statCard('Vectors', detail.chunks)}
+      ${statCard('Stored chunks', detail.stored_chunks,
+                 detail.stored_chunks !== detail.chunks ? 'text-warning' : '')}
     </div>
+    ${detail.stored_chunks !== detail.chunks && !detail.pending ? `
+      <div class="alert alert-warning py-2 small">
+        The index holds ${esc(detail.chunks)} vectors for ${esc(detail.stored_chunks)} stored
+        chunks. Some documents are missing vectors (or the index has orphans); re-ingest the
+        affected documents to rebuild them.</div>` : ''}
 
     <div class="card card-body py-2 mb-3">
       <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -2701,9 +2776,43 @@ async function renderBaseDetail(base) {
   document.getElementById('kb-search').onclick = runSearch;
   document.getElementById('kb-query').onkeydown = (e) => { if (e.key === 'Enter') runSearch(e); };
 
+  document.querySelectorAll('[data-doc-version]').forEach((button) => {
+    button.onclick = () => {
+      const picker = document.createElement('input');
+      picker.type = 'file';
+      picker.accept = '.pdf,.docx,.pptx,.txt,.md,.csv,.html,.json';
+      picker.onchange = () => guard(button, async () => {
+        const file = picker.files?.[0];
+        if (!file) return;
+        const accepted = await apiUpload(`/documents/${button.dataset.docVersion}/versions`, file);
+        alert(`${accepted.filename}: ${accepted.message}`, 'success');
+        await refresh({ force: true });
+      });
+      picker.click();
+    };
+  });
+
+  document.querySelectorAll('[data-doc-reingest]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(`Re-ingest ${button.dataset.docName}?\n\nIt is parsed and embedded again ` +
+        'from the stored original, and is not searchable until that finishes. To change ' +
+        'the content without a gap, upload a new version instead.')) return;
+      await api(`/documents/${button.dataset.docReingest}/reingest`, { method: 'POST' });
+      alert(`${button.dataset.docName} queued for re-ingestion.`, 'success');
+      await refresh({ force: true });
+    });
+  });
+
+  document.querySelectorAll('[data-doc-versions]').forEach((button) => {
+    button.onclick = () => guard(button, () => openVersions(button.dataset.docVersions,
+                                                            button.dataset.docName));
+  });
+
   document.querySelectorAll('[data-doc-delete]').forEach((button) => {
     button.onclick = () => guard(button, async () => {
-      if (!confirm(`Delete ${button.dataset.docName}?`)) return;
+      const lineage = Number(button.dataset.docVersion) > 1
+        ? '\n\nThis deletes every version of the document.' : '';
+      if (!confirm(`Delete ${button.dataset.docName}?${lineage}`)) return;
       const result = await api(`/documents/${button.dataset.docDelete}`, { method: 'DELETE' });
       alert(result.message, 'success');
       await refresh({ force: true });
@@ -2726,9 +2835,14 @@ function documentRow(doc) {
   // status_detail is where that distinction lives — surfaced here so it is not mistaken
   // for a failure.
   const note = doc.error || doc.status_detail;
+  const isTerminal = ['INDEXED', 'FAILED', 'NO_TEXT'].includes(doc.status);
+  const version = doc.version > 1 || !doc.is_current
+    ? ` <span class="badge badge-soft-blue">v${esc(doc.version)}</span>` : '';
+  const pending = !doc.is_current && !doc.superseded_at
+    ? ' <span class="badge text-bg-light border">not yet current</span>' : '';
   return `<tr>
     <td>
-      <div class="fw-medium">${esc(doc.filename)}</div>
+      <div class="fw-medium">${esc(doc.filename)}${version}${pending}</div>
       ${note ? `<div class="small text-danger">${esc(note)}</div>` : ''}
       ${doc.ocr_used ? '<div class="small text-secondary">text recovered by OCR</div>' : ''}
     </td>
@@ -2738,11 +2852,40 @@ function documentRow(doc) {
               >${esc(doc.status)}</span></td>
     <td class="small">${esc(doc.chunk_count)}</td>
     <td class="small text-secondary">${ago(doc.created_at)}</td>
-    <td class="text-end">
+    <td class="text-end text-nowrap">
+      ${doc.version > 1 ? `<button class="btn btn-sm btn-outline-secondary"
+        data-doc-versions="${esc(doc.id)}" data-doc-name="${esc(doc.filename)}">Versions</button>` : ''}
+      ${can('document.upload') ? `<button class="btn btn-sm btn-outline-secondary"
+        data-doc-version="${esc(doc.id)}" title="Upload a replacement; this one keeps answering until it is indexed"
+        >New version</button>` : ''}
+      ${can('document.upload') && isTerminal && doc.is_current ? `<button class="btn btn-sm btn-outline-secondary"
+        data-doc-reingest="${esc(doc.id)}" data-doc-name="${esc(doc.filename)}">Re-ingest</button>` : ''}
       <button class="btn btn-sm btn-outline-danger" data-doc-delete="${esc(doc.id)}"
+              data-doc-version="${esc(doc.version)}"
               data-doc-name="${esc(doc.filename)}">Delete</button>
     </td>
   </tr>`;
+}
+
+async function openVersions(documentId, name) {
+  const versions = await api(`/documents/${documentId}/versions`);
+  document.getElementById('dv-name').textContent = name;
+  document.getElementById('dv-body').innerHTML = `
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th>Version</th><th>File</th><th>Status</th><th>Chunks</th>
+        <th>Uploaded</th><th>Superseded</th></tr></thead>
+      <tbody>${versions.map((v) => `<tr>
+        <td><span class="badge ${v.is_current ? 'text-bg-success' : 'badge-soft-blue'}"
+          >v${esc(v.version)}${v.is_current ? ' · current' : ''}</span></td>
+        <td class="small">${esc(v.filename)}<div class="mono text-secondary small"
+          >${esc(v.sha256.slice(0, 12))}</div></td>
+        <td class="small">${esc(v.status)}</td>
+        <td class="small">${esc(v.chunk_count)}</td>
+        <td class="small text-secondary">${ago(v.created_at)}</td>
+        <td class="small text-secondary">${v.superseded_at ? ago(v.superseded_at) : '—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('doc-versions-modal')).show();
 }
 
 function searchResultsHtml(response) {
@@ -2762,10 +2905,444 @@ function searchResultsHtml(response) {
         <div class="d-flex align-items-center mb-1">
           <span class="mono small">${esc(r.document_name)}</span>
           ${r.location ? `<span class="small text-secondary ms-2">${esc(r.location)}</span>` : ''}
-          <span class="badge text-bg-secondary ms-auto">score ${r.score.toFixed(3)}</span>
+          ${r.rerank_score != null
+            ? `<span class="badge badge-soft-violet ms-auto">rerank ${r.rerank_score.toFixed(3)}</span>
+               <span class="badge text-bg-secondary ms-1">vector ${r.score.toFixed(3)}</span>`
+            : `<span class="badge text-bg-secondary ms-auto">score ${r.score.toFixed(3)}</span>`}
         </div>
         <div class="small" style="white-space:pre-wrap">${esc(r.text)}</div>
       </div>`).join('');
+}
+
+/* -------------------------------------------------------------------------- */
+/* Retrieval playground and evaluation (E5)                                   */
+/* -------------------------------------------------------------------------- */
+/* Everything here is driven by what the operator does, so the 5-second poll leaves the
+ * page alone: re-rendering would throw away a half-written question or a run's results. */
+const pg = {
+  tab: 'try', bases: [], selected: new Set(), last: null,
+  evalBase: null, evalSet: null,
+};
+
+async function renderPlayground({ force = false } = {}) {
+  if (!force) return;
+  loadRerankers();
+  pg.bases = await api('/knowledge-bases');
+  const ids = new Set(pg.bases.map((b) => b.id));
+  pg.selected = new Set([...pg.selected].filter((id) => ids.has(id)));
+  if (!pg.selected.size && pg.bases.length) pg.selected.add(pg.bases[0].id);
+  if (!ids.has(pg.evalBase)) { pg.evalBase = pg.bases[0]?.id || null; pg.evalSet = null; }
+
+  document.getElementById('pg-bases').innerHTML = pg.bases.length
+    ? pg.bases.map((b) => `
+      <label class="pg-base">
+        <input type="checkbox" class="form-check-input me-2" data-pg-base="${esc(b.id)}"
+               ${pg.selected.has(b.id) ? 'checked' : ''}>
+        <span><span class="fw-medium">${esc(b.display_name)}</span>
+          <span class="small text-secondary d-block">${retrievalSummary(b)}</span></span>
+      </label>`).join('')
+    : '<div class="small text-secondary">No knowledge bases yet.</div>';
+  document.querySelectorAll('[data-pg-base]').forEach((box) => {
+    box.onchange = () => {
+      if (box.checked) pg.selected.add(box.dataset.pgBase);
+      else pg.selected.delete(box.dataset.pgBase);
+    };
+  });
+  document.getElementById('pg-results').innerHTML = pg.last ? playgroundHtml(pg.last) : '';
+
+  document.getElementById('ev-base').innerHTML = pg.bases.map((b) =>
+    `<option value="${esc(b.id)}" ${b.id === pg.evalBase ? 'selected' : ''}>${esc(b.display_name)}</option>`
+  ).join('');
+  document.getElementById('ev-new').classList.toggle('d-none', !can('knowledge.manage'));
+  showPlaygroundTab(pg.tab);
+  if (pg.tab === 'eval') await renderEvalSets();
+}
+
+function showPlaygroundTab(tab) {
+  pg.tab = tab;
+  document.querySelectorAll('[data-pg-tab]').forEach((b) =>
+    b.classList.toggle('active', b.dataset.pgTab === tab));
+  document.getElementById('pg-tab-try').classList.toggle('d-none', tab !== 'try');
+  document.getElementById('pg-tab-eval').classList.toggle('d-none', tab !== 'eval');
+}
+
+document.querySelectorAll('[data-pg-tab]').forEach((button) => {
+  button.onclick = () => {
+    showPlaygroundTab(button.dataset.pgTab);
+    if (button.dataset.pgTab === 'eval') renderEvalSets().catch((e) => alert(e.message));
+  };
+});
+
+/** Reranker mode select + model box -> the API's {reranker, reranker_model}. */
+function rerankChoice(selectId, inputId) {
+  const mode = document.getElementById(selectId).value;
+  const model = field(inputId);
+  return mode === 'model' ? { reranker: 'model', reranker_model: model } : { reranker: mode };
+}
+function wireRerankSelect(selectId, inputId) {
+  const select = document.getElementById(selectId);
+  const sync = () => document.getElementById(inputId).classList.toggle('d-none', select.value !== 'model');
+  select.onchange = sync;
+  sync();
+}
+wireRerankSelect('pg-rerank', 'pg-rerank-model');
+
+document.getElementById('pg-run').onclick = (event) => guard(event.target, async () => {
+  const query = field('pg-query');
+  if (!query) { alert('Write a question first.', 'warning'); return; }
+  if (!pg.selected.size) { alert('Choose at least one knowledge base.', 'warning'); return; }
+  const body = {
+    knowledge_base_ids: [...pg.selected],
+    query,
+    compare: document.getElementById('pg-compare').checked,
+    ...rerankChoice('pg-rerank', 'pg-rerank-model'),
+  };
+  for (const [key, id] of [['top_k', 'pg-topk'], ['candidates', 'pg-cand'], ['score_threshold', 'pg-min']]) {
+    const value = numberField(id);
+    if (value != null) body[key] = value;
+  }
+  pg.last = await api('/retrieval/playground', { method: 'POST', body: JSON.stringify(body) });
+  document.getElementById('pg-results').innerHTML = playgroundHtml(pg.last);
+});
+document.getElementById('pg-query').onkeydown = (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) document.getElementById('pg-run').click();
+};
+
+const ms = (value) => (value == null ? '—' : `${Number(value).toFixed(value < 10 ? 1 : 0)} ms`);
+
+function playgroundHtml(response) {
+  const run = response.run;
+  const timings = Object.entries(run.timings_ms || {});
+  const total = timings.reduce((sum, [, v]) => sum + v, 0);
+  const warnings = (run.warnings || []).map((w) =>
+    `<div class="alert alert-warning py-2 small mb-2">${esc(w)}</div>`).join('');
+  const header = `
+    <div class="pg-meta mb-3">
+      <span><span class="text-secondary">Reranker</span>
+        ${run.reranked ? `<span class="mono">${esc(run.reranker)}</span>` : '<span>none</span>'}</span>
+      <span><span class="text-secondary">Top-k</span> ${esc(run.top_k)}</span>
+      <span><span class="text-secondary">Candidates</span> ${esc(run.candidates.length)}
+        ${run.reranked ? `of ${esc(run.candidate_pool)}` : ''}</span>
+      ${timings.map(([k, v]) => `<span><span class="text-secondary">${esc(k)}</span> ${ms(v)}</span>`).join('')}
+      <span class="fw-medium"><span class="text-secondary fw-normal">Total</span> ${ms(total)}</span>
+    </div>`;
+  if (!run.results.length) {
+    return warnings + header + `<div class="alert alert-warning py-2 small">Nothing matched
+      “${esc(response.query)}” above the score floor. An agent asked this would answer
+      from the model alone.</div>`;
+  }
+  const column = (title, results, note) => `
+    <div class="col-lg">
+      <h6 class="text-secondary mb-2">${esc(title)}</h6>
+      ${note ? `<div class="small text-secondary mb-2">${note}</div>` : ''}
+      ${results.map((r, i) => passageCard(r, i + 1)).join('')}
+    </div>`;
+  const columns = response.baseline
+    ? column('Reranked', run.results, 'What an agent is given.') +
+      column('Vector order', response.baseline.results, 'The same question without the reranker.')
+    : column('Results', run.results, 'What an agent is given, best first.');
+  return `${warnings}${header}<div class="row g-3 mb-3">${columns}</div>
+    <details class="mb-2"><summary class="small fw-medium">All ${esc(run.candidates.length)}
+      vector candidates</summary>${candidatesTable(run)}</details>`;
+}
+
+function passageCard(r, rank) {
+  let movement = '';
+  if (r.rerank_score != null && r.vector_rank) {
+    const delta = r.vector_rank - rank;
+    movement = delta > 0
+      ? `<span class="pg-move up" title="Vector rank #${r.vector_rank}">▲ ${delta} from #${r.vector_rank}</span>`
+      : delta < 0
+        ? `<span class="pg-move down" title="Vector rank #${r.vector_rank}">▼ ${-delta} from #${r.vector_rank}</span>`
+        : '<span class="pg-move">= vector rank</span>';
+  }
+  return `
+    <div class="card card-body py-2 mb-2">
+      <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+        <span class="pg-rank">${rank}</span>
+        <span class="mono small">${esc(r.document_name)}</span>
+        ${r.version > 1 ? `<span class="badge badge-soft-blue">v${esc(r.version)}</span>` : ''}
+        ${r.location ? `<span class="small text-secondary">${esc(r.location)}</span>` : ''}
+        <span class="small text-secondary">${esc(r.knowledge_base)}</span>
+        ${movement}
+        <span class="ms-auto"></span>
+        ${r.rerank_score != null ? `<span class="badge badge-soft-violet">rerank ${r.rerank_score.toFixed(3)}</span>` : ''}
+        <span class="badge text-bg-secondary">vector ${r.score.toFixed(3)}</span>
+      </div>
+      <div class="small pg-text">${esc(r.text)}</div>
+      ${r.ocr ? '<div class="small text-secondary mt-1">text recovered by OCR</div>' : ''}
+    </div>`;
+}
+
+function candidatesTable(run) {
+  const chosen = new Map(run.results.map((r, i) => [`${r.document_id}:${r.ordinal}`, i + 1]));
+  return `<div class="table-responsive mt-2"><table class="table table-sm align-middle small">
+    <thead><tr><th>Vector rank</th><th>Document</th><th>Passage</th><th class="text-end">Vector</th>
+      <th class="text-end">Rerank</th><th class="text-end">Final rank</th></tr></thead>
+    <tbody>${run.candidates.map((c) => {
+      const final = chosen.get(`${c.document_id}:${c.ordinal}`);
+      return `<tr class="${final ? '' : 'text-secondary'}">
+        <td>#${esc(c.vector_rank)}</td>
+        <td class="mono">${esc(c.document_name)}</td>
+        <td class="text-truncate" style="max-width:28rem">${esc(c.text.slice(0, 160))}</td>
+        <td class="text-end">${c.score.toFixed(3)}</td>
+        <td class="text-end">${c.rerank_score != null ? c.rerank_score.toFixed(3) : '—'}</td>
+        <td class="text-end">${final ? `#${final}` : 'dropped'}</td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+
+/* ---- evaluation sets ----------------------------------------------------- */
+document.getElementById('ev-base').onchange = (event) => {
+  pg.evalBase = event.target.value;
+  pg.evalSet = null;
+  renderEvalSets().catch((e) => alert(e.message));
+};
+
+document.getElementById('ev-new').onclick = () => {
+  const base = pg.bases.find((b) => b.id === pg.evalBase);
+  if (!base) { alert('Create a knowledge base first.', 'warning'); return; }
+  document.getElementById('evs-base').textContent = base.display_name;
+  document.getElementById('eval-set-error').classList.add('d-none');
+  document.getElementById('eval-set-form').reset();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('eval-set-modal')).show();
+};
+
+onModalSubmit('eval-set-form', 'eval-set-error', async () => {
+  const created = await api(`/knowledge-bases/${pg.evalBase}/eval-sets`, {
+    method: 'POST',
+    body: JSON.stringify({ name: field('evs-name'), description: field('evs-desc') || null }),
+  });
+  closeModal('eval-set-modal');
+  pg.evalSet = created.id;
+  await renderEvalSets();
+});
+
+const pct = (v) => (v == null ? '—' : `${(v * 100).toFixed(0)}%`);
+const mrr = (v) => (v == null ? '—' : v.toFixed(2));
+
+async function renderEvalSets() {
+  const target = document.getElementById('ev-sets');
+  if (!pg.evalBase) {
+    target.innerHTML = empty('No knowledge bases. Evaluation sets belong to one.');
+    document.getElementById('ev-detail').innerHTML = '';
+    return;
+  }
+  const sets = await api(`/knowledge-bases/${pg.evalBase}/eval-sets`);
+  if (!sets.some((s) => s.id === pg.evalSet)) pg.evalSet = sets[0]?.id || null;
+  target.innerHTML = sets.length ? `
+    <div class="table-responsive"><table class="table table-sm align-middle">
+      <thead><tr><th>Evaluation set</th><th>Questions</th><th>Labelled</th><th>Updated</th>
+        <th class="text-end">Actions</th></tr></thead>
+      <tbody>${sets.map((s) => `<tr class="${s.id === pg.evalSet ? 'table-active' : ''}">
+        <td><a href="#playground" class="fw-medium text-decoration-none" data-ev-open="${esc(s.id)}"
+          >${esc(s.name)}</a>${s.description ? `<div class="small text-secondary">${esc(s.description)}</div>` : ''}</td>
+        <td>${esc(s.case_count)}</td>
+        <td>${esc(s.labelled_count)}</td>
+        <td class="small text-secondary">${ago(s.updated_at)}</td>
+        <td class="text-end">${can('knowledge.manage') ? `<button class="btn btn-sm btn-outline-danger"
+          data-ev-delete="${esc(s.id)}" data-ev-name="${esc(s.name)}">Delete</button>` : ''}</td>
+      </tr>`).join('')}</tbody></table></div>`
+    : empty('No evaluation sets for this knowledge base. Create one, add test questions and ' +
+            'label each with the documents that answer it; a run then measures retrieval.');
+
+  target.querySelectorAll('[data-ev-open]').forEach((a) => {
+    a.onclick = (event) => { event.preventDefault(); pg.evalSet = a.dataset.evOpen; renderEvalSets(); };
+  });
+  target.querySelectorAll('[data-ev-delete]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(`Delete ${button.dataset.evName}, its questions and its runs?`)) return;
+      await api(`/eval-sets/${button.dataset.evDelete}`, { method: 'DELETE' });
+      if (pg.evalSet === button.dataset.evDelete) pg.evalSet = null;
+      await renderEvalSets();
+    });
+  });
+  await renderEvalDetail();
+}
+
+async function renderEvalDetail() {
+  const target = document.getElementById('ev-detail');
+  if (!pg.evalSet) { target.innerHTML = ''; return; }
+  const [set, runs, documents] = await Promise.all([
+    api(`/eval-sets/${pg.evalSet}`),
+    api(`/eval-sets/${pg.evalSet}/runs`),
+    api(`/knowledge-bases/${pg.evalBase}/documents`),
+  ]);
+  const manage = can('knowledge.manage');
+  const expected = (c) => c.expected.length
+    ? c.expected.map((e) => `<span class="badge badge-soft-blue me-1">${esc(e.filename || 'deleted document')}${
+        e.version > 1 ? ` v${esc(e.version)}` : ''}</span>`).join('')
+    : '<span class="small text-secondary">unlabelled</span>';
+
+  target.innerHTML = `
+    <div class="row g-3">
+      <div class="col-xl-5">
+        <div class="card card-body">
+          <h6 class="mb-1">${esc(set.name)}: questions</h6>
+          <div class="small text-secondary mb-2">${esc(set.case_count)} question(s),
+            ${esc(set.labelled_count)} labelled. Only labelled ones count towards the metrics.</div>
+          ${set.cases.length ? `<table class="table table-sm align-middle small mb-2">
+            <thead><tr><th>Question</th><th>Answered by</th><th></th></tr></thead>
+            <tbody>${set.cases.map((c) => `<tr>
+              <td>${esc(c.question)}${c.expected_answer
+                ? `<div class="text-secondary">Expected: ${esc(c.expected_answer)}</div>` : ''}</td>
+              <td>${expected(c)}</td>
+              <td class="text-end">${manage ? `<button class="btn btn-sm btn-link text-danger p-0"
+                data-ev-case-delete="${esc(c.id)}" title="Remove">✕</button>` : ''}</td>
+            </tr>`).join('')}</tbody></table>` : empty('No questions yet.')}
+          ${manage ? `
+          <div class="border-top pt-2">
+            <div class="small fw-medium mb-2">Add a question</div>
+            <input class="form-control form-control-sm mb-2" id="ev-q" maxlength="4000"
+                   placeholder="How do I reset my password?">
+            <select class="form-select form-select-sm mb-2" id="ev-docs" multiple size="4"
+                    aria-label="Documents that answer it">
+              ${documents.map((d) => `<option value="${esc(d.id)}">${esc(d.filename)}${
+                d.version > 1 ? ` (v${esc(d.version)})` : ''}</option>`).join('')}
+            </select>
+            <div class="form-text small mt-0 mb-2">The documents that answer it (Ctrl/Cmd-click
+              for several). None: run but not scored.</div>
+            <input class="form-control form-control-sm mb-2" id="ev-answer" maxlength="8000"
+                   placeholder="Expected answer (optional, for the reader; not scored)">
+            <button class="btn btn-sm btn-outline-primary" id="ev-add">Add question</button>
+          </div>` : ''}
+        </div>
+      </div>
+      <div class="col-xl-7">
+        <div class="card card-body">
+          <h6 class="mb-1">Runs</h6>
+          <div class="small text-secondary mb-2">Each run asks every question and scores the
+            documents retrieved: hit rate, recall, precision and MRR over labelled questions.</div>
+          ${manage ? `
+          <div class="row g-2 align-items-end mb-3">
+            <div class="col-3">
+              <label class="form-label small text-secondary mb-1" for="ev-topk">Top-k</label>
+              <input class="form-control form-control-sm" id="ev-topk" type="number" min="1"
+                     max="50" placeholder="base">
+            </div>
+            <div class="col-4">
+              <label class="form-label small text-secondary mb-1" for="ev-rerank">Reranker</label>
+              <select class="form-select form-select-sm" id="ev-rerank">
+                <option value="default">As configured</option>
+                <option value="none">None</option>
+                <option value="model">Choose…</option>
+              </select>
+            </div>
+            <div class="col-5">
+              <input class="form-control form-control-sm mono d-none" id="ev-rerank-model"
+                     list="reranker-models" placeholder="reranker alias">
+            </div>
+            <div class="col-12">
+              <button class="btn btn-sm btn-primary" id="ev-run" ${set.case_count ? '' : 'disabled'}
+                >Run ${esc(set.case_count)} question(s)</button>
+            </div>
+          </div>` : ''}
+          ${runs.length ? runsTable(runs) : empty('No runs yet.')}
+        </div>
+      </div>
+    </div>`;
+
+  target.querySelectorAll('[data-ev-case-delete]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      await api(`/eval-sets/${pg.evalSet}/cases/${button.dataset.evCaseDelete}`, { method: 'DELETE' });
+      await renderEvalSets();
+    });
+  });
+  const add = document.getElementById('ev-add');
+  if (add) {
+    add.onclick = () => guard(add, async () => {
+      const question = field('ev-q');
+      if (!question) { alert('Write the question first.', 'warning'); return; }
+      await api(`/eval-sets/${pg.evalSet}/cases`, {
+        method: 'POST',
+        body: JSON.stringify({
+          question,
+          expected_document_ids: [...document.getElementById('ev-docs').selectedOptions].map((o) => o.value),
+          expected_answer: field('ev-answer') || null,
+        }),
+      });
+      await renderEvalSets();
+    });
+  }
+  const run = document.getElementById('ev-run');
+  if (run) {
+    wireRerankSelect('ev-rerank', 'ev-rerank-model');
+    run.onclick = () => guard(run, async () => {
+      const body = { ...rerankChoice('ev-rerank', 'ev-rerank-model') };
+      const topk = numberField('ev-topk');
+      if (topk != null) body.top_k = topk;
+      run.textContent = 'Running…';
+      const result = await api(`/eval-sets/${pg.evalSet}/runs`, { method: 'POST', body: JSON.stringify(body) });
+      await renderEvalSets();
+      showEvalRun(result);
+    });
+  }
+  target.querySelectorAll('[data-ev-run]').forEach((button) => {
+    button.onclick = () => guard(button, async () => showEvalRun(await api(`/eval-runs/${button.dataset.evRun}`)));
+  });
+}
+
+function runsTable(runs) {
+  // Each metric beside its change from the previous (older) run.
+  const delta = (now, before) => {
+    if (now == null || before == null || now === before) return '';
+    const up = now > before;
+    return ` <span class="pg-delta ${up ? 'up' : 'down'}">${up ? '+' : ''}${((now - before) * 100).toFixed(0)}</span>`;
+  };
+  return `<div class="table-responsive"><table class="table table-sm align-middle small mb-0">
+    <thead><tr><th>When</th><th>Settings</th><th class="text-end">Hit rate</th>
+      <th class="text-end">Recall</th><th class="text-end">Precision</th><th class="text-end">MRR</th>
+      <th class="text-end">Latency</th><th></th></tr></thead>
+    <tbody>${runs.map((r, i) => {
+      const s = r.summary, prev = runs[i + 1]?.summary || {};
+      const reranker = r.config.reranked_with?.length
+        ? `<span class="badge badge-soft-violet">${esc(r.config.reranked_with.join(', '))}</span>`
+        : '<span class="text-secondary">vector</span>';
+      return `<tr>
+        <td class="text-secondary text-nowrap">${ago(r.created_at)}</td>
+        <td>${reranker} <span class="text-secondary">top ${esc(r.config.top_k ?? '—')}</span>
+          ${s.errors ? `<span class="badge text-bg-danger">${esc(s.errors)} error(s)</span>` : ''}</td>
+        <td class="text-end">${pct(s.hit_rate)}${delta(s.hit_rate, prev.hit_rate)}</td>
+        <td class="text-end">${pct(s.recall)}${delta(s.recall, prev.recall)}</td>
+        <td class="text-end">${pct(s.precision)}${delta(s.precision, prev.precision)}</td>
+        <td class="text-end">${mrr(s.mrr)}${delta(s.mrr, prev.mrr)}</td>
+        <td class="text-end">${ms(s.mean_latency_ms)}</td>
+        <td class="text-end text-nowrap"><button class="btn btn-sm btn-link p-0" data-ev-run="${esc(r.id)}">View</button></td>
+      </tr>`;
+    }).join('')}</tbody></table></div>
+    <div class="small text-secondary mt-2">Changes are percentage points against the run below.
+      Latency is the measured mean per question.</div>`;
+}
+
+function showEvalRun(run) {
+  const s = run.summary;
+  const tile = (label, value) => `<div class="col-auto"><div class="card card-body py-2 px-3">
+    <div class="small text-secondary">${esc(label)}</div><div class="fs-5">${value}</div></div></div>`;
+  document.getElementById('eval-run-body').innerHTML = `
+    <div class="row g-2 mb-3">
+      ${tile('Hit rate', pct(s.hit_rate))}${tile('Recall', pct(s.recall))}
+      ${tile('Precision', pct(s.precision))}${tile('MRR', mrr(s.mrr))}
+      ${tile('Labelled', `${esc(s.labelled)} / ${esc(s.cases)}`)}
+      ${tile('Mean latency', ms(s.mean_latency_ms))}${tile('Duration', ms(run.duration_ms))}
+    </div>
+    <div class="small text-secondary mb-3">Reranker: ${run.config.reranked_with?.length
+      ? `<span class="mono">${esc(run.config.reranked_with.join(', '))}</span>` : 'none'} ·
+      top-k ${esc(run.config.top_k ?? '—')} · candidates ${esc(run.config.candidates ?? '—')}</div>
+    <table class="table table-sm align-middle small">
+      <thead><tr><th style="width:30%">Question</th><th>Retrieved (in order)</th>
+        <th class="text-end">Recall</th><th class="text-end">RR</th></tr></thead>
+      <tbody>${run.results.map((row) => `<tr>
+        <td>${esc(row.question)}${row.error ? `<div class="text-danger">${esc(row.error)}</div>` : ''}
+          ${(row.warnings || []).map((w) => `<div class="text-warning">${esc(w)}</div>`).join('')}</td>
+        <td>${(row.retrieved || []).map((d) => `<span class="badge ${d.relevant ? 'text-bg-success' : 'text-bg-light border'} me-1 mb-1"
+            title="vector ${d.score}${d.rerank_score != null ? ` · rerank ${d.rerank_score}` : ''}"
+            >${d.relevant ? '✓ ' : ''}${esc(d.document_name)}${d.location ? ` · ${esc(d.location)}` : ''}</span>`).join('')
+          || '<span class="text-secondary">nothing above the score floor</span>'}</td>
+        <td class="text-end">${row.metrics ? pct(row.metrics.recall) : '<span class="text-secondary">—</span>'}</td>
+        <td class="text-end">${row.metrics ? mrr(row.metrics.reciprocal_rank) : '<span class="text-secondary">unlabelled</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('eval-run-modal')).show();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3637,6 +4214,7 @@ const RENDERERS = {
   endpoints: renderEndpoints,
   usage: renderUsagePage,
   knowledge: renderKnowledge,
+  playground: renderPlayground,
   memory: renderMemory,
   voice: renderVoice,
   teams: renderTeams,
@@ -3652,7 +4230,7 @@ async function refresh({ force = false } = {}) {
   if (!force && document.activeElement?.closest('.page')) return;
 
   try {
-    await RENDERERS[currentPage]();
+    await RENDERERS[currentPage]({ force });
     if (currentPage !== 'alerts') updateAlertBadge();
     document.getElementById('poll-status').textContent = `updated ${new Date().toLocaleTimeString()}`;
   } catch (err) {

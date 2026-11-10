@@ -222,6 +222,13 @@ class ModelRegistryService:
         whether to register or update."""
         return await self._models.get_by_name(name)
 
+    async def resolve_public_name(self, name: str) -> Model | None:
+        """The model an alias (enabled) or model name refers to, or None (E5)."""
+        alias = await self._aliases.get_by_alias(name)
+        if alias is not None:
+            return alias.model
+        return await self._models.get_by_name(name)
+
     async def get_model_by_name(self, name: str) -> Model:
         model = await self._models.get_by_name(name)
         if model is None:

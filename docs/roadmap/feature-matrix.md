@@ -17,8 +17,8 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 9 | Offline installation | P0 | Existing | `offline/`, `scripts/build_bundle.py`, `make gate-phase8` | Signed manifest, SBOM |
 | 10 | Deployment lifecycle | P1 | Existing (E4) | `services/deployment.py`, `workers/deployments.py`, `services/scheduler.py` | Zero-downtime (blue/green) revisions need replicas |
 | 11 | GPU monitoring | P1 | Existing | `node-agent/`, `models/infrastructure.py` | Thresholds feeding alerts |
-| 12 | RAG knowledge bases | P1 | Existing | `services/knowledge.py`, `retrieval.py`, `workers/ingestion.py` | Document versioning, per-document ACL |
-| 13 | Reranking / retrieval trace | P1 | Partial | `RERANKER` model type only | Rerank stage in `retrieval.py`, retrieval playground with scores |
+| 12 | RAG knowledge bases | P1 | Existing (E5) | `services/knowledge.py`, `retrieval.py`, `workers/ingestion.py` | Per-document ACL, whole-base re-embed |
+| 13 | Reranking / retrieval trace | P1 | Existing (E5) | `services/knowledge.py` (`retrieve`), `services/rag_eval.py`, `api/v1/retrieval.py` | Answer faithfulness scoring (judge model), query history |
 | 14 | MCP registry / policies | P1 | Existing | `models/agents.py`, `services/tool_pipeline.py`, `mcp/` | Shared SSRF policy, MCP Servers page |
 | 15 | Agent builder | P1 | Existing | `services/agent_registry.py`, `agent_runtime.py`, `agents/*.yaml` | Global kill switch |
 | 16 | Human approval | P1 | Existing | `agent_runs` approval state, Approvals page | Approval inbox shared with workflows |

@@ -357,3 +357,32 @@ class TestOcr:
         block = response.json()["blocks"][0]
         assert "scan.png" in block["text"]
         assert block["page"] == 1
+
+
+class TestRerank:
+    async def test_scores_every_document_in_vllm_shape(self, client: AsyncClient) -> None:
+        response = await client.post(
+            "/v1/rerank",
+            json={
+                "model": "mock-reranker",
+                "query": "annual leave carry over",
+                "documents": [
+                    "Expenses are reimbursed monthly.",
+                    "Annual leave may be carried over into the next year.",
+                    "Leave requests go to your manager.",
+                ],
+            },
+        )
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert sorted(r["index"] for r in results) == [0, 1, 2]
+        # Sorted best first, and the passage holding every query term wins.
+        assert results[0]["index"] == 1
+        assert results[-1]["relevance_score"] == 0.0
+
+    async def test_top_n_truncates(self, client: AsyncClient) -> None:
+        response = await client.post(
+            "/v1/rerank",
+            json={"query": "leave", "documents": ["leave", "other", "leave policy"], "top_n": 2},
+        )
+        assert len(response.json()["results"]) == 2

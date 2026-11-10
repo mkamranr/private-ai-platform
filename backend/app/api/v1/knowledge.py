@@ -11,6 +11,7 @@ from fastapi import APIRouter, File, Path, Query, Response, UploadFile, status
 from app.api.deps import (
     KnowledgeServiceDep,
     MemoryServiceDep,
+    ModelRegistryDep,
     ScopeDep,
     ScopeGuardDep,
     require_permission,
@@ -18,6 +19,7 @@ from app.api.deps import (
 from app.core.errors import ValidationError
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
+from app.models.models_registry import ModelType
 from app.schemas.common import MessageResponse
 from app.schemas.knowledge import (
     ConversationDetail,
@@ -27,6 +29,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreateRequest,
     KnowledgeBaseDetail,
     KnowledgeBaseRead,
+    KnowledgeBaseUpdateRequest,
     MemoryEntryRead,
     MemorySearchRequest,
     RecalledMemoryRead,
@@ -117,8 +120,52 @@ async def get_knowledge_base(
         failed=stats.failed,
         pending=stats.pending,
         chunks=stats.chunks,
+        stored_chunks=stats.stored_chunks,
         by_status=stats.by_status,
     )
+
+
+@router.patch(
+    "/knowledge-bases/{base_id}",
+    response_model=KnowledgeBaseRead,
+    summary="Update a knowledge base's display and retrieval settings",
+)
+async def update_knowledge_base(
+    payload: KnowledgeBaseUpdateRequest,
+    service: KnowledgeServiceDep,
+    registry: ModelRegistryDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    guard: ScopeGuardDep,
+    base_id: uuid.UUID = Path(...),
+) -> KnowledgeBaseRead:
+    """Change the name, description, enabled flag or retrieval settings (E5).
+
+    A reranker must name a RERANKER model (or an alias for one) that you can see. It is
+    checked now rather than at the first search, where a wrong model would only show up
+    as a warning that results fell back to vector order.
+    """
+    await guard.knowledge_base(base_id)
+    changes = payload.model_dump(exclude_unset=True)
+    clear_min = changes.pop("clear_min_score", False)
+    if clear_min:
+        changes["min_score"] = None
+    if "reranker_model" in changes:
+        name = (changes["reranker_model"] or "").strip()
+        changes["reranker_model"] = name or None
+        if name:
+            await guard.model_name(name)
+            model = await registry.resolve_public_name(name)
+            if model is None:
+                raise ValidationError(
+                    f"No model or alias named {name!r}.", details={"field": "reranker_model"}
+                )
+            if model.type != ModelType.RERANKER:
+                raise ValidationError(
+                    f"{name!r} is a {model.type} model; a reranker must be a RERANKER.",
+                    details={"field": "reranker_model"},
+                )
+    base = await service.update_base(base_id, changes, actor=actor)
+    return KnowledgeBaseRead.model_validate(base)
 
 
 @router.delete(
@@ -158,9 +205,15 @@ async def list_documents(
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
     guard: ScopeGuardDep,
     base_id: uuid.UUID = Path(...),
+    include_superseded: Annotated[
+        bool, Query(description="Include versions replaced by a newer one (E5).")
+    ] = False,
 ) -> list[DocumentRead]:
     await guard.knowledge_base(base_id)
-    return [DocumentRead.model_validate(d) for d in await service.list_documents(base_id)]
+    return [
+        DocumentRead.model_validate(d)
+        for d in await service.list_documents(base_id, include_superseded=include_superseded)
+    ]
 
 
 @router.post(
@@ -214,6 +267,95 @@ async def upload_document(
     )
 
 
+@router.post(
+    "/documents/{document_id}/versions",
+    response_model=DocumentAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Upload a new version of a document (asynchronous)",
+)
+async def upload_document_version(
+    service: KnowledgeServiceDep,
+    actor: Annotated[User, require_permission(Perm.DOCUMENT_UPLOAD)],
+    guard: ScopeGuardDep,
+    response: Response,
+    document_id: uuid.UUID = Path(...),
+    file: UploadFile = File(...),
+) -> DocumentAcceptedResponse:
+    """Replace a document without a gap in what it answers (E5).
+
+    The new version is ingested like any upload, but the current version keeps being
+    searched until the new one is fully indexed. Then they swap: the old version's vectors
+    are removed and it is kept as history. If the new version fails, nothing changes.
+    """
+    await guard.document(document_id)
+    anchor = await service.get_document(document_id)
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValidationError(
+            f"That file is {len(content) // 1_048_576} MiB; the limit is "
+            f"{MAX_UPLOAD_BYTES // 1_048_576} MiB.",
+            details={"field": "file"},
+        )
+    document = await service.accept_upload(
+        anchor.knowledge_base_id,
+        filename=file.filename or anchor.filename,
+        content_type=file.content_type or "",
+        content=content,
+        actor=actor,
+        version_of=anchor.id,
+    )
+    poll_url = f"/api/v1/documents/{document.id}"
+    response.headers["Location"] = poll_url
+    return DocumentAcceptedResponse(
+        document_id=document.id,
+        status=document.status,
+        filename=document.filename,
+        size_bytes=document.size_bytes,
+        poll_url=poll_url,
+        message=(
+            f"Version {document.version} queued. The current version keeps answering until "
+            "this one is INDEXED."
+        ),
+    )
+
+
+@router.get(
+    "/documents/{document_id}/versions",
+    response_model=list[DocumentRead],
+    summary="List every version of a document",
+)
+async def list_document_versions(
+    service: KnowledgeServiceDep,
+    _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
+    document_id: uuid.UUID = Path(...),
+) -> list[DocumentRead]:
+    await guard.document(document_id)
+    return [DocumentRead.model_validate(d) for d in await service.list_versions(document_id)]
+
+
+@router.post(
+    "/documents/{document_id}/reingest",
+    response_model=DocumentRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Re-run ingestion from the stored original",
+)
+async def reingest_document(
+    service: KnowledgeServiceDep,
+    actor: Annotated[User, require_permission(Perm.DOCUMENT_UPLOAD)],
+    guard: ScopeGuardDep,
+    document_id: uuid.UUID = Path(...),
+) -> DocumentRead:
+    """Parse, chunk and embed again (E5): after a chunking fix, an OCR model being
+    deployed, or a failure that has since been resolved.
+
+    In place, so the document is not searchable until it is indexed again. To change a
+    document's content without that gap, upload a new version instead.
+    """
+    await guard.document(document_id)
+    return DocumentRead.model_validate(await service.reingest(document_id, actor=actor))
+
+
 @router.get("/documents/{document_id}", response_model=DocumentRead, summary="Get a document")
 async def get_document(
     service: KnowledgeServiceDep,
@@ -240,7 +382,10 @@ async def delete_document(
     await guard.document(document_id)
     await service.delete_document(document_id, actor=actor)
     return MessageResponse(
-        message="Document deleted, with its chunks, vectors and stored original."
+        message=(
+            "Document deleted, with its chunks, vectors and stored original. Deleting the "
+            "current version deletes every version; deleting a superseded one removes only it."
+        )
     )
 
 

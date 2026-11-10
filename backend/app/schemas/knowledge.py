@@ -80,6 +80,11 @@ class KnowledgeBaseRead(ORMModel):
     enabled: bool
     #: Owning team (E3); null means shared.
     team_id: uuid.UUID | None = None
+    #: Retrieval settings (E5).
+    reranker_model: str | None = None
+    retrieval_top_k: int = 4
+    rerank_candidates: int = 20
+    min_score: float | None = None
     created_at: dt.datetime
     # Deliberately not `collection`: the Qdrant collection name is internal, and exposing it
     # would invite a caller to query the vector store directly, bypassing every scope filter.
@@ -90,8 +95,46 @@ class KnowledgeBaseDetail(KnowledgeBaseRead):
     indexed: int = 0
     failed: int = 0
     pending: int = 0
+    #: Points in the vector collection.
     chunks: int = 0
+    #: Chunk rows stored for the current documents (E5). Equal to ``chunks`` when the index
+    #: is healthy; a gap means vectors are missing (or orphaned) for some documents.
+    stored_chunks: int = 0
     by_status: dict[str, int] = Field(default_factory=dict)
+
+
+class KnowledgeBaseUpdateRequest(BaseModel):
+    """Display and retrieval settings (E5). Omitted fields are left alone.
+
+    Not the embedding model or chunking: changing either changes what the stored vectors
+    mean, which needs a rebuild rather than an edit.
+    """
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    enabled: bool | None = None
+    reranker_model: str | None = Field(
+        default=None,
+        max_length=128,
+        description=(
+            "Alias or name of a RERANKER model that reorders the vector candidates. An "
+            "empty string removes it."
+        ),
+    )
+    retrieval_top_k: int | None = Field(default=None, ge=1, le=50)
+    rerank_candidates: int | None = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Vector candidates handed to the reranker. At least retrieval_top_k.",
+    )
+    min_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Minimum vector similarity. Send clear_min_score to remove it.",
+    )
+    clear_min_score: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +155,12 @@ class DocumentRead(ORMModel):
     ocr_used: bool
     indexed_at: dt.datetime | None = None
     created_at: dt.datetime
+    #: Versions (E5): every version of one document shares ``lineage_id``; only the
+    #: current one is searched.
+    lineage_id: uuid.UUID
+    version: int = 1
+    is_current: bool = True
+    superseded_at: dt.datetime | None = None
     # Not `storage_key`: an object key is an internal address, and publishing it invites a
     # caller to reach past the API into MinIO.
 
@@ -159,6 +208,12 @@ class SearchResultRead(BaseModel):
     ordinal: int = 0
     #: True when the text came from OCR and is therefore less reliable.
     ocr: bool = False
+    #: The reranker's score, when one ran (E5). ``score`` is always vector similarity.
+    rerank_score: float | None = None
+    #: Position by vector similarity before reranking, 1-based.
+    vector_rank: int = 0
+    lineage_id: uuid.UUID | None = None
+    version: int = 1
 
 
 class SearchResponse(BaseModel):

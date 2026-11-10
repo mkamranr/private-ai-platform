@@ -54,6 +54,8 @@
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 4.6h6.8a1.6 1.6 0 0 1 1.6 1.6v.6H7v-.6a1.6 1.6 0 0 1 1.6-1.6Z"/><path d="M17 6.8h1.6a1.6 1.6 0 0 1 1.6 1.6v10.4a1.6 1.6 0 0 1-1.6 1.6H5.4a1.6 1.6 0 0 1-1.6-1.6V8.4a1.6 1.6 0 0 1 1.6-1.6H7"/><path d="m8.8 13.4 2.2 2.2 4.2-4.4"/></symbol>
     <symbol id="i-knowledge" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 5.2c2.6-.9 5.1-.9 7.6.6 2.5-1.5 5-1.5 7.6-.6v12.4c-2.6-.9-5.1-.9-7.6.6-2.5-1.5-5-1.5-7.6-.6V5.2Z"/><path d="M12 5.8v12.4"/></symbol>
+    <symbol id="i-playground" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.4" cy="10.4" r="6"/><path d="m15 15 5.4 5.4"/><path d="M7.8 11.6 9.6 9.2l1.8 1.8 1.8-2.6"/></symbol>
     <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.2" y="4.2" width="15.6" height="15.6" rx="2.4"/><rect x="8.6" y="8.6" width="6.8" height="6.8" rx="1.2"/><path d="M9.4 1.8v2.4M14.6 1.8v2.4M9.4 19.8v2.4M14.6 19.8v2.4M1.8 9.4h2.4M1.8 14.6h2.4M19.8 9.4h2.4M19.8 14.6h2.4"/></symbol>
     <symbol id="i-voice" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -208,6 +210,7 @@
 
       <div class="nav-section mt-4">Knowledge</div>
       <a class="nav-item" data-page="knowledge" href="#knowledge"><svg class="nav-icon" aria-hidden="true"><use href="#i-knowledge"/></svg>Knowledge Bases</a>
+      <a class="nav-item" data-page="playground" href="#playground"><svg class="nav-icon" aria-hidden="true"><use href="#i-playground"/></svg>Retrieval Playground</a>
       <a class="nav-item" data-page="memory" href="#memory"><svg class="nav-icon" aria-hidden="true"><use href="#i-memory"/></svg>Memory</a>
 
       <div class="nav-section mt-4">Administration</div>
@@ -694,6 +697,94 @@
         <div id="kb-detail"></div>
       </section>
 
+      <!-- Retrieval playground and evaluation (E5). The forms are static markup, not
+           rendered by the poll, so a half-typed question survives the 5-second refresh. -->
+      <section id="page-playground" class="page d-none">
+        <div class="page-header">
+          <div>
+            <h4 class="mb-0">Retrieval Playground</h4>
+            <p class="page-subtitle">See what retrieval returns for a question at every stage:
+              vector candidates, the reranker's reordering, and measured timings. Evaluation
+              sets score the same thing over many labelled questions.</p>
+          </div>
+        </div>
+
+        <ul class="nav nav-tabs mb-3" role="tablist">
+          <li class="nav-item"><button class="nav-link active" data-pg-tab="try"
+                type="button">Playground</button></li>
+          <li class="nav-item"><button class="nav-link" data-pg-tab="eval"
+                type="button">Evaluation sets</button></li>
+        </ul>
+
+        <div id="pg-tab-try">
+          <div class="card card-body mb-3">
+            <div class="row g-3">
+              <div class="col-lg-4">
+                <div class="form-label small text-secondary">Knowledge bases</div>
+                <div id="pg-bases" class="pg-bases"></div>
+              </div>
+              <div class="col-lg-8">
+                <label class="form-label small text-secondary" for="pg-query">Question</label>
+                <textarea class="form-control" id="pg-query" rows="2"
+                          placeholder="How many leave days carry over to next year?"></textarea>
+                <div class="row g-2 mt-1 align-items-end">
+                  <div class="col-sm-2">
+                    <label class="form-label small text-secondary mb-1" for="pg-topk">Top-k</label>
+                    <input class="form-control form-control-sm" id="pg-topk" type="number"
+                           min="1" max="50" placeholder="base">
+                  </div>
+                  <div class="col-sm-2">
+                    <label class="form-label small text-secondary mb-1" for="pg-cand">Candidates</label>
+                    <input class="form-control form-control-sm" id="pg-cand" type="number"
+                           min="1" max="200" placeholder="base">
+                  </div>
+                  <div class="col-sm-2">
+                    <label class="form-label small text-secondary mb-1" for="pg-min">Min score</label>
+                    <input class="form-control form-control-sm" id="pg-min" type="number"
+                           min="0" max="1" step="0.05" placeholder="base">
+                  </div>
+                  <div class="col-sm-3">
+                    <label class="form-label small text-secondary mb-1" for="pg-rerank">Reranker</label>
+                    <select class="form-select form-select-sm" id="pg-rerank">
+                      <option value="default">As configured</option>
+                      <option value="none">None (vector order)</option>
+                      <option value="model">Choose a model…</option>
+                    </select>
+                  </div>
+                  <div class="col-sm-3">
+                    <input class="form-control form-control-sm mono d-none" id="pg-rerank-model"
+                           list="reranker-models" placeholder="reranker alias">
+                  </div>
+                </div>
+                <div class="d-flex align-items-center gap-3 mt-3">
+                  <button class="btn btn-primary btn-sm" id="pg-run">Retrieve</button>
+                  <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" id="pg-compare" checked>
+                    <label class="form-check-label small" for="pg-compare">
+                      Compare with vector order</label>
+                  </div>
+                  <span class="small text-secondary">Nothing is stored. Empty fields use each
+                    base's own settings.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="pg-results"></div>
+        </div>
+
+        <div id="pg-tab-eval" class="d-none">
+          <div class="d-flex align-items-end gap-2 mb-3 flex-wrap">
+            <div>
+              <label class="form-label small text-secondary mb-1" for="ev-base">Knowledge base</label>
+              <select class="form-select form-select-sm" id="ev-base" style="min-width:16rem"></select>
+            </div>
+            <button class="btn btn-sm btn-primary ms-auto" id="ev-new">+ New evaluation set</button>
+          </div>
+          <div id="ev-sets" class="mb-3"></div>
+          <div id="ev-detail"></div>
+        </div>
+      </section>
+
       <!-- Memory (M16) -->
       <section id="page-memory" class="page d-none">
         <h4 class="mb-1">Memory</h4>
@@ -782,6 +873,129 @@
           <button type="submit" class="btn btn-primary">Create</button>
         </div>
       </form>
+    </div>
+  </div>
+</div>
+
+<datalist id="reranker-models"></datalist>
+
+<!-- Knowledge base retrieval settings (E5) ------------------------------------>
+<div class="modal fade" id="kb-settings-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="kb-settings-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Settings: <span id="kbs-name" class="mono"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label small text-secondary" for="kbs-display">Display name</label>
+              <input class="form-control" id="kbs-display" required>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="kbs-enabled">
+                <label class="form-check-label" for="kbs-enabled">Enabled</label>
+              </div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="kbs-desc">Description</label>
+              <input class="form-control" id="kbs-desc">
+            </div>
+            <div class="col-12"><hr class="my-1"><div class="small fw-medium">Retrieval</div></div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="kbs-reranker">Reranker</label>
+              <input class="form-control mono" id="kbs-reranker" list="reranker-models"
+                     placeholder="none: vector order is final">
+              <div class="form-text small">A RERANKER model or alias. It reorders the
+                vector candidates; it can only promote passages vector search found.</div>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-secondary" for="kbs-topk">Top-k</label>
+              <input class="form-control" id="kbs-topk" type="number" min="1" max="50" required>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-secondary" for="kbs-cand">Candidates</label>
+              <input class="form-control" id="kbs-cand" type="number" min="1" max="200" required>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-secondary" for="kbs-min">Min score</label>
+              <input class="form-control" id="kbs-min" type="number" min="0" max="1" step="0.05"
+                     placeholder="0.25">
+            </div>
+            <div class="col-12 form-text small mt-0">Agents use these settings. Candidates
+              apply only with a reranker. An empty minimum score uses the agent default (0.25).
+              The embedding model and chunking cannot change here: that needs a rebuild.</div>
+          </div>
+          <div id="kb-settings-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Document versions (E5) ----------------------------------------------------->
+<div class="modal fade" id="doc-versions-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Versions of <span id="dv-name" class="mono"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-secondary">Only the current version is searched. A new version
+          takes over once it is fully indexed; until then the previous one keeps answering.
+          Superseded versions keep their record and stored original, but no vectors.</p>
+        <div id="dv-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- New evaluation set (E5) ---------------------------------------------------->
+<div class="modal fade" id="eval-set-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="eval-set-form">
+        <div class="modal-header">
+          <h5 class="modal-title">New evaluation set</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">Test questions for <span id="evs-base"
+            class="fw-medium"></span>, each labelled with the documents that answer it. Add
+            questions after creating the set.</p>
+          <label class="form-label small text-secondary" for="evs-name">Name</label>
+          <input class="form-control mb-3" id="evs-name" required maxlength="128"
+                 placeholder="hr-policy-smoke">
+          <label class="form-label small text-secondary" for="evs-desc">Description</label>
+          <input class="form-control" id="evs-desc" maxlength="2000">
+          <div id="eval-set-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Evaluation run detail (E5) ------------------------------------------------->
+<div class="modal fade" id="eval-run-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Evaluation run</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="eval-run-body"></div>
     </div>
   </div>
 </div>

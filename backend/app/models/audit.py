@@ -99,6 +99,13 @@ class AuditAction(enum.StrEnum):
     KNOWLEDGE_BASE_DELETED = "KNOWLEDGE_BASE_DELETED"
     DOCUMENT_UPLOADED = "DOCUMENT_UPLOADED"
     DOCUMENT_DELETED = "DOCUMENT_DELETED"
+    # Retrieval depth (E5)
+    KNOWLEDGE_BASE_UPDATED = "KNOWLEDGE_BASE_UPDATED"
+    DOCUMENT_VERSION_UPLOADED = "DOCUMENT_VERSION_UPLOADED"
+    DOCUMENT_REINGESTED = "DOCUMENT_REINGESTED"
+    EVAL_SET_CREATED = "EVAL_SET_CREATED"
+    EVAL_SET_DELETED = "EVAL_SET_DELETED"
+    EVAL_RUN_COMPLETED = "EVAL_RUN_COMPLETED"
     # Recorded because a memory holds what an agent believes about a person, and §M24 means
     # someone will eventually ask what it remembered and who cleared it.
     MEMORY_DELETED = "MEMORY_DELETED"

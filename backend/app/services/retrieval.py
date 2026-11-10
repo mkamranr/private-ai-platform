@@ -112,10 +112,12 @@ class RetrievalService:
                 dropped=[b.name for b in bases if b.tenant_id != self._tenant_id],
             )
 
-        passages = await self._knowledge.search(
-            permitted, question, limit=MAX_PASSAGES, score_threshold=MIN_SCORE
-        )
-        return passages, [b.name for b in permitted]
+        # Each base's retrieval settings apply (E5): its top-k, its score floor (else
+        # MIN_SCORE) and its reranker, if one is configured.
+        trace = await self._knowledge.retrieve(permitted, question, fallback_threshold=MIN_SCORE)
+        for warning in trace.warnings:
+            log.warning("agent_retrieval_degraded", detail=warning)
+        return trace.results, [b.name for b in permitted]
 
     async def _recall(
         self, spec: AgentSpec, context: RunContext, question: str

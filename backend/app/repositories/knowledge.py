@@ -18,6 +18,9 @@ from app.models.knowledge import (
     EmbeddingModel,
     KnowledgeBase,
     MemoryEntry,
+    RagEvalCase,
+    RagEvalRun,
+    RagEvalSet,
 )
 from app.repositories.base import BaseRepository
 
@@ -55,15 +58,44 @@ class DocumentRepository(BaseRepository[Document]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_base(
-        self, knowledge_base_id: uuid.UUID, *, limit: int = 200
+        self,
+        knowledge_base_id: uuid.UUID,
+        *,
+        limit: int = 200,
+        include_superseded: bool = False,
     ) -> Sequence[Document]:
+        """Newest first. Superseded versions (E5) are left out unless asked for: they are
+        history, not part of what the base answers from."""
+        stmt = select(Document).where(Document.knowledge_base_id == knowledge_base_id)
+        if not include_superseded:
+            stmt = stmt.where(Document.superseded_at.is_(None))
+        stmt = stmt.order_by(Document.created_at.desc()).limit(limit)
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def lineage(self, lineage_id: uuid.UUID) -> Sequence[Document]:
+        """Every version of one document, newest first."""
         stmt = (
             select(Document)
-            .where(Document.knowledge_base_id == knowledge_base_id)
-            .order_by(Document.created_at.desc())
-            .limit(limit)
+            .where(Document.lineage_id == lineage_id)
+            .order_by(Document.version.desc())
         )
         return (await self.session.execute(stmt)).scalars().all()
+
+    async def current_by_lineage(
+        self, lineage_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, Document]:
+        """The version to show for each lineage: the current one, else the newest."""
+        if not lineage_ids:
+            return {}
+        stmt = (
+            select(Document)
+            .where(Document.lineage_id.in_(lineage_ids))
+            .order_by(Document.is_current.desc(), Document.version.desc())
+        )
+        found: dict[uuid.UUID, Document] = {}
+        for document in (await self.session.execute(stmt)).scalars():
+            found.setdefault(document.lineage_id, document)
+        return found
 
     async def find_duplicate(self, knowledge_base_id: uuid.UUID, sha256: str) -> Document | None:
         """An identical file already in this base.
@@ -98,7 +130,10 @@ class DocumentRepository(BaseRepository[Document]):
         rows = (
             await self.session.execute(
                 select(Document.status, func.count())
-                .where(Document.knowledge_base_id == knowledge_base_id)
+                .where(
+                    Document.knowledge_base_id == knowledge_base_id,
+                    Document.superseded_at.is_(None),
+                )
                 .group_by(Document.status)
             )
         ).all()
@@ -131,6 +166,16 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         return {row.vector_id: row for row in rows if row.vector_id}
+
+    async def count_for_base(self, knowledge_base_id: uuid.UUID) -> int:
+        """Chunks of the base's current documents: what its index should hold (E5)."""
+        stmt = (
+            select(func.count())
+            .select_from(DocumentChunk)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(Document.knowledge_base_id == knowledge_base_id, Document.is_current.is_(True))
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
 
     async def delete_for_document(self, document_id: uuid.UUID) -> None:
         """Bulk delete, for a re-ingest that replaces every chunk.
@@ -317,3 +362,52 @@ class MemoryEntryRepository(BaseRepository[MemoryEntry]):
         for row in rows:
             await self.session.delete(row)
         return len(rows)
+
+
+# ---------------------------------------------------------------------------
+# Retrieval evaluation (E5)
+# ---------------------------------------------------------------------------
+class RagEvalSetRepository(BaseRepository[RagEvalSet]):
+    model = RagEvalSet
+
+    async def list_for_base(self, knowledge_base_id: uuid.UUID) -> Sequence[RagEvalSet]:
+        stmt = (
+            select(RagEvalSet)
+            .where(RagEvalSet.knowledge_base_id == knowledge_base_id)
+            .options(selectinload(RagEvalSet.cases))
+            .order_by(RagEvalSet.name)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def get_with_cases(self, set_id: uuid.UUID) -> RagEvalSet | None:
+        stmt = (
+            select(RagEvalSet)
+            .where(RagEvalSet.id == set_id)
+            .options(selectinload(RagEvalSet.cases))
+            # Refresh an already-loaded set: its cases may have changed in this session.
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_name(self, knowledge_base_id: uuid.UUID, name: str) -> RagEvalSet | None:
+        stmt = select(RagEvalSet).where(
+            RagEvalSet.knowledge_base_id == knowledge_base_id, RagEvalSet.name == name
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+
+class RagEvalCaseRepository(BaseRepository[RagEvalCase]):
+    model = RagEvalCase
+
+
+class RagEvalRunRepository(BaseRepository[RagEvalRun]):
+    model = RagEvalRun
+
+    async def list_for_set(self, set_id: uuid.UUID, *, limit: int = 50) -> Sequence[RagEvalRun]:
+        stmt = (
+            select(RagEvalRun)
+            .where(RagEvalRun.eval_set_id == set_id)
+            .order_by(RagEvalRun.created_at.desc())
+            .limit(limit)
+        )
+        return (await self.session.execute(stmt)).scalars().all()

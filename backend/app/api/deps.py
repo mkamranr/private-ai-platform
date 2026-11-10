@@ -63,6 +63,9 @@ from app.repositories.knowledge import (
     EmbeddingModelRepository,
     KnowledgeBaseRepository,
     MemoryEntryRepository,
+    RagEvalCaseRepository,
+    RagEvalRunRepository,
+    RagEvalSetRepository,
 )
 from app.repositories.models_registry import (
     ApiClientRepository,
@@ -115,6 +118,7 @@ from app.services.model_registry import ModelRegistryService
 from app.services.monitoring import MonitoringService, TraceService
 from app.services.node_enrollment import NodeEnrollmentService
 from app.services.quotas import QuotaService
+from app.services.rag_eval import RagEvalService
 from app.services.retrieval import RetrievalService
 from app.services.teams import ScopeGuard, TeamService, scope_for
 from app.services.tool_pipeline import ToolPipeline
@@ -812,6 +816,7 @@ def build_agent_run_service(session: AsyncSession, app_state: Any) -> AgentRunSe
         _embed_through(gateway),
         app_state.minio,
         ResolvingOcrEngine(gateway.ocr_engine_for_model),
+        rerank=_rerank_through(gateway),
     )
     memory = MemoryService(
         ConversationRepository(session),
@@ -864,6 +869,16 @@ def _embed_through(gateway: GatewayService) -> Any:
         return [list(vector) for vector in result.vectors]
 
     return embed
+
+
+def _rerank_through(gateway: GatewayService) -> Any:
+    """Reranking callable bound to one gateway (E5): same alias resolution as embedding."""
+
+    async def rerank(query: str, passages: list[str], model: str) -> list[float]:
+        provider, served_model = await gateway.provider_for_model(model)
+        return await provider.rerank(query, passages, model=served_model)
+
+    return rerank
 
 
 def get_voice_config_store(session: SessionDep, settings: SettingsDep) -> VoiceConfigStore:
@@ -953,10 +968,29 @@ def get_knowledge_service(
         request.app.state.minio,
         # OCR through the gateway too (M28), for the same reason embedding goes that way.
         ResolvingOcrEngine(gateway.ocr_engine_for_model),
+        # And reranking (E5).
+        rerank=_rerank_through(gateway),
     )
 
 
 KnowledgeServiceDep = Annotated[KnowledgeService, Depends(get_knowledge_service)]
+
+
+def get_rag_eval_service(
+    session: SessionDep, knowledge: KnowledgeServiceDep, audit: AuditDep
+) -> RagEvalService:
+    """Retrieval evaluation (E5), over the same knowledge service a search uses."""
+    return RagEvalService(
+        knowledge,
+        RagEvalSetRepository(session),
+        RagEvalCaseRepository(session),
+        RagEvalRunRepository(session),
+        DocumentRepository(session),
+        audit,
+    )
+
+
+RagEvalServiceDep = Annotated[RagEvalService, Depends(get_rag_eval_service)]
 
 
 def get_memory_service(

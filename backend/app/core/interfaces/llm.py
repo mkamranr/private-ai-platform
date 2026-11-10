@@ -124,6 +124,14 @@ class LLMProvider(ABC):
         model: str,
     ) -> EmbeddingResult: ...
 
+    async def rerank(self, query: str, documents: Sequence[str], *, model: str) -> list[float]:
+        """Relevance of each document to ``query``, in input order (E5).
+
+        Not abstract: only a runtime serving a cross-encoder can answer, and a provider
+        without one says so rather than every implementation stubbing it.
+        """
+        raise NotImplementedError("This provider cannot rerank.")
+
     @abstractmethod
     async def list_models(self) -> list[ModelDescriptor]: ...
 

@@ -50,6 +50,9 @@ from app.models.knowledge import (
     KnowledgeBase,
     MemoryEntry,
     MemoryLayer,
+    RagEvalCase,
+    RagEvalRun,
+    RagEvalSet,
 )
 from app.models.models_registry import (
     ACTIVE_STATES,
@@ -148,6 +151,9 @@ __all__ = [
     "NodeStatus",
     "Permission",
     "QuotaScope",
+    "RagEvalCase",
+    "RagEvalRun",
+    "RagEvalSet",
     "Role",
     "RunState",
     "Skill",

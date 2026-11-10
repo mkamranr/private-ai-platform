@@ -70,7 +70,14 @@ dashboard real signals.
 
 ## E5: RAG depth (P1)
 
-- Rerank stage using `RERANKER` models; retrieval playground with scores; document versions; evaluation sets.
+- [x] Migration `5f2b8c1d4a37`: retrieval settings on knowledge bases (`reranker_model`, `retrieval_top_k`, `rerank_candidates`, `min_score`); `lineage_id`, `version`, `is_current`, `superseded_at` on documents; `rag_eval_sets`, `rag_eval_cases`, `rag_eval_runs`. Backfills keep existing behaviour (no reranker, top-k 4; every document version 1 and current).
+- [x] Rerank stage: `KnowledgeService.retrieve` returns a trace (candidates, results, reranker, measured timings, warnings). Reranking goes through the gateway's model resolution; `VLLMProvider.rerank` speaks vLLM `/v1/rerank` and TEI `/rerank`; `mock-vllm` serves `/v1/rerank`. A failing reranker falls back to vector order with a warning; mixed rerankers across bases are not merged. Agents use each base's settings.
+- [x] `PATCH /knowledge-bases/{id}`: display and retrieval settings, the reranker validated as a visible `RERANKER`. Audited `KNOWLEDGE_BASE_UPDATED`.
+- [x] Document versions: `POST/GET /documents/{id}/versions`, published only once indexed (the old version answers until then), superseded versions kept without vectors; `POST /documents/{id}/reingest`; delete by lineage. Re-chunking now removes the previous vectors instead of orphaning them. `stored_chunks` beside `chunks` for index health.
+- [x] `POST /retrieval/playground`: candidates, reranked results, optional vector-order baseline, timings and warnings.
+- [x] Evaluation sets labelled by document lineage; synchronous runs (≤100 questions) scoring hit rate, recall, precision and MRR over distinct documents, with per-question results stored. Audited.
+- [x] Admin: retrieval settings, version badges, New version / Re-ingest / Versions on the Knowledge Bases page; new Retrieval Playground page with an Evaluation sets tab. Doc: [docs/rag-evaluation.md](../rag-evaluation.md).
+- [ ] Answer faithfulness scoring (needs a judge model), query history, asynchronous runs for large sets, whole-base re-embed and per-document ACLs are not included. See rag-evaluation.md.
 
 ## E6: Workflows (P2)
 

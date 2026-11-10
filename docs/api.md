@@ -610,3 +610,35 @@ Changes to existing routes, all backwards-compatible:
 - Deployment responses include `current_revision`.
 - Gateway (`/v1`): a blocked model answers **403** `model_blocked` unless the alias has
   an unblocked fallback, and is left out of `GET /v1/models`.
+
+## Retrieval depth — Expansion E5
+
+Under `/api/v1`, authenticated with the platform JWT. See
+[rag-evaluation.md](rag-evaluation.md).
+
+| method | path | permission |
+|---|---|---|
+| PATCH | `/knowledge-bases/{id}` | `knowledge.manage`. `display_name`, `description`, `enabled`, `reranker_model` (empty string removes it), `retrieval_top_k`, `rerank_candidates`, `min_score`, `clear_min_score` |
+| POST | `/documents/{id}/versions` | `document.upload`. Multipart `file`; **202**; the current version answers until the new one is indexed |
+| GET | `/documents/{id}/versions` | `knowledge.view`. Newest first |
+| POST | `/documents/{id}/reingest` | `document.upload`. **202**; terminal, current documents only |
+| POST | `/retrieval/playground` | `knowledge.view`. `knowledge_base_ids`, `query`, `top_k`, `candidates`, `score_threshold`, `reranker` (`default`/`none`/`model`), `reranker_model`, `compare` |
+| GET / POST | `/knowledge-bases/{id}/eval-sets` | `knowledge.view` / `knowledge.manage` |
+| GET / PATCH / DELETE | `/eval-sets/{id}` | `knowledge.view` / `knowledge.manage` / `knowledge.manage` |
+| POST | `/eval-sets/{id}/cases` | `knowledge.manage` |
+| DELETE | `/eval-sets/{id}/cases/{case_id}` | `knowledge.manage` |
+| GET / POST | `/eval-sets/{id}/runs` | `knowledge.view` / `knowledge.manage`. A run is synchronous, up to 100 questions |
+| GET | `/eval-runs/{id}` | `knowledge.view` |
+
+Changes to existing routes, all backwards-compatible:
+
+- Knowledge base responses include `reranker_model`, `retrieval_top_k`,
+  `rerank_candidates` and `min_score`. The detail adds `stored_chunks` beside `chunks`.
+- Document responses include `lineage_id`, `version`, `is_current` and `superseded_at`.
+  `GET /knowledge-bases/{id}/documents` leaves superseded versions out unless
+  `?include_superseded=true`.
+- Search results include `rerank_score`, `vector_rank`, `lineage_id` and `version`.
+  `score` stays the vector similarity. `POST /knowledge-bases/{id}/search` reranks when the
+  base configures a reranker.
+- `DELETE /documents/{id}` on a current version deletes every version of the document.
+

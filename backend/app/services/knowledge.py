@@ -26,9 +26,10 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Final, Protocol
 
 from app.config.settings import Settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -57,10 +58,34 @@ log = get_logger(__name__)
 
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 
+#: "Use what the knowledge bases configure" for the reranker (E5). ``None`` means no
+#: reranking; any other string is a model name or alias.
+RERANK_DEFAULT: Final = ":default"
+
+#: Knowledge base settings a PATCH may change. Not the embedding model or chunking: those
+#: change what the vectors mean, so they need a rebuild, not an edit.
+UPDATABLE_FIELDS = frozenset(
+    {
+        "display_name",
+        "description",
+        "enabled",
+        "reranker_model",
+        "retrieval_top_k",
+        "rerank_candidates",
+        "min_score",
+    }
+)
+
 #: Chunks embedded per request to the gateway. Batched because one call per chunk would be
 #: hundreds of round trips for a large document; bounded because a single request carrying
 #: 2,000 passages risks a timeout that loses the whole batch.
 EMBED_BATCH = 32
+
+
+class Reranker(Protocol):
+    """Scores passages against a query, in input order (E5)."""
+
+    async def __call__(self, query: str, passages: list[str], model: str) -> list[float]: ...
 
 
 class ObjectStorage(Protocol):
@@ -92,6 +117,32 @@ class SearchResult:
     #: True when the text came from OCR, which is materially less reliable. Carried through
     #: so an answer drawn from it can say so.
     ocr: bool = False
+    #: The reranker's relevance score, when one ran (E5). ``score`` stays the vector
+    #: similarity, so its meaning does not change with configuration.
+    rerank_score: float | None = None
+    #: Position by vector similarity, 1-based, before any reranking.
+    vector_rank: int = 0
+    #: The document's lineage and version (E5): what evaluation compares against.
+    lineage_id: uuid.UUID | None = None
+    version: int = 1
+
+
+@dataclass(slots=True)
+class RetrievalTrace:
+    """Everything one retrieval did, for the playground and evaluation (E5).
+
+    ``candidates`` are in vector order; ``results`` are what a caller gets. Timings are
+    measured wall-clock milliseconds for each stage, summed across bases.
+    """
+
+    results: list[SearchResult] = field(default_factory=list)
+    candidates: list[SearchResult] = field(default_factory=list)
+    reranker: str | None = None
+    reranked: bool = False
+    top_k: int = 0
+    candidate_pool: int = 0
+    timings_ms: dict[str, float] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -110,6 +161,9 @@ class KnowledgeBaseStats:
     failed: int = 0
     pending: int = 0
     chunks: int = 0
+    #: Chunks stored for the current documents (E5). Differs from ``chunks`` (points in
+    #: the vector store) while a document is being embedded, or after a partial failure.
+    stored_chunks: int = 0
     by_status: dict[str, int] = field(default_factory=dict)
 
 
@@ -126,6 +180,7 @@ class KnowledgeService:
         embed: object,
         storage: ObjectStorage,
         ocr: OcrEngine | None = None,
+        rerank: Reranker | None = None,
     ) -> None:
         self._settings = settings
         self._bases = bases
@@ -143,6 +198,9 @@ class KnowledgeService:
         # None when no OCR model is deployed: an image then lands in NO_TEXT with a
         # reason rather than the pipeline failing.
         self._ocr = ocr
+        # Scores passages against a query with a RERANKER model, through the gateway
+        # (E5). None where nothing searches (the ingestion worker).
+        self._rerank = rerank
 
     # -- knowledge bases ---------------------------------------------------
     async def list_bases(self, *, tenant_id: str | None = None) -> list[KnowledgeBase]:
@@ -262,12 +320,62 @@ class KnowledgeService:
             - failed
             - by_status.get(DocumentStatus.NO_TEXT, 0),
             chunks=await self._vectors.count(base.collection),
+            stored_chunks=await self._chunks.count_for_base(base.id),
             by_status=by_status,
         )
 
-    async def list_documents(self, base_id: uuid.UUID, *, limit: int = 200) -> list[Document]:
+    async def update_base(
+        self, base_id: uuid.UUID, changes: dict[str, Any], *, actor: User
+    ) -> KnowledgeBase:
+        """Change display and retrieval settings (E5). The caller validates that a
+        reranker names a RERANKER model the actor can see."""
+        base = await self.get_base(base_id)
+        unknown = set(changes) - UPDATABLE_FIELDS
+        if unknown:
+            raise ValidationError(f"Cannot change {', '.join(sorted(unknown))} here.")
+        for required in ("display_name", "enabled", "retrieval_top_k", "rerank_candidates"):
+            if required in changes and changes[required] is None:
+                raise ValidationError(f"{required} cannot be empty.", details={"field": required})
+        before = {key: getattr(base, key) for key in changes}
+        for key, value in changes.items():
+            setattr(base, key, value)
+        if base.rerank_candidates < base.retrieval_top_k:
+            raise ValidationError(
+                "rerank_candidates must be at least retrieval_top_k: the reranker can only "
+                "choose from what vector search hands it.",
+                details={"field": "rerank_candidates"},
+            )
+        await self._bases.flush()
+        await self._audit.record(
+            AuditAction.KNOWLEDGE_BASE_UPDATED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="knowledge_base",
+            resource_id=str(base.id),
+            metadata={
+                "name": base.name,
+                "changed": {
+                    key: {"from": before[key], "to": getattr(base, key)}
+                    for key in changes
+                    if before[key] != getattr(base, key)
+                },
+            },
+        )
+        return base
+
+    async def list_documents(
+        self, base_id: uuid.UUID, *, limit: int = 200, include_superseded: bool = False
+    ) -> list[Document]:
         await self.get_base(base_id)
-        return list(await self._documents.list_for_base(base_id, limit=limit))
+        return list(
+            await self._documents.list_for_base(
+                base_id, limit=limit, include_superseded=include_superseded
+            )
+        )
+
+    async def list_versions(self, document_id: uuid.UUID) -> list[Document]:
+        document = await self.get_document(document_id)
+        return list(await self._documents.lineage(document.lineage_id))
 
     async def get_document(self, document_id: uuid.UUID) -> Document:
         document = await self._documents.get(document_id)
@@ -284,11 +392,16 @@ class KnowledgeService:
         content_type: str,
         content: bytes,
         actor: User,
+        version_of: uuid.UUID | None = None,
     ) -> Document:
         """Record an upload and hand it to the worker. Returns immediately (202).
 
         The bytes are stored and hashed here; nothing is parsed. Parsing a large PDF inside
         the request would hold a connection open for minutes and time out behind any proxy.
+
+        ``version_of`` (E5) makes this the next version of an existing document. The new
+        version is not searched until it is fully indexed; the version it replaces keeps
+        answering until then, and stops only once the swap happens (see `_publish`).
         """
         base = await self.get_base(base_id)
         if not base.enabled:
@@ -297,6 +410,27 @@ class KnowledgeService:
             raise ValidationError("The uploaded file is empty.")
 
         digest = hashlib.sha256(content).hexdigest()
+        previous: list[Document] = []
+        if version_of is not None:
+            anchor = await self.get_document(version_of)
+            if anchor.knowledge_base_id != base.id:
+                raise ValidationError("That document belongs to another knowledge base.")
+            previous = list(await self._documents.lineage(anchor.lineage_id))
+            same = next((d for d in previous if d.sha256 == digest), None)
+            if same is not None:
+                raise ConflictError(
+                    f"This file is identical to version {same.version} of {same.filename!r}.",
+                    details={"document_id": str(same.id)},
+                )
+            busy = next(
+                (d for d in previous if not d.is_terminal and d.superseded_at is None), None
+            )
+            if busy is not None:
+                raise ConflictError(
+                    f"Version {busy.version} is still being ingested ({busy.status}). Wait "
+                    "for it to finish before uploading another.",
+                    details={"document_id": str(busy.id)},
+                )
         duplicate = await self._documents.find_duplicate(base.id, digest)
         if duplicate is not None:
             raise ConflictError(
@@ -305,7 +439,9 @@ class KnowledgeService:
                 details={"document_id": str(duplicate.id)},
             )
 
+        document_id = uuid.uuid4()
         document = Document(
+            id=document_id,
             knowledge_base_id=base.id,
             filename=filename,
             content_type=content_type or "application/octet-stream",
@@ -313,6 +449,11 @@ class KnowledgeService:
             sha256=digest,
             status=DocumentStatus.UPLOADED,
             uploaded_by=actor.id,
+            lineage_id=previous[0].lineage_id if previous else document_id,
+            version=(previous[0].version + 1) if previous else 1,
+            # A first version is current from the start, as every document was before
+            # versions existed. A later one waits until it is indexed.
+            is_current=not previous,
         )
         self._documents.add(document)
         await self._documents.flush()
@@ -326,7 +467,7 @@ class KnowledgeService:
         await self._documents.flush()
 
         await self._audit.record(
-            AuditAction.DOCUMENT_UPLOADED,
+            AuditAction.DOCUMENT_VERSION_UPLOADED if previous else AuditAction.DOCUMENT_UPLOADED,
             user_id=actor.id,
             username=actor.username,
             resource_type="document",
@@ -335,9 +476,84 @@ class KnowledgeService:
                 "knowledge_base": base.name,
                 "filename": filename,
                 "size_bytes": len(content),
+                "version": document.version,
+                "lineage_id": str(document.lineage_id),
             },
         )
         return document
+
+    async def reingest(self, document_id: uuid.UUID, *, actor: User) -> Document:
+        """Run ingestion again from the stored original (E5).
+
+        In place: the document is not searchable while it is re-processed. To change a
+        document without a gap, upload a new version instead.
+        """
+        document = await self._documents.get_with_base(document_id)
+        if document is None:
+            raise NotFoundError(f"No document with id {document_id}.")
+        if document.superseded_at is not None:
+            raise ConflictError("This version has been superseded. Re-ingest the current one.")
+        if not document.is_terminal:
+            raise ConflictError(f"The document is already being ingested ({document.status}).")
+        if not document.storage_key:
+            raise ConflictError("No stored original is kept for this document.")
+        await self._drop_index(document)
+        document.status = DocumentStatus.UPLOADED
+        document.error = None
+        document.status_detail = None
+        document.chunk_count = 0
+        document.indexed_at = None
+        await self._documents.flush()
+        await self._audit.record(
+            AuditAction.DOCUMENT_REINGESTED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="document",
+            resource_id=str(document.id),
+            metadata={"filename": document.filename, "version": document.version},
+        )
+        return document
+
+    async def _drop_index(self, document: Document, collection: str | None = None) -> int:
+        """Remove a document's vectors (by id) and chunk rows. Returns the vector count."""
+        vector_ids = [
+            row.vector_id
+            for row in await self._chunks.list_for_document(document.id)
+            if row.vector_id
+        ]
+        if vector_ids:
+            try:
+                await self._vectors.delete(
+                    collection or document.knowledge_base.collection, ids=vector_ids
+                )
+            except Exception:
+                log.warning("vector_delete_failed", document=str(document.id))
+        await self._chunks.delete_for_document(document.id)
+        return len(vector_ids)
+
+    async def _publish(self, document: Document) -> None:
+        """Make a freshly indexed version the one that is searched (E5).
+
+        Every other live version of the document is superseded: its vectors and chunks
+        are removed (its stored original and record are kept as history). Done after
+        indexing succeeded, so a failed new version never leaves the document unsearchable.
+        """
+        if document.is_current and document.version == 1:
+            return
+        for other in await self._documents.lineage(document.lineage_id):
+            if other.id == document.id or other.superseded_at is not None:
+                continue
+            await self._drop_index(other, document.knowledge_base.collection)
+            other.is_current = False
+            other.superseded_at = dt.datetime.now(dt.UTC)
+            other.chunk_count = 0
+        document.is_current = True
+        log.info(
+            "document_version_published",
+            document=str(document.id),
+            lineage=str(document.lineage_id),
+            version=document.version,
+        )
 
     async def _recognise(self, document: Document, content: bytes) -> ParseResult:
         """Run OCR and return it shaped exactly like a parse result (M28).
@@ -440,7 +656,9 @@ class KnowledgeService:
 
         # Written before embedding, so the authoritative text exists even if embedding
         # fails half-way — and a retry re-embeds from these rows rather than re-parsing.
-        await self._chunks.delete_for_document(document.id)
+        # The previous attempt's vectors go too: new rows get new vector ids, and the old
+        # points would otherwise linger in the index as orphans.
+        await self._drop_index(document)
         rows: list[DocumentChunk] = []
         for chunk in chunks:
             row = DocumentChunk(
@@ -464,6 +682,7 @@ class KnowledgeService:
         document.status = DocumentStatus.INDEXED
         document.chunk_count = len(rows)
         document.indexed_at = dt.datetime.now(dt.UTC)
+        await self._publish(document)
         await self._documents.flush()
 
         log.info(
@@ -554,31 +773,34 @@ class KnowledgeService:
         if document is None:
             raise NotFoundError(f"No document with id {document_id}.")
 
-        vector_ids = [
-            row.vector_id
-            for row in await self._chunks.list_for_document(document.id)
-            if row.vector_id
-        ]
-        if vector_ids:
-            try:
-                await self._vectors.delete(document.knowledge_base.collection, ids=vector_ids)
-            except Exception:
-                log.warning("vector_delete_failed", document=str(document.id))
+        # Deleting a live version deletes the document: every version of it (E5). A
+        # superseded version is history, and deleting it removes only that version.
+        targets = (
+            [document]
+            if document.superseded_at is not None
+            else list(await self._documents.lineage(document.lineage_id))
+        )
+        vectors = 0
+        for target in targets:
+            vectors += await self._drop_index(target, document.knowledge_base.collection)
+            if target.storage_key:
+                try:
+                    await self._storage.remove_object(target.storage_key)
+                except Exception:
+                    log.warning("stored_original_delete_failed", document=str(target.id))
+            await self._documents.delete(target)
 
-        if document.storage_key:
-            try:
-                await self._storage.remove_object(document.storage_key)
-            except Exception:
-                log.warning("stored_original_delete_failed", document=str(document.id))
-
-        await self._documents.delete(document)
         await self._audit.record(
             AuditAction.DOCUMENT_DELETED,
             user_id=actor.id,
             username=actor.username,
             resource_type="document",
             resource_id=str(document_id),
-            metadata={"filename": document.filename, "vectors": len(vector_ids)},
+            metadata={
+                "filename": document.filename,
+                "vectors": vectors,
+                "versions": [t.version for t in targets],
+            },
         )
 
     # -- search ------------------------------------------------------------
@@ -590,33 +812,93 @@ class KnowledgeService:
         limit: int = 5,
         score_threshold: float | None = None,
     ) -> list[SearchResult]:
-        """Semantic search across one or more knowledge bases.
+        """Search, rerank where the bases configure it, and return the passages."""
+        trace = await self.retrieve(bases, query, top_k=limit, score_threshold=score_threshold)
+        return trace.results
+
+    def _choose_reranker(
+        self, bases: list[KnowledgeBase], requested: str | None, warnings: list[str]
+    ) -> str | None:
+        if requested is None:
+            return None
+        if requested != RERANK_DEFAULT:
+            return requested
+        configured = sorted({b.reranker_model for b in bases if b.reranker_model})
+        if len(configured) > 1:
+            # Scores from two different rerankers are not comparable, so a merged list
+            # could not be ordered honestly.
+            warnings.append(
+                f"The knowledge bases configure different rerankers ({', '.join(configured)}), "
+                "so none was applied. Choose one explicitly to rerank."
+            )
+            return None
+        return configured[0] if configured else None
+
+    async def retrieve(
+        self,
+        bases: list[KnowledgeBase],
+        query: str,
+        *,
+        top_k: int | None = None,
+        candidates: int | None = None,
+        score_threshold: float | None = None,
+        fallback_threshold: float | None = None,
+        reranker: str | None = RERANK_DEFAULT,
+    ) -> RetrievalTrace:
+        """Vector search across bases, then an optional rerank, with a trace (E5).
 
         Each base is searched in its own collection — they may use different embedding
-        models, and a vector from one is not comparable with a vector from another. Results
-        are merged by score afterwards, which is only meaningful because every collection
-        here uses cosine distance on normalised vectors.
-        """
-        if not bases or not query.strip():
-            return []
+        models, and a vector from one is not comparable with a vector from another. The
+        candidates are merged by similarity, which is only meaningful because every
+        collection here uses cosine distance on normalised vectors.
 
-        results: list[SearchResult] = []
-        for base in bases:
-            if not base.enabled:
-                continue
+        With a reranker, ``candidates`` passages (default: the bases' setting) are scored
+        by the cross-encoder and the best ``top_k`` returned; it can only promote what
+        vector search found. If reranking fails, the results stay in vector order and the
+        trace says so: a retrieval must not fail because an optional stage did.
+
+        The similarity floor is ``score_threshold``, else each base's ``min_score``, else
+        ``fallback_threshold``.
+        """
+        trace = RetrievalTrace()
+        active = [b for b in bases if b.enabled]
+        if not active or not query.strip():
+            return trace
+
+        model = self._choose_reranker(active, reranker, trace.warnings)
+        if model and self._rerank is None:
+            trace.warnings.append("Reranking is not available here; results are in vector order.")
+            model = None
+        trace.top_k = top_k or max(b.retrieval_top_k for b in active)
+        trace.candidate_pool = (
+            max(candidates or max(b.rerank_candidates for b in active), trace.top_k)
+            if model
+            else trace.top_k
+        )
+        embed_ms = search_ms = 0.0
+
+        found: list[SearchResult] = []
+        for base in active:
+            started = time.perf_counter()
             vectors = await self._embed([query], base.embedding_model)  # type: ignore[operator]
+            embed_ms += (time.perf_counter() - started) * 1000
             if not vectors:
                 continue
 
+            threshold = score_threshold
+            if threshold is None:
+                threshold = base.min_score if base.min_score is not None else fallback_threshold
+            started = time.perf_counter()
             hits = await self._vectors.search(
                 base.collection,
                 vectors[0],
-                limit=limit,
-                score_threshold=score_threshold,
+                limit=trace.candidate_pool,
+                score_threshold=threshold,
                 # Always scoped. The store raises rather than searching unfiltered, so a
                 # filter that fails to translate cannot become a global search (§M16).
                 filters={"tenant_id": base.tenant_id, "knowledge_base_id": str(base.id)},
             )
+            search_ms += (time.perf_counter() - started) * 1000
             if not hits:
                 continue
 
@@ -631,7 +913,11 @@ class KnowledgeService:
                     # rather than answered from the preview.
                     log.warning("orphaned_vector", collection=base.collection, point=hit.id)
                     continue
-                results.append(
+                if not row.document.is_current:
+                    # A new version mid-embedding, not yet published (E5). Its vectors
+                    # exist, but the version it will replace is still the one answering.
+                    continue
+                found.append(
                     SearchResult(
                         text=row.text,
                         score=hit.score,
@@ -641,11 +927,42 @@ class KnowledgeService:
                         location=row.location,
                         ordinal=row.ordinal,
                         ocr=row.document.ocr_used,
+                        lineage_id=row.document.lineage_id,
+                        version=row.document.version,
                     )
                 )
 
-        results.sort(key=lambda r: r.score, reverse=True)
-        return results[:limit]
+        found.sort(key=lambda r: r.score, reverse=True)
+        trace.candidates = found[: trace.candidate_pool]
+        for rank, result in enumerate(trace.candidates, start=1):
+            result.vector_rank = rank
+        trace.timings_ms = {"embed": round(embed_ms, 1), "search": round(search_ms, 1)}
+
+        ordered = trace.candidates
+        if model and trace.candidates and self._rerank is not None:
+            trace.reranker = model
+            started = time.perf_counter()
+            try:
+                scores = await self._rerank(query, [c.text for c in trace.candidates], model)
+                if len(scores) != len(trace.candidates):
+                    raise RuntimeError(f"{len(scores)} scores for {len(trace.candidates)} passages")
+            except Exception as exc:
+                log.warning("rerank_failed", reranker=model, error=str(exc)[:200])
+                trace.warnings.append(
+                    f"The reranker {model!r} failed ({str(exc)[:160]}); "
+                    "results are in vector order."
+                )
+            else:
+                for result, value in zip(trace.candidates, scores, strict=True):
+                    result.rerank_score = value
+                ordered = sorted(
+                    trace.candidates, key=lambda r: r.rerank_score or 0.0, reverse=True
+                )
+                trace.reranked = True
+            trace.timings_ms["rerank"] = round((time.perf_counter() - started) * 1000, 1)
+
+        trace.results = ordered[: trace.top_k]
+        return trace
 
     # -- helpers -----------------------------------------------------------
     async def _probe_dimensions(self, model: str) -> int:

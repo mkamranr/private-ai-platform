@@ -4,6 +4,9 @@
 upload → parse → OCR if required → chunk → embed → Qdrant
 ```
 
+Reranking, document versions, the retrieval playground and evaluation sets (E5) are
+in [rag-evaluation.md](rag-evaluation.md).
+
 Ingestion runs in a **worker**, never a request: parsing and embedding a 200-page PDF takes
 minutes. `POST /knowledge-bases/{id}/documents` returns **202** and the caller polls — the
 same reasoning as model deployment (M08).
@@ -160,6 +163,10 @@ a stale or hand-edited id must not become a path into another tenant's corpus.
 
 Retrieval never raises. A vector store outage degrades the answer; it does not refuse it.
 
+Each base's retrieval settings apply to agents (E5): its top-k (default 4), its score
+floor (else 0.25) and its reranker, if one is configured. See
+[rag-evaluation.md](rag-evaluation.md).
+
 ---
 
 ## Embedding models
@@ -228,9 +235,9 @@ ever considered — the same guard that stops the platform stopping its own data
   `{"blocks": [{"text", "page", "confidence"}], "language"}`. `mock-vllm` implements it
   for GPU-free development; `models/manifests/examples/paddleocr-v4.yaml` is the
   production shape.
-* **No re-embed endpoint.** Changing a base's model or chunk size needs deleting and
-  re-uploading; the data to do it in place is all there (`document_chunks.text` plus the
-  stored original) but the operation is not exposed.
+* **No re-embed of a whole base.** Changing a base's model or chunk size needs a new
+  base. Single documents can be re-ingested from their stored original (E5,
+  `POST /documents/{id}/reingest`).
 * **Nothing sweeps expired memories.** `delete_expired` exists and is tested; recall skips
   expired entries at read time, so they are inert, but they are not reclaimed.
 * **Agents do not write memory yet.** `remember()` works and is scoped, but no run calls it
