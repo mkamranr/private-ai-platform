@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient, Response
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import Permission as Perm
@@ -191,6 +191,11 @@ class TestBudgets:
         committed_gateway: dict[str, Any],
         api_key_pair,
     ) -> None:
+        # Replace any existing "every key" row inside this (rolled-back) transaction: the
+        # scope/subject pair is unique, and a shared database may already hold one.
+        await session.execute(
+            delete(GatewayQuota).where(GatewayQuota.scope == "api_key", GatewayQuota.subject == "*")
+        )
         session.add(GatewayQuota(scope="api_key", subject="*", daily_tokens=10))
         # The specific row wins over the wildcard for this key.
         session.add(
