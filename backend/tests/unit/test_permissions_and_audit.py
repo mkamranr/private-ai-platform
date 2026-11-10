@@ -47,14 +47,16 @@ class TestPermissionCatalogue:
 
 
 class TestRoleDefinitions:
-    def test_all_eight_spec_roles_defined(self) -> None:
+    def test_all_spec_roles_defined(self) -> None:
+        """The eight §M03 roles plus KNOWLEDGE_ADMIN (E3), which covers the expansion
+        plan's one built-in role that had no counterpart."""
         expected = {
             value
             for name, value in vars(Role).items()
             if not name.startswith("_") and isinstance(value, str)
         }
         assert set(ROLE_DEFINITIONS) == expected
-        assert len(ROLE_DEFINITIONS) == 8
+        assert len(ROLE_DEFINITIONS) == 9
 
     def test_roles_grant_only_catalogued_permissions(self) -> None:
         """An uncatalogued grant would be silently dropped during seeding."""
@@ -88,6 +90,19 @@ class TestRoleDefinitions:
         assert Permission.USER_MANAGE not in user
         assert Permission.AUDIT_VIEW not in user
         assert Permission.TOOL_MANAGE not in user
+        # Only platform administrators and auditors see across teams (E3).
+        for role in (
+            Role.AI_ADMIN,
+            Role.INFRA_ADMIN,
+            Role.AGENT_ADMIN,
+            Role.DEVELOPER,
+            Role.USER,
+            Role.KNOWLEDGE_ADMIN,
+        ):
+            assert Permission.SCOPE_ALL not in ROLE_DEFINITIONS[role][1], role
+        knowledge = ROLE_DEFINITIONS[Role.KNOWLEDGE_ADMIN][1]
+        assert Permission.MODEL_DEPLOY not in knowledge
+        assert Permission.AGENT_CREATE not in knowledge
 
     def test_only_super_admin_can_manage_backups(self) -> None:
         holders = {r for r, (_, p) in ROLE_DEFINITIONS.items() if Permission.BACKUP_MANAGE in p}

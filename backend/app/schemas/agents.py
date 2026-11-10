@@ -190,6 +190,13 @@ class AgentCreateRequest(BaseModel):
     skill_ids: list[uuid.UUID] = Field(default_factory=list)
     knowledge_base_ids: list[str] = Field(default_factory=list)
     memory_enabled: bool = False
+    team_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Owning team (E3). Omit for a shared resource, visible to everyone with the "
+            "permission. You must be a member of the team unless you hold scope.all."
+        ),
+    )
 
 
 class AgentUpdateRequest(BaseModel):
@@ -235,6 +242,8 @@ class AgentRead(ORMModel):
     description: str | None = None
     enabled: bool
     current_version: int
+    #: Owning team (E3); null means shared.
+    team_id: uuid.UUID | None = None
     created_at: dt.datetime
 
 

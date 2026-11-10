@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from collections.abc import Sequence
+from typing import Any
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
@@ -35,13 +36,29 @@ class ModelRepository(BaseRepository[Model]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_models(
-        self, *, model_type: str | None = None, limit: int = 100, offset: int = 0
+        self,
+        *,
+        model_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        where: Any = None,
     ) -> Sequence[Model]:
+        """``where`` is an extra condition — in practice a team-scope clause (E3)."""
         stmt = select(Model).options(selectinload(Model.files))
         if model_type:
             stmt = stmt.where(Model.type == model_type)
+        if where is not None:
+            stmt = stmt.where(where)
         stmt = stmt.order_by(Model.name).limit(limit).offset(offset)
         return (await self.session.execute(stmt)).scalars().all()
+
+    async def count_matching(self, *, model_type: str | None = None, where: Any = None) -> int:
+        stmt = select(func.count()).select_from(Model)
+        if model_type:
+            stmt = stmt.where(Model.type == model_type)
+        if where is not None:
+            stmt = stmt.where(where)
+        return int((await self.session.execute(stmt)).scalar_one())
 
     async def replace_files(self, model_id: uuid.UUID, files: Sequence[ModelFile]) -> None:
         """Swap in a freshly scanned file list.
@@ -203,7 +220,7 @@ class UsageRepository(BaseRepository[UsageRecord]):
     model = UsageRecord
 
     async def summary(
-        self, *, since: dt.datetime, api_key_id: uuid.UUID | None = None
+        self, *, since: dt.datetime, api_key_id: uuid.UUID | None = None, where: Any = None
     ) -> list[dict]:
         """Aggregate usage by model.
 
@@ -226,6 +243,8 @@ class UsageRepository(BaseRepository[UsageRecord]):
         )
         if api_key_id is not None:
             stmt = stmt.where(UsageRecord.api_key_id == api_key_id)
+        if where is not None:
+            stmt = stmt.where(where)
 
         return [
             {
@@ -240,7 +259,9 @@ class UsageRepository(BaseRepository[UsageRecord]):
             for row in (await self.session.execute(stmt)).all()
         ]
 
-    async def by_api_key(self, *, since: dt.datetime, limit: int = 100) -> list[dict]:
+    async def by_api_key(
+        self, *, since: dt.datetime, limit: int = 100, where: Any = None
+    ) -> list[dict]:
         """Aggregate usage per API key (E2), named by key and client.
 
         Joined rather than resolved afterwards, so a revoked or rotated key still shows
@@ -266,6 +287,8 @@ class UsageRepository(BaseRepository[UsageRecord]):
             .order_by(tokens.desc())
             .limit(limit)
         )
+        if where is not None:
+            stmt = stmt.where(where)
         return [
             {
                 "api_key_id": row.api_key_id,
@@ -281,7 +304,9 @@ class UsageRepository(BaseRepository[UsageRecord]):
             for row in (await self.session.execute(stmt)).all()
         ]
 
-    async def by_end_user(self, *, since: dt.datetime, limit: int = 100) -> list[dict]:
+    async def by_end_user(
+        self, *, since: dt.datetime, limit: int = 100, where: Any = None
+    ) -> list[dict]:
         """Aggregate usage per end user, behind a shared frontend (M17).
 
         Grouped by trustworthiness as well as by name, so the two never merge into one
@@ -303,6 +328,8 @@ class UsageRepository(BaseRepository[UsageRecord]):
             .order_by(func.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens).desc())
             .limit(limit)
         )
+        if where is not None:
+            stmt = stmt.where(where)
         return [
             {
                 "end_user": row.end_user,

@@ -554,3 +554,34 @@ Changes to existing routes, all backwards-compatible:
 - `GET /usage` rows gain `errors` and `fallbacks`.
 - Gateway (`/v1`) calls may now return **429** for a quota (`details.scope`,
   `details.quota`) and **503** while a backend's circuit is open. Both send `Retry-After`.
+
+## Teams and scope — Expansion E3
+
+Under `/api/v1`, authenticated with the platform JWT. See [teams.md](teams.md).
+
+| method | path | permission |
+|---|---|---|
+| GET | `/teams` | `team.view` — every team with `scope.all`, otherwise your own |
+| GET | `/teams/mine` | any signed-in user — your teams, and whether you can see all of them |
+| POST | `/teams` | `team.manage` — `name`, optional `slug` (derived otherwise) and `description` |
+| GET | `/teams/{id}` | `team.view` — with members and how many resources of each kind it owns |
+| PATCH | `/teams/{id}` | `team.manage` — name and description; the slug is fixed |
+| DELETE | `/teams/{id}` | `team.manage` — 409 while the team owns resources |
+| POST | `/teams/{id}/members` | `team.manage` or team owner — `user_id`, `role` (`member`/`owner`) |
+| PATCH | `/teams/{id}/members/{user_id}` | `team.manage` or team owner — change the team role |
+| DELETE | `/teams/{id}/members/{user_id}` | `team.manage` or team owner |
+| PUT | `/scope` | the resource's manage permission — move a model, alias, API client, agent or knowledge base to a team (`team_id`) or to shared (`null`) |
+
+Changes to existing routes, all backwards-compatible:
+
+- Models, aliases, API clients, agents and knowledge bases: create requests accept an
+  optional `team_id`, and responses include `team_id` (`null` = shared).
+- Every list, get, change and delete route for those resources (and for deployments,
+  API keys, runs and documents, which follow their parent) hides other teams'
+  resources. Out of scope answers **404**.
+- `GET /usage`, `/usage/by-user` and `/usage/by-key` count only usage of keys in your
+  scope.
+- `POST /quotas` accepts `scope: "team"` with a team id (or `*`) as the subject.
+- Gateway (`/v1`): a key reaches shared resources plus its client's team. Anything else
+  is reported exactly like a name that does not exist.
+

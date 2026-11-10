@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Any
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
@@ -228,11 +229,16 @@ class ApiKeyService:
         )
         return key
 
-    async def usage_summary(self, *, since: dt.datetime) -> list[dict]:
-        return await self._usage.summary(since=since)
+    # ``where`` is a team-scope clause over UsageRecord.team_id (E3), or None.
+    async def usage_summary(self, *, since: dt.datetime, where: Any = None) -> list[dict]:
+        return await self._usage.summary(since=since, where=where)
 
-    async def usage_by_end_user(self, *, since: dt.datetime, limit: int = 100) -> list[dict]:
-        return await self._usage.by_end_user(since=since, limit=limit)
+    async def usage_by_end_user(
+        self, *, since: dt.datetime, limit: int = 100, where: Any = None
+    ) -> list[dict]:
+        return await self._usage.by_end_user(since=since, limit=limit, where=where)
 
-    async def usage_by_key(self, *, since: dt.datetime, limit: int = 100) -> list[dict]:
-        return await self._usage.by_api_key(since=since, limit=limit)
+    async def usage_by_key(
+        self, *, since: dt.datetime, limit: int = 100, where: Any = None
+    ) -> list[dict]:
+        return await self._usage.by_api_key(since=since, limit=limit, where=where)

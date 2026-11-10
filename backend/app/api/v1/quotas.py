@@ -8,9 +8,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, status
 
-from app.api.deps import ApiKeyServiceDep, QuotaServiceDep, require_permission
+from app.api.deps import ApiKeyServiceDep, QuotaServiceDep, ScopeDep, require_permission
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
+from app.models.models_registry import UsageRecord
 from app.schemas.common import MessageResponse
 from app.schemas.operations import (
     CircuitRead,
@@ -80,13 +81,12 @@ async def delete_quota(
 async def usage_by_key(
     service: ApiKeyServiceDep,
     _actor: Annotated[User, require_permission(Perm.USAGE_VIEW)],
+    scope: ScopeDep,
     since_hours: Annotated[int, Query(ge=1, le=8760)] = 24,
 ) -> KeyUsageResponse:
     since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=since_hours)
-    return KeyUsageResponse(
-        since=since,
-        rows=[KeyUsageRow(**row) for row in await service.usage_by_key(since=since)],
-    )
+    rows = await service.usage_by_key(since=since, where=scope.clause(UsageRecord.team_id))
+    return KeyUsageResponse(since=since, rows=[KeyUsageRow(**row) for row in rows])
 
 
 @router.get(

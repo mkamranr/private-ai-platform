@@ -15,6 +15,8 @@ from app.api.deps import (
     AgentRunServiceDep,
     DefinitionImporterDep,
     McpRegistryDep,
+    ScopeDep,
+    ScopeGuardDep,
     SkillRegistryDep,
     ToolRegistryDep,
     require_permission,
@@ -336,8 +338,9 @@ async def delete_skill(
 async def list_agents(
     service: AgentRegistryDep,
     _actor: Annotated[User, require_permission(Perm.AGENT_VIEW)],
+    scope: ScopeDep,
 ) -> list[AgentRead]:
-    return [AgentRead.model_validate(a) for a in await service.list_agents()]
+    return [AgentRead.model_validate(a) for a in scope.filter(await service.list_agents())]
 
 
 @router.post(
@@ -350,7 +353,13 @@ async def create_agent(
     payload: AgentCreateRequest,
     service: AgentRegistryDep,
     actor: Annotated[User, require_permission(Perm.AGENT_CREATE)],
+    guard: ScopeGuardDep,
 ) -> AgentDetail:
+    await guard.assignable(payload.team_id)
+    # What the agent will call is checked now, against the person building it: an agent
+    # runs with the platform's reach, so it must not become a way round team scope.
+    await guard.model_name(payload.model)
+    await guard.knowledge_base_refs(payload.knowledge_base_ids)
     agent, version = await service.create_agent(
         slug=payload.slug,
         display_name=payload.display_name,
@@ -365,6 +374,7 @@ async def create_agent(
         memory_enabled=payload.memory_enabled,
         actor=actor,
     )
+    await guard.place(agent, payload.team_id)
     detail = AgentDetail.model_validate(agent)
     detail.version = await service.version_read(version)
     return detail
@@ -375,8 +385,10 @@ async def get_agent(
     service: AgentRegistryDep,
     runs: AgentRunServiceDep,
     _actor: Annotated[User, require_permission(Perm.AGENT_VIEW)],
+    guard: ScopeGuardDep,
     agent_id: uuid.UUID = Path(...),
 ) -> AgentDetail:
+    await guard.agent(agent_id)
     agent = await service.get_agent(agent_id)
     version = await service.current_version(agent_id)
     detail = AgentDetail.model_validate(agent)
@@ -392,11 +404,17 @@ async def update_agent(
     payload: AgentUpdateRequest,
     service: AgentRegistryDep,
     actor: Annotated[User, require_permission(Perm.AGENT_EDIT)],
+    guard: ScopeGuardDep,
     agent_id: uuid.UUID = Path(...),
 ) -> AgentDetail:
     """Publishes a **new version**. The previous one is never mutated, which is what lets
     a run from three months ago still be explained — and runs already in flight continue
     on the version they started."""
+    await guard.agent(agent_id)
+    if payload.model is not None:
+        await guard.model_name(payload.model)
+    if payload.knowledge_base_ids is not None:
+        await guard.knowledge_base_refs(payload.knowledge_base_ids)
     agent, version = await service.update_agent(agent_id, payload, actor=actor)
     detail = AgentDetail.model_validate(agent)
     detail.version = await service.version_read(version)
@@ -411,8 +429,10 @@ async def update_agent(
 async def list_agent_versions(
     service: AgentRegistryDep,
     _actor: Annotated[User, require_permission(Perm.AGENT_VIEW)],
+    guard: ScopeGuardDep,
     agent_id: uuid.UUID = Path(...),
 ) -> list[AgentVersionRead]:
+    await guard.agent(agent_id)
     return [await service.version_read(v) for v in await service.list_versions(agent_id)]
 
 
@@ -420,8 +440,10 @@ async def list_agent_versions(
 async def delete_agent(
     service: AgentRegistryDep,
     actor: Annotated[User, require_permission(Perm.AGENT_DELETE)],
+    guard: ScopeGuardDep,
     agent_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
+    await guard.agent(agent_id)
     await service.delete_agent(agent_id, actor=actor)
     return MessageResponse(message="Agent deleted. Its runs are retained for audit.")
 
@@ -435,6 +457,7 @@ async def execute_agent(
     registry: AgentRegistryDep,
     service: AgentRunServiceDep,
     actor: Annotated[User, require_permission(Perm.AGENT_EXECUTE)],
+    guard: ScopeGuardDep,
     agent_id: uuid.UUID = Path(...),
 ) -> Any:
     """Execute, buffered or streamed.
@@ -444,6 +467,7 @@ async def execute_agent(
     a run that suspends for approval returns with `state: WAITING_FOR_APPROVAL` rather
     than hanging.
     """
+    await guard.agent(agent_id)
     agent = await registry.get_agent(agent_id)
     run, events = await service.start(
         agent, message=payload.message, actor=actor, conversation_id=payload.conversation_id
@@ -479,9 +503,11 @@ async def execute_agent(
 async def list_agent_runs(
     service: AgentRunServiceDep,
     _actor: Annotated[User, require_permission(Perm.AGENT_VIEW)],
+    guard: ScopeGuardDep,
     agent_id: uuid.UUID = Path(...),
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[RunRead]:
+    await guard.agent(agent_id)
     return [RunRead.model_validate(r) for r in await service.list_runs(agent_id, limit=limit)]
 
 
@@ -495,18 +521,23 @@ async def list_agent_runs(
 async def list_pending_approvals(
     service: AgentRunServiceDep,
     _actor: Annotated[User, require_permission(Perm.TOOL_APPROVE)],
+    guard: ScopeGuardDep,
 ) -> list[PendingApprovalRead]:
     """The approver's queue. Requires `tool.approve`, not `agent.view`: seeing what is
-    waiting is part of the approval privilege."""
-    return [PendingApprovalRead.model_validate(e) for e in await service.list_pending_approvals()]
+    waiting is part of the approval privilege. Only runs of agents in scope (E3)."""
+    pending = await service.list_pending_approvals()
+    visible = await guard.visible_runs({e.run_id for e in pending})
+    return [PendingApprovalRead.model_validate(e) for e in pending if e.run_id in visible]
 
 
 @router.get("/runs/{run_id}", response_model=RunDetail, summary="Get a run with its trace")
 async def get_run(
     service: AgentRunServiceDep,
     _actor: Annotated[User, require_permission(Perm.AGENT_VIEW)],
+    guard: ScopeGuardDep,
     run_id: uuid.UUID = Path(...),
 ) -> RunDetail:
+    await guard.run(run_id)
     return await _run_detail(service, run_id)
 
 
@@ -514,8 +545,10 @@ async def get_run(
 async def list_run_events(
     service: AgentRunServiceDep,
     _actor: Annotated[User, require_permission(Perm.AGENT_VIEW)],
+    guard: ScopeGuardDep,
     run_id: uuid.UUID = Path(...),
 ) -> list[RunEventRead]:
+    await guard.run(run_id)
     return [RunEventRead.model_validate(e) for e in await service.list_events(run_id)]
 
 
@@ -523,8 +556,10 @@ async def list_run_events(
 async def cancel_run(
     service: AgentRunServiceDep,
     _actor: Annotated[User, require_permission(Perm.AGENT_EXECUTE)],
+    guard: ScopeGuardDep,
     run_id: uuid.UUID = Path(...),
 ) -> RunRead:
+    await guard.run(run_id)
     return RunRead.model_validate(await service.cancel(run_id))
 
 
@@ -533,6 +568,7 @@ async def approve_run(
     payload: ApprovalRequest,
     service: AgentRunServiceDep,
     actor: Annotated[User, require_permission(Perm.TOOL_APPROVE)],
+    guard: ScopeGuardDep,
     run_id: uuid.UUID = Path(...),
 ) -> RunDetail:
     """Answer a pending approval and let the run continue.
@@ -544,6 +580,7 @@ async def approve_run(
     A refusal does not kill the run — the agent is told and carries on, which may well
     produce a useful answer by another route.
     """
+    await guard.run(run_id)
     _, events = await service.approve(
         run_id, approved=payload.approved, actor=actor, reason=payload.reason
     )

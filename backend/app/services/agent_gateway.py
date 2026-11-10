@@ -36,6 +36,7 @@ from typing import Any
 from app.core.errors import NotFoundError, PermissionDeniedError
 from app.core.interfaces.agent import RunEventType
 from app.core.logging import get_logger
+from app.core.scope import Scope
 from app.models.agents import Agent
 from app.models.auth import User
 from app.repositories.user import UserRepository
@@ -59,14 +60,19 @@ def slug_of(model: str) -> str:
     return model[len(AGENT_PREFIX) :]
 
 
-async def agent_catalogue(registry: AgentRegistryService) -> list[dict[str, Any]]:
+async def agent_catalogue(
+    registry: AgentRegistryService, scope: Scope | None = None
+) -> list[dict[str, Any]]:
     """The agent entries for ``GET /v1/models``.
 
     Only enabled agents. A disabled one in the picker would produce a failure the user
     cannot act on — and unlike a model, there is no "deploy it" they could do about it.
     """
+    scope = scope or Scope.everything()
     entries = []
     for agent in await registry.list_agents(enabled_only=True):
+        if not scope.can_see(agent.team_id):
+            continue  # another team's agent (E3)
         entries.append(
             {
                 "id": f"{AGENT_PREFIX}{agent.slug}",
@@ -105,16 +111,26 @@ async def resolve_actor(context: GatewayContext, users: UserRepository) -> User:
     return owner
 
 
-async def load_agent(registry: AgentRegistryService, model: str) -> Agent:
+async def load_agent(
+    registry: AgentRegistryService, model: str, scope: Scope | None = None
+) -> Agent:
+    """The agent behind ``agent:<slug>``. One in another team is reported exactly as one
+    that does not exist (E3)."""
+    scope = scope or Scope.everything()
     slug = slug_of(model)
     try:
-        return await registry.get_by_slug(slug)
+        agent = await registry.get_by_slug(slug)
+        if not scope.can_see(agent.team_id):
+            raise NotFoundError(f"No agent named {slug!r}.")
+        return agent
     except NotFoundError as exc:
         raise NotFoundError(
             f"No agent named {slug!r}.",
             details={
                 "available": [
-                    f"{AGENT_PREFIX}{a.slug}" for a in await registry.list_agents(enabled_only=True)
+                    f"{AGENT_PREFIX}{a.slug}"
+                    for a in await registry.list_agents(enabled_only=True)
+                    if scope.can_see(a.team_id)
                 ][:20]
             },
         ) from exc

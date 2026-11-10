@@ -74,6 +74,13 @@ class Permission:
     QUOTA_VIEW: Final = "quota.view"
     QUOTA_MANAGE: Final = "quota.manage"
 
+    # --- teams and scope (E3, plan §5.12) ---
+    TEAM_VIEW: Final = "team.view"
+    TEAM_MANAGE: Final = "team.manage"
+    #: See and act on every team's resources, not only your own teams' and shared ones.
+    #: The cross-team bypass — granted to platform administrators and auditors only.
+    SCOPE_ALL: Final = "scope.all"
+
     # --- administration (M03, M24, M25) ---
     USER_VIEW: Final = "user.view"
     USER_MANAGE: Final = "user.manage"
@@ -128,6 +135,9 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.USAGE_VIEW: "View API usage records",
     Permission.QUOTA_VIEW: "View gateway quotas and budgets",
     Permission.QUOTA_MANAGE: "Create, change and remove gateway quotas and budgets",
+    Permission.TEAM_VIEW: "View every team and its members",
+    Permission.TEAM_MANAGE: "Create, rename and delete teams and manage their members",
+    Permission.SCOPE_ALL: "See and act on resources of every team, not only your own",
     Permission.USER_VIEW: "View users",
     Permission.USER_MANAGE: "Create, modify and delete users",
     Permission.ROLE_MANAGE: "Manage roles and their permissions",
@@ -143,7 +153,7 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
 
 
 class Role:
-    """The eight system role names from §M03."""
+    """System role names: the eight from §M03, plus KNOWLEDGE_ADMIN (E3)."""
 
     SUPER_ADMIN: Final = "SUPER_ADMIN"
     ADMIN: Final = "ADMIN"
@@ -153,6 +163,11 @@ class Role:
     DEVELOPER: Final = "DEVELOPER"
     USER: Final = "USER"
     AUDITOR: Final = "AUDITOR"
+    #: Added in E3 to cover the plan's "Knowledge Admin", the one built-in role of the
+    #: plan's eight with no counterpart here. The others map onto existing names — see
+    #: docs/teams.md — and are not renamed: role names are referenced by OIDC and LDAP
+    #: group mappings, and renaming them would silently strip people's access.
+    KNOWLEDGE_ADMIN: Final = "KNOWLEDGE_ADMIN"
 
 
 _ALL_PERMISSIONS: Final = frozenset(PERMISSION_CATALOGUE)
@@ -291,6 +306,24 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.BACKEND_VIEW,
                 Permission.ALERT_VIEW,
                 Permission.QUOTA_VIEW,
+                Permission.TEAM_VIEW,
+                # Read-only across every team: an audit that can only see some teams
+                # is not an audit. The role holds no write permission to misuse it with.
+                Permission.SCOPE_ALL,
+            }
+        )
+        | _VIEWER,
+    ),
+    Role.KNOWLEDGE_ADMIN: (
+        "Manages knowledge bases and document ingestion",
+        frozenset(
+            {
+                Permission.KNOWLEDGE_VIEW,
+                Permission.KNOWLEDGE_MANAGE,
+                Permission.DOCUMENT_UPLOAD,
+                Permission.DOCUMENT_DELETE,
+                Permission.MODEL_VIEW,
+                Permission.TEAM_VIEW,
             }
         )
         | _VIEWER,

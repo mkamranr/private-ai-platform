@@ -29,6 +29,7 @@ from app.core.interfaces.tools import ToolType
 from app.core.interfaces.vector import VectorStore
 from app.core.logging import get_logger
 from app.core.request_context import get_client_ip
+from app.core.scope import Scope
 from app.core.security import PasswordHasherService, SecretCipher, TokenService
 from app.db.session import session_scope
 from app.models.auth import User
@@ -76,6 +77,7 @@ from app.repositories.operations import (
     GatewayQuotaRepository,
     InferenceBackendRepository,
 )
+from app.repositories.teams import ScopeLookupRepository, TeamRepository
 from app.repositories.user import PermissionRepository, RoleRepository, UserRepository
 from app.repositories.voice import (
     VoiceEventRepository,
@@ -114,6 +116,7 @@ from app.services.monitoring import MonitoringService, TraceService
 from app.services.node_enrollment import NodeEnrollmentService
 from app.services.quotas import QuotaService
 from app.services.retrieval import RetrievalService
+from app.services.teams import ScopeGuard, TeamService, scope_for
 from app.services.tool_pipeline import ToolPipeline
 from app.services.user import UserService
 from app.services.vector_store import QdrantVectorStore
@@ -527,6 +530,32 @@ def require_superuser() -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Teams and scope (E3)
+# ---------------------------------------------------------------------------
+def get_team_service(session: SessionDep, audit: AuditDep) -> TeamService:
+    return TeamService(TeamRepository(session), UserRepository(session), audit)
+
+
+TeamServiceDep = Annotated[TeamService, Depends(get_team_service)]
+
+
+async def get_scope(user: CurrentUserDep, teams: TeamServiceDep) -> Scope:
+    """Which teams' resources the caller may see — read per request, like permissions,
+    so removing someone from a team takes effect on their next call."""
+    return scope_for(user, await teams.team_ids_for(user.id))
+
+
+ScopeDep = Annotated[Scope, Depends(get_scope)]
+
+
+def get_scope_guard(session: SessionDep, scope: ScopeDep, audit: AuditDep) -> ScopeGuard:
+    return ScopeGuard(scope, ScopeLookupRepository(session), audit)
+
+
+ScopeGuardDep = Annotated[ScopeGuard, Depends(get_scope_guard)]
+
+
+# ---------------------------------------------------------------------------
 # Models, deployments and the gateway (M07-M09)
 # ---------------------------------------------------------------------------
 def get_model_registry(
@@ -582,6 +611,7 @@ def get_quota_service(
         InferenceBackendRepository(session),
         GatewayPolicy(settings.gateway, request.app.state.redis.client, quotas),
         audit,
+        TeamRepository(session),
     )
 
 

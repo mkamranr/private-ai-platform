@@ -78,6 +78,7 @@ from app.models.operations import (
     QuotaScope,
 )
 from app.models.system import SystemSetting
+from app.models.teams import Team, TeamMembership, TeamRole
 from app.models.voice import (
     TERMINAL_VOICE_STATES,
     VoiceEvent,
@@ -147,6 +148,9 @@ __all__ = [
     "RunState",
     "Skill",
     "SystemSetting",
+    "Team",
+    "TeamMembership",
+    "TeamRole",
     "Tool",
     "ToolExecution",
     "UsageRecord",

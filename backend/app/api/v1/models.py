@@ -13,11 +13,14 @@ from app.api.deps import (
     ApiKeyServiceDep,
     DeploymentServiceDep,
     ModelRegistryDep,
+    ScopeDep,
+    ScopeGuardDep,
     require_permission,
 )
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
-from app.models.models_registry import ApiClient
+from app.models.models_registry import ApiClient, UsageRecord
+from app.models.models_registry import Model as ModelRow
 from app.schemas.common import MessageResponse, Page
 from app.schemas.models_registry import (
     AliasCreateRequest,
@@ -60,14 +63,18 @@ router = APIRouter(tags=["models"])
 async def list_models(
     service: ModelRegistryDep,
     _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    scope: ScopeDep,
     model_type: Annotated[str | None, Query(alias="type")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page[ModelRead]:
-    models = await service.list_models(model_type=model_type, limit=limit, offset=offset)
+    where = scope.clause(ModelRow.team_id)
+    models = await service.list_models(
+        model_type=model_type, limit=limit, offset=offset, where=where
+    )
     return Page[ModelRead](
         items=[ModelRead.model_validate(m) for m in models],
-        total=await service.count_models(),
+        total=await service.count_models(model_type=model_type, where=where),
         limit=limit,
         offset=offset,
     )
@@ -83,6 +90,7 @@ async def register_model(
     payload: ModelRegisterRequest,
     service: ModelRegistryDep,
     actor: Annotated[User, require_permission(Perm.MODEL_REGISTER)],
+    guard: ScopeGuardDep,
 ) -> ModelRead:
     """Catalogue a model that is already on disk.
 
@@ -90,6 +98,7 @@ async def register_model(
     `/import` to scan and verify it, which is what promotes it to AVAILABLE and makes it
     deployable.
     """
+    await guard.assignable(payload.team_id)
     model = await service.register_model(
         name=payload.name,
         display_name=payload.display_name,
@@ -108,6 +117,7 @@ async def register_model(
         metadata=payload.metadata,
         actor=actor,
     )
+    await guard.place(model, payload.team_id)
     return ModelRead.model_validate(model)
 
 
@@ -116,8 +126,10 @@ async def get_model(
     service: ModelRegistryDep,
     deployments: DeploymentServiceDep,
     _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    guard: ScopeGuardDep,
     model_id: uuid.UUID = Path(...),
 ) -> ModelDetail:
+    await guard.model(model_id)
     model = await service.get_model(model_id)
     detail = ModelDetail.model_validate(model)
     detail.files = [ModelFileRead.model_validate(f) for f in model.files]
@@ -137,6 +149,7 @@ async def get_model(
 async def import_model(
     service: ModelRegistryDep,
     actor: Annotated[User, require_permission(Perm.MODEL_REGISTER)],
+    guard: ScopeGuardDep,
     model_id: uuid.UUID = Path(...),
     verify_checksums: bool = True,
 ) -> ModelImportResponse:
@@ -146,6 +159,7 @@ async def import_model(
     and a truncated shard otherwise surfaces as an inscrutable runtime crash minutes into
     loading — by which point the operator is debugging the wrong thing.
     """
+    await guard.model(model_id)
     result = await service.import_from_disk(
         model_id, verify_checksums=verify_checksums, actor=actor
     )
@@ -202,10 +216,12 @@ async def import_manifests(
 async def delete_model(
     service: ModelRegistryDep,
     actor: Annotated[User, require_permission(Perm.MODEL_DELETE)],
+    guard: ScopeGuardDep,
     model_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
     """Refused while any deployment is active — the FK is RESTRICT, and an explicit
     check names the offending deployments instead of raising an integrity error."""
+    await guard.model(model_id)
     await service.delete_model(model_id, actor=actor)
     return MessageResponse(message="Model deleted from the registry. Files on disk are untouched.")
 
@@ -223,6 +239,7 @@ async def deploy_model(
     payload: DeployRequest,
     service: DeploymentServiceDep,
     actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
     response: Response,
     model_id: uuid.UUID = Path(...),
 ) -> DeploymentAcceptedResponse:
@@ -236,6 +253,7 @@ async def deploy_model(
     caller therefore learns immediately that there is no capacity, rather than
     discovering it from a FAILED deployment thirty seconds later.
     """
+    await guard.model(model_id)
     deployment = await service.request_deployment(
         DeploymentRequestSpec(
             model_id=model_id,
@@ -279,13 +297,17 @@ async def deploy_model(
 async def list_deployments(
     service: DeploymentServiceDep,
     _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    guard: ScopeGuardDep,
     model_id: uuid.UUID | None = None,
     state: str | None = None,
 ) -> list[DeploymentDetail]:
+    if model_id is not None:
+        await guard.model(model_id)
     deployments = await service.list_deployments(
         model_id=model_id, states=[state] if state else None
     )
-    return [await service.to_detail(d) for d in deployments]
+    visible = await guard.visible_models({d.model_id for d in deployments})
+    return [await service.to_detail(d) for d in deployments if d.model_id in visible]
 
 
 @router.get(
@@ -294,10 +316,12 @@ async def list_deployments(
 async def get_deployment(
     service: DeploymentServiceDep,
     _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    guard: ScopeGuardDep,
     deployment_id: uuid.UUID = Path(...),
 ) -> DeploymentDetail:
     """Poll this after a deploy. `state` walks the §M08 lifecycle; `error_message` and
     `/logs` explain a FAILED one."""
+    await guard.deployment(deployment_id)
     return await service.to_detail(await service.get_deployment(deployment_id))
 
 
@@ -309,9 +333,11 @@ async def get_deployment(
 async def stop_deployment(
     service: DeploymentServiceDep,
     actor: Annotated[User, require_permission(Perm.MODEL_STOP)],
+    guard: ScopeGuardDep,
     deployment_id: uuid.UUID = Path(...),
 ) -> DeploymentRead:
     """Stops the container and releases its GPUs, making them available again."""
+    await guard.deployment(deployment_id)
     return DeploymentRead.model_validate(await service.stop_deployment(deployment_id, actor=actor))
 
 
@@ -323,10 +349,12 @@ async def stop_deployment(
 async def restart_deployment(
     service: DeploymentServiceDep,
     actor: Annotated[User, require_permission(Perm.MODEL_STOP)],
+    guard: ScopeGuardDep,
     deployment_id: uuid.UUID = Path(...),
 ) -> DeploymentRead:
     """Restarts in place, keeping the GPU reservation — dropping it even briefly would
     let another deployment take the devices mid-restart."""
+    await guard.deployment(deployment_id)
     return DeploymentRead.model_validate(
         await service.restart_deployment(deployment_id, actor=actor)
     )
@@ -340,8 +368,10 @@ async def restart_deployment(
 async def delete_deployment(
     service: DeploymentServiceDep,
     actor: Annotated[User, require_permission(Perm.MODEL_DELETE)],
+    guard: ScopeGuardDep,
     deployment_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
+    await guard.deployment(deployment_id)
     await service.delete_deployment(deployment_id, actor=actor)
     return MessageResponse(message="Deployment stopped and removed.")
 
@@ -401,6 +431,7 @@ async def reconcile_deployments(
 async def deployment_logs(
     service: DeploymentServiceDep,
     _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    guard: ScopeGuardDep,
     deployment_id: uuid.UUID = Path(...),
     tail: Annotated[int, Query(ge=1, le=5000)] = 200,
 ) -> DeploymentLogsRead:
@@ -409,6 +440,7 @@ async def deployment_logs(
     A model that fails to load leaves the only explanation in its logs, and the container
     is usually gone by the time anyone looks — so the excerpt is what remains.
     """
+    await guard.deployment(deployment_id)
     return DeploymentLogsRead(
         deployment_id=deployment_id,
         lines=await service.fetch_logs(deployment_id, tail=tail),
@@ -423,8 +455,9 @@ async def deployment_logs(
 async def list_aliases(
     service: ModelRegistryDep,
     _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    scope: ScopeDep,
 ) -> list[AliasDetail]:
-    return await service.list_alias_details()
+    return scope.filter(await service.list_alias_details())
 
 
 @router.post(
@@ -437,12 +470,17 @@ async def create_alias(
     payload: AliasCreateRequest,
     service: ModelRegistryDep,
     actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
 ) -> AliasRead:
     """Give a model a stable public name.
 
     Callers then use the alias instead of the model, which is what lets the underlying
     model be swapped later without any developer application changing (§13).
     """
+    await guard.assignable(payload.team_id)
+    await guard.model(payload.model_id)
+    if payload.fallback_alias_id is not None:
+        await guard.alias(payload.fallback_alias_id)
     alias = await service.create_alias(
         alias=payload.alias,
         model_id=payload.model_id,
@@ -451,6 +489,7 @@ async def create_alias(
         actor=actor,
         fallback_alias_id=payload.fallback_alias_id,
     )
+    await guard.place(alias, payload.team_id)
     return AliasRead.model_validate(alias)
 
 
@@ -461,10 +500,16 @@ async def update_alias(
     payload: AliasUpdateRequest,
     service: ModelRegistryDep,
     actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
     alias_id: uuid.UUID = Path(...),
 ) -> AliasRead:
     """Repointing takes effect on the next request — no developer application changes,
     and no restart. That is the entire value of the indirection."""
+    await guard.alias(alias_id)
+    if payload.model_id is not None:
+        await guard.model(payload.model_id)
+    if payload.fallback_alias_id is not None:
+        await guard.alias(payload.fallback_alias_id)
     alias = await service.update_alias(
         alias_id,
         model_id=payload.model_id,
@@ -485,8 +530,10 @@ async def update_alias(
 async def delete_alias(
     service: ModelRegistryDep,
     actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
     alias_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
+    await guard.alias(alias_id)
     await service.delete_alias(alias_id, actor=actor)
     return MessageResponse(message="Alias deleted. Applications calling it will now receive 404.")
 
@@ -510,8 +557,9 @@ def _client_read(client: ApiClient) -> ApiClientRead:
 async def list_api_clients(
     service: ApiKeyServiceDep,
     _actor: Annotated[User, require_permission(Perm.APIKEY_VIEW)],
+    scope: ScopeDep,
 ) -> list[ApiClientRead]:
-    return [_client_read(c) for c in await service.list_clients()]
+    return [_client_read(c) for c in scope.filter(await service.list_clients())]
 
 
 @router.post(
@@ -524,6 +572,7 @@ async def create_api_client(
     payload: ApiClientCreateRequest,
     service: ApiKeyServiceDep,
     actor: Annotated[User, require_permission(Perm.APIKEY_MANAGE)],
+    guard: ScopeGuardDep,
 ) -> ApiClientRead:
     """Register an application that will consume the gateway.
 
@@ -531,6 +580,7 @@ async def create_api_client(
     what a shared chat frontend needs and an ordinary developer application must not
     have. Audited either way.
     """
+    await guard.assignable(payload.team_id)
     client = await service.create_client(
         name=payload.name,
         description=payload.description,
@@ -538,6 +588,7 @@ async def create_api_client(
         trusted_identity_headers=payload.trusted_identity_headers,
         identity_jwt_secret=payload.identity_jwt_secret,
     )
+    await guard.place(client, payload.team_id)
     return _client_read(client)
 
 
@@ -545,9 +596,15 @@ async def create_api_client(
 async def list_api_keys(
     service: ApiKeyServiceDep,
     _actor: Annotated[User, require_permission(Perm.APIKEY_VIEW)],
+    scope: ScopeDep,
 ) -> list[ApiKeyRead]:
-    """Metadata only. The keys themselves are unrecoverable by design."""
-    return [ApiKeyRead.model_validate(k) for k in await service.list_keys()]
+    """Metadata only. The keys themselves are unrecoverable by design. A key belongs to
+    its client's team (E3)."""
+    return [
+        ApiKeyRead.model_validate(k)
+        for k in await service.list_keys()
+        if scope.can_see(k.client.team_id)
+    ]
 
 
 @router.post(
@@ -560,6 +617,7 @@ async def create_api_key(
     payload: ApiKeyCreateRequest,
     service: ApiKeyServiceDep,
     actor: Annotated[User, require_permission(Perm.APIKEY_MANAGE)],
+    guard: ScopeGuardDep,
 ) -> ApiKeyCreatedResponse:
     """Mint a gateway credential.
 
@@ -567,6 +625,7 @@ async def create_api_key(
     prefix are stored, so the platform genuinely cannot show it again — which is what
     stops a database read from being equivalent to holding every developer's credential.
     """
+    await guard.api_client(payload.client_id)
     key, secret = await service.create_key(
         client_id=payload.client_id,
         name=payload.name,
@@ -588,6 +647,7 @@ async def rotate_api_key(
     payload: ApiKeyRotateRequest,
     service: ApiKeyServiceDep,
     actor: Annotated[User, require_permission(Perm.APIKEY_MANAGE)],
+    guard: ScopeGuardDep,
 ) -> ApiKeyRotateResponse:
     """Mint a replacement and leave the old key working for a grace period.
 
@@ -596,6 +656,7 @@ async def rotate_api_key(
     lets an operator rotate first and redeploy afterwards. Set `grace_hours: 0` for a
     compromised key, where breaking callers is the point.
     """
+    await guard.api_key(key_id)
     new_key, secret, old_key = await service.rotate_key(
         key_id, grace_hours=payload.grace_hours, actor=actor
     )
@@ -616,9 +677,11 @@ async def rotate_api_key(
 async def revoke_api_key(
     service: ApiKeyServiceDep,
     actor: Annotated[User, require_permission(Perm.APIKEY_MANAGE)],
+    guard: ScopeGuardDep,
     key_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
     """Revocation is immediate — the gateway checks it on every request."""
+    await guard.api_key(key_id)
     await service.revoke_key(key_id, actor=actor)
     return MessageResponse(message="API key revoked. It will be rejected immediately.")
 
@@ -627,10 +690,11 @@ async def revoke_api_key(
 async def usage_summary(
     service: ApiKeyServiceDep,
     _actor: Annotated[User, require_permission(Perm.USAGE_VIEW)],
+    scope: ScopeDep,
     since_hours: Annotated[int, Query(ge=1, le=8760)] = 24,
 ) -> UsageSummaryResponse:
     since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=since_hours)
-    rows = await service.usage_summary(since=since)
+    rows = await service.usage_summary(since=since, where=scope.clause(UsageRecord.team_id))
     return UsageSummaryResponse(
         since=since,
         rows=[UsageSummaryRow(**row) for row in rows],
@@ -647,6 +711,7 @@ async def usage_summary(
 async def usage_by_end_user(
     service: ApiKeyServiceDep,
     _actor: Annotated[User, require_permission(Perm.USAGE_VIEW)],
+    scope: ScopeDep,
     since_hours: Annotated[int, Query(ge=1, le=8760)] = 24,
 ) -> EndUserUsageResponse:
     """Who used how much, behind a shared frontend (M17).
@@ -658,5 +723,10 @@ async def usage_by_end_user(
     since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=since_hours)
     return EndUserUsageResponse(
         since=since,
-        rows=[EndUserUsageRow(**row) for row in await service.usage_by_end_user(since=since)],
+        rows=[
+            EndUserUsageRow(**row)
+            for row in await service.usage_by_end_user(
+                since=since, where=scope.clause(UsageRecord.team_id)
+            )
+        ],
     )

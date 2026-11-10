@@ -48,9 +48,14 @@ dashboard real signals.
 
 ## E3: Teams and scope (P1, a migration with high blast radius)
 
-- `teams`, `team_memberships`; `tenant_id`/`team_id` on models, aliases, keys, agents, KBs and usage.
-- Scope filter in repositories; an authorization test for every protected route.
-- Map the seeded roles to the plan's 8 built-in roles.
+- [x] Migration `9d4b2a6c8e51`: `teams` (with `tenant_id`), `team_memberships` (member/owner), and nullable `team_id` on models, aliases, API clients, agents and knowledge bases (RESTRICT) and on usage records (SET NULL). NULL means shared, so upgrading changes nobody's access.
+- [x] One visibility rule (`core/scope.py`): shared, or a team you belong to, or `scope.all`. Out of scope is 404. Enforced in the routes, in paginated SQL and in the gateway (aliases, models, fallbacks, `/v1/models`, `agent:` routes).
+- [x] `team_id` on create, membership required; `PUT /scope` moves resources, audited. Agents and aliases cannot reference models or knowledge bases the creator cannot see.
+- [x] Team quotas (`scope: team`), counted from `usage_records.team_id`.
+- [x] Authorization test over every OpenAPI route (401 with no credentials, 403 with no permissions) plus isolation tests.
+- [x] Roles mapped to the plan's eight. The one gap, Knowledge Admin, was added as `KNOWLEDGE_ADMIN`; the others are not renamed (IdP group mappings refer to them). New permissions `team.view`, `team.manage`, `scope.all`.
+- [x] Admin: Teams page (members, team roles, owned resources), team pickers on create forms, team chips on lists, team option in quotas. Doc: [docs/teams.md](../teams.md).
+- [ ] Memory, conversations and dashboard counts are not team-scoped; agent references are checked at save, not at run time. See teams.md.
 
 ## E4: Model governance and deployment revisions (P1)
 

@@ -16,6 +16,7 @@ from app.models.auth import User
 from app.models.operations import QUOTA_WILDCARD, GatewayQuota, QuotaScope
 from app.repositories.models_registry import ApiKeyRepository, ModelRepository
 from app.repositories.operations import GatewayQuotaRepository, InferenceBackendRepository
+from app.repositories.teams import TeamRepository
 from app.services.audit import AuditService
 from app.services.gateway_policy import BREAKERS, GatewayPolicy
 
@@ -33,6 +34,7 @@ class QuotaService:
         backends: InferenceBackendRepository,
         policy: GatewayPolicy,
         audit: AuditService,
+        teams: TeamRepository | None = None,
     ) -> None:
         self._quotas = quotas
         self._keys = keys
@@ -40,6 +42,7 @@ class QuotaService:
         self._backends = backends
         self._policy = policy
         self._audit = audit
+        self._teams = teams
 
     # -- reads -------------------------------------------------------------
     async def list_quotas(self, *, scope: str | None = None) -> list[dict[str, Any]]:
@@ -188,6 +191,16 @@ class QuotaService:
                     f"No API key with id {subject!r}. Use the key's id, not its secret or prefix.",
                     details={"field": "subject"},
                 )
+        elif scope == QuotaScope.TEAM:
+            try:
+                team = await self._teams.get(uuid.UUID(subject)) if self._teams else None
+            except ValueError:
+                team = None
+            if team is None:
+                raise ValidationError(
+                    f"No team with id {subject!r}. Team quotas use the team's id.",
+                    details={"field": "subject"},
+                )
         elif scope == QuotaScope.MODEL and await self._models.get_by_name(subject) is None:
             raise ValidationError(
                 f"No model named {subject!r}. Model quotas use the model's name (the model "
@@ -201,6 +214,7 @@ class QuotaService:
                 QuotaScope.API_KEY: "every API key",
                 QuotaScope.END_USER: "every trusted end user",
                 QuotaScope.MODEL: "every model",
+                QuotaScope.TEAM: "every team",
             }.get(QuotaScope(quota.scope))
         if quota.scope == QuotaScope.API_KEY:
             try:
@@ -208,6 +222,12 @@ class QuotaService:
             except ValueError:
                 return None
             return f"{key.name} ({key.prefix}…)" if key else "deleted key"
+        if quota.scope == QuotaScope.TEAM and self._teams is not None:
+            try:
+                team = await self._teams.get(uuid.UUID(quota.subject))
+            except ValueError:
+                return None
+            return f"team {team.name}" if team else "deleted team"
         return quota.subject
 
     @staticmethod

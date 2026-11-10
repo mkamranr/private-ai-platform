@@ -70,7 +70,10 @@ async def gateway_models(
     # agent selection without forking it (§M17): it sees another entry in the picker.
     return {
         "object": "list",
-        "data": [*await service.list_available(), *await agent_catalogue(agents)],
+        "data": [
+            *await service.list_available(context.scope),
+            *await agent_catalogue(agents, context.scope),
+        ],
     }
 
 
@@ -272,7 +275,7 @@ async def _run_agent(
     See app/services/agent_gateway.py for whose permissions authorise the run, and why it
     is the API client's owner rather than the forwarded end user.
     """
-    agent = await load_agent(agents, model)
+    agent = await load_agent(agents, model, context.scope)
     actor = await resolve_actor(context, users)
 
     # The last user message is the prompt. Prior turns are deliberately not replayed into

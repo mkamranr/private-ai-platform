@@ -58,6 +58,13 @@ class KnowledgeBaseCreateRequest(BaseModel):
         max_length=64,
         description="Everything in this base is scoped to it, and searches are filtered by it.",
     )
+    team_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Owning team (E3). Omit for a shared resource, visible to everyone with the "
+            "permission. You must be a member of the team unless you hold scope.all."
+        ),
+    )
 
 
 class KnowledgeBaseRead(ORMModel):
@@ -71,6 +78,8 @@ class KnowledgeBaseRead(ORMModel):
     chunk_size: int
     chunk_overlap: int
     enabled: bool
+    #: Owning team (E3); null means shared.
+    team_id: uuid.UUID | None = None
     created_at: dt.datetime
     # Deliberately not `collection`: the Qdrant collection name is internal, and exposing it
     # would invite a caller to query the vector store directly, bypassing every scope filter.

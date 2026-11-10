@@ -88,6 +88,8 @@ def _describe(scope: str, subject: str) -> str:
         return "this API key"
     if scope == QuotaScope.END_USER:
         return f"user {subject!r}"
+    if scope == QuotaScope.TEAM:
+        return "this key's team"
     return f"model {subject!r}"
 
 

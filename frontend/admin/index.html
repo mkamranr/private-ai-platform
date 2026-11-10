@@ -61,6 +61,8 @@
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.6 4.4h6v6M19.6 4.4 11 13"/><path d="M18 13.4v5.2a1.8 1.8 0 0 1-1.8 1.8H5.6a1.8 1.8 0 0 1-1.8-1.8V7.8A1.8 1.8 0 0 1 5.6 6h5.2"/></symbol>
     <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.4" cy="8.4" r="3.4"/><path d="M3.4 19.4c0-3.1 2.7-5.2 6-5.2s6 2.1 6 5.2"/><path d="M16 5.4a3.2 3.2 0 0 1 0 6M17.6 14.6c2 .7 3.4 2.4 3.4 4.8"/></symbol>
+    <symbol id="i-teams" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.6" r="2.8"/><circle cx="5.6" cy="10.2" r="2.2"/><circle cx="18.4" cy="10.2" r="2.2"/><path d="M7.4 19.6c0-2.8 2-4.6 4.6-4.6s4.6 1.8 4.6 4.6M2.4 18.4c0-2 1.4-3.4 3.2-3.4M21.6 18.4c0-2-1.4-3.4-3.2-3.4"/></symbol>
     <symbol id="i-audit" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.6" y="3.4" width="14.8" height="17.2" rx="2"/><path d="M8.4 8.2h7.2M8.4 12h7.2M8.4 15.8h4.4"/></symbol>
     <symbol id="i-backends" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -210,6 +212,7 @@
       <div class="nav-section mt-4">Administration</div>
       <a class="nav-item" data-page="voice" href="#voice"><svg class="nav-icon" aria-hidden="true"><use href="#i-voice"/></svg>Voice Assistant</a>
       <a class="nav-item" href="/voice/" target="_blank" rel="noopener"><svg class="nav-icon" aria-hidden="true"><use href="#i-external"/></svg>Open Assistant ↗</a>
+      <a class="nav-item" data-page="teams" href="#teams"><svg class="nav-icon" aria-hidden="true"><use href="#i-teams"/></svg>Teams</a>
       <a class="nav-item" data-page="users" href="#users"><svg class="nav-icon" aria-hidden="true"><use href="#i-users"/></svg>Users &amp; Roles</a>
       <a class="nav-item" data-page="audit" href="#audit"><svg class="nav-icon" aria-hidden="true"><use href="#i-audit"/></svg>Audit Log</a>
 
@@ -588,6 +591,21 @@
         <div id="voice-endpoints"></div>
       </section>
 
+      <section id="page-teams" class="page d-none">
+        <div class="page-header">
+          <div>
+            <h4 class="mb-0">Teams</h4>
+            <p class="page-subtitle">A team owns models, aliases, API clients, agents and knowledge
+              bases. Anything without a team is shared with everyone who holds the permission.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary btn-sm" id="team-new" data-bs-toggle="modal"
+                    data-bs-target="#team-modal">+ New team</button>
+          </div>
+        </div>
+        <div id="teams-body"></div>
+      </section>
+
       <section id="page-users" class="page d-none">
         <div class="d-flex align-items-center mb-3">
           <h4 class="mb-0">Users &amp; Roles</h4>
@@ -811,6 +829,12 @@
               </div>
             </div>
           </div>
+          <div class="mb-3 team-field mt-3">
+            <label class="form-label small text-secondary" for="kb-team">Team</label>
+            <select class="form-select team-picker" id="kb-team"></select>
+            <div class="form-text small">Shared: visible to everyone with the permission.
+              A team: visible only to its members.</div>
+          </div>
           <div id="kb-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
         </div>
         <div class="modal-footer">
@@ -977,6 +1001,42 @@
 
 <!-- Register model modal ----------------------------------------------------->
 <!-- Add an inference backend (E1) -->
+<!-- Team modal (E3) --------------------------------------------------------->
+<div class="modal fade" id="team-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="team-form">
+        <div class="modal-header">
+          <h5 class="modal-title">New team</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="team-name">Name</label>
+            <input class="form-control" id="team-name" maxlength="128" required
+                   placeholder="Customer Support">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="team-slug">Slug</label>
+            <input class="form-control mono" id="team-slug" maxlength="64"
+                   pattern="[a-z0-9][a-z0-9\-]*" placeholder="derived from the name">
+            <div class="form-text small">Lowercase letters, digits and hyphens. Cannot be changed later.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="team-desc">Description</label>
+            <input class="form-control" id="team-desc" maxlength="2000">
+          </div>
+          <div id="team-error" class="alert alert-danger py-2 small d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="quota-modal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
@@ -993,6 +1053,7 @@
                 <option value="api_key">An API key</option>
                 <option value="end_user">A trusted end user</option>
                 <option value="model">A model</option>
+                <option value="team">A team</option>
               </select>
             </div>
             <div class="col-md-8">
@@ -1191,6 +1252,12 @@
               <input class="form-control" id="mdl-gpus" type="number" min="0" max="16" value="1">
             </div>
           </div>
+          <div class="mb-3 team-field mt-3">
+            <label class="form-label small text-secondary" for="mdl-team">Team</label>
+            <select class="form-select team-picker" id="mdl-team"></select>
+            <div class="form-text small">Shared: visible to everyone with the permission.
+              A team: visible only to its members.</div>
+          </div>
           <div id="model-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
         </div>
         <div class="modal-footer">
@@ -1265,6 +1332,12 @@
             <label class="form-label small text-secondary" for="alias-model">Model</label>
             <select class="form-select" id="alias-model" required></select>
           </div>
+          <div class="mb-3 team-field">
+            <label class="form-label small text-secondary" for="alias-team">Team</label>
+            <select class="form-select team-picker" id="alias-team"></select>
+            <div class="form-text small">Shared: visible to everyone with the permission.
+              A team: visible only to its members.</div>
+          </div>
           <div id="alias-error" class="alert alert-danger py-2 small d-none"></div>
         </div>
         <div class="modal-footer">
@@ -1300,6 +1373,12 @@
           <div class="mb-3">
             <label class="form-label small text-secondary" for="key-rate">Requests per minute</label>
             <input class="form-control" id="key-rate" type="number" min="1" max="100000" value="120">
+          </div>
+          <div class="mb-3 team-field">
+            <label class="form-label small text-secondary" for="key-team">Team for a new client</label>
+            <select class="form-select team-picker" id="key-team"></select>
+            <div class="form-text small">Used when you press New… above. A key belongs to its
+              client's team, and can call that team's models and agents as well as shared ones.</div>
           </div>
           <div id="key-error" class="alert alert-danger py-2 small d-none"></div>
 
@@ -1379,6 +1458,12 @@
               <label class="form-label small text-secondary" for="agt-skills">Skills</label>
               <select class="form-select" id="agt-skills" multiple size="6"></select>
             </div>
+          </div>
+          <div class="mb-3 team-field mt-3">
+            <label class="form-label small text-secondary" for="agt-team">Team</label>
+            <select class="form-select team-picker" id="agt-team"></select>
+            <div class="form-text small">Shared: visible to everyone with the permission.
+              A team: visible only to its members.</div>
           </div>
           <div id="agent-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
         </div>

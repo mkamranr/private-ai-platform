@@ -703,3 +703,7 @@ body.app-active main {
 .progress-bar { border-radius: 999px; }
 .progress-bar.bg-primary { background: var(--brand-gradient) !important; }
 .card > .card-body + .table-responsive .table thead th { border-top: 1px solid var(--bs-border-color); }
+
+/* Team chip (E3): which team owns a resource. Shared resources show nothing. */
+.chip-team { display: inline-flex; align-items: center; gap: .25rem; font-weight: 500; vertical-align: middle; }
+.chip-team svg { width: .85rem; height: .85rem; }

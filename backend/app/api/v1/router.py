@@ -22,6 +22,7 @@ from app.api.v1 import (
     models,
     monitoring,
     quotas,
+    teams,
     users,
     voice,
 )
@@ -57,6 +58,8 @@ api_router.include_router(backends.router)
 api_router.include_router(alerts.router)
 # E2: gateway quotas, per-key usage and circuit breakers.
 api_router.include_router(quotas.router)
+# E3: teams, membership and resource scope.
+api_router.include_router(teams.router)
 
 # The OpenAI-compatible gateway is deliberately NOT here. It mounts at `/v1` in
 # app.main, because the SDK derives its paths from base_url and `GET {base}/models`

@@ -222,6 +222,12 @@ class GatewayQuotaRepository(BaseRepository[GatewayQuota]):
             condition = UsageRecord.api_key_id == key_id
         elif scope == QuotaScope.END_USER:
             condition = (UsageRecord.end_user == subject) & UsageRecord.end_user_trusted.is_(True)
+        elif scope == QuotaScope.TEAM:
+            try:
+                team_id = uuid.UUID(subject)
+            except ValueError:
+                return 0
+            condition = UsageRecord.team_id == team_id
         else:
             condition = UsageRecord.model == subject
         column = func.coalesce(

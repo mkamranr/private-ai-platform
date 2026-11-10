@@ -182,6 +182,8 @@ class QuotaScope(enum.StrEnum):
     #: ``subject`` is the name of the model that answers (not the alias asked for), so
     #: repointing an alias cannot move traffic out from under a model's limit.
     MODEL = "model"
+    #: ``subject`` is a team id (E3): one budget shared by every key of that team.
+    TEAM = "team"
 
 
 #: Subject meaning "each one individually, unless it has its own row". A ``*`` daily
@@ -201,7 +203,7 @@ class GatewayQuota(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "gateway_quotas"
     __table_args__ = (
         UniqueConstraint("scope", "subject"),
-        CheckConstraint("scope IN ('api_key','end_user','model')", name="scope_valid"),
+        CheckConstraint("scope IN ('api_key','end_user','model','team')", name="scope_valid"),
         CheckConstraint(
             "tokens_per_minute IS NOT NULL OR daily_tokens IS NOT NULL "
             "OR monthly_tokens IS NOT NULL OR max_concurrency IS NOT NULL",

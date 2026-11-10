@@ -444,7 +444,7 @@ function agentRow(agent) {
 
   return `<tr class="${agent.enabled ? '' : 'opacity-50'}">
     <td>
-      <div class="fw-medium">${esc(agent.display_name)}</div>
+      <div class="fw-medium">${esc(agent.display_name)} ${teamChip(agent.team_id)}</div>
       <div class="small text-secondary mono">agent:${esc(agent.slug)}</div>
       ${agent.enabled ? '' : '<span class="badge text-bg-dark">disabled</span>'}
     </td>
@@ -1314,7 +1314,7 @@ function modelRow(model) {
 
   return `<tr>
     <td>
-      <div class="fw-medium">${esc(model.name)}
+      <div class="fw-medium">${esc(model.name)} ${teamChip(model.team_id)}
         ${isExternal(model)
           ? '<span class="badge text-bg-info ms-1" title="Served by a runtime the platform '
             + 'does not start, stop or schedule">external</span>' : ''}
@@ -1629,7 +1629,7 @@ function aliasRow(alias, aliases = []) {
   ).join('');
 
   return `<tr>
-    <td class="mono fw-medium">${esc(alias.alias)}</td>
+    <td><span class="mono fw-medium">${esc(alias.alias)}</span> ${teamChip(alias.team_id)}</td>
     <td>
       <select class="form-select form-select-sm" data-repoint="${esc(alias.id)}"
               style="max-width:16rem">${options}</select>
@@ -1654,6 +1654,7 @@ function aliasRow(alias, aliases = []) {
 
 function renderKeys(keys, clients) {
   const byId = Object.fromEntries(clients.map((c) => [c.id, c.name]));
+  const teamOf = Object.fromEntries(clients.map((c) => [c.id, c.team_id]));
   document.getElementById('key-client').innerHTML =
     clients.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
 
@@ -1671,7 +1672,7 @@ function renderKeys(keys, clients) {
           <th>Key</th><th>Client</th><th>Scopes</th><th>Rate limit</th><th>Last used</th>
           <th>Status</th><th class="text-end">Actions</th>
         </tr></thead>
-        <tbody>${keys.map((k) => keyRow(k, byId)).join('')}</tbody>
+        <tbody>${keys.map((k) => keyRow(k, byId, teamOf)).join('')}</tbody>
       </table>
     </div>`;
 
@@ -1705,7 +1706,7 @@ function renderKeys(keys, clients) {
   });
 }
 
-function keyRow(key, clientNames) {
+function keyRow(key, clientNames, clientTeams = {}) {
   const revoked = Boolean(key.revoked_at);
   const expired = key.expires_at && new Date(key.expires_at) < new Date();
 
@@ -1714,7 +1715,7 @@ function keyRow(key, clientNames) {
       <div class="fw-medium">${esc(key.name)}</div>
       <div class="small text-secondary mono">${esc(key.prefix)}…</div>
     </td>
-    <td class="small">${esc(clientNames[key.client_id] || '—')}</td>
+    <td class="small">${esc(clientNames[key.client_id] || '—')} ${teamChip(clientTeams[key.client_id])}</td>
     <td class="small">
       ${(key.scopes || []).length
         ? key.scopes.map((s) => `<span class="badge text-bg-secondary me-1 mono">${esc(s)}</span>`).join('')
@@ -2254,7 +2255,7 @@ function baseRow(base) {
   return `<tr class="${selected ? 'table-active' : ''}">
     <td>
       <a href="#knowledge" data-kb-select="${esc(base.id)}" class="fw-medium text-decoration-none"
-         >${esc(base.display_name)}</a>
+         >${esc(base.display_name)}</a> ${teamChip(base.team_id)}
       <div class="small text-secondary mono">${esc(base.name)}</div>
       ${base.description ? `<div class="small text-secondary">${esc(base.description)}</div>` : ''}
     </td>
@@ -2796,7 +2797,218 @@ onModalSubmit('backend-form', 'backend-error', async (form) => {
 /* Usage, quotas and circuit breakers (E2)                                    */
 /* -------------------------------------------------------------------------- */
 const fmtInt = (n) => (n == null ? '—' : Number(n).toLocaleString());
-const QUOTA_SCOPE_LABEL = { api_key: 'API key', end_user: 'End user', model: 'Model' };
+const QUOTA_SCOPE_LABEL = { api_key: 'API key', end_user: 'End user', model: 'Model', team: 'Team' };
+
+/* -------------------------------------------------------------------------- */
+/* Teams (E3)                                                                 */
+/* -------------------------------------------------------------------------- */
+/** The caller's teams, refreshed on navigation. `all` is set for scope.all holders, who
+ *  can see and assign every team; everyone else gets the teams they belong to. */
+let teamCache = { allTeams: false, mine: [], all: [] };
+
+async function loadTeams() {
+  try {
+    const mine = await api('/teams/mine');
+    let all = mine.teams;
+    if (mine.all_teams && can('team.view')) all = await api('/teams');
+    teamCache = { allTeams: mine.all_teams, mine: mine.teams, all };
+  } catch {
+    teamCache = { allTeams: false, mine: [], all: [] };
+  }
+  return teamCache;
+}
+
+const teamName = (id) => (teamCache.all.find((t) => t.id === id) || {}).name;
+
+/** A small chip naming a resource's team; nothing for a shared one. */
+const teamChip = (id) => (id
+  ? `<span class="chip chip-team" title="Owned by this team">${icon('i-teams')}${esc(teamName(id) || 'team')}</span>`
+  : '');
+
+/** Fill every team picker: Shared, then the teams the caller may assign to. Hidden when
+ *  there is nothing to choose, so a site without teams sees no change. */
+function fillTeamPickers() {
+  const choices = teamCache.allTeams ? teamCache.all : teamCache.mine;
+  document.querySelectorAll('.team-picker').forEach((select) => {
+    const current = select.value;
+    select.innerHTML = ['<option value="">Shared (no team)</option>']
+      .concat(choices.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`)).join('');
+    if (choices.some((t) => t.id === current)) select.value = current;
+    select.closest('.team-field').classList.toggle('d-none', !choices.length);
+  });
+}
+
+const teamField = (id) => document.getElementById(id).value || null;
+
+let selectedTeamId = null;
+
+async function renderTeams() {
+  const body = document.getElementById('teams-body');
+  document.getElementById('team-new').classList.toggle('d-none', !can('team.manage'));
+  if (!can('team.view')) {
+    const mine = teamCache.mine;
+    body.innerHTML = mine.length
+      ? sectionCard('Your teams', null, tableHtml('<th>Team</th><th>Slug</th>',
+          mine.map((t) => `<tr><td class="fw-medium">${esc(t.name)}</td><td class="mono small">${esc(t.slug)}</td></tr>`).join('')))
+      : empty('You are not in any team, and viewing teams needs team.view.');
+    return;
+  }
+  const teams = await api('/teams');
+  if (!teams.length) {
+    body.innerHTML = empty(
+      'No teams yet, so every resource is shared. Create a team, add people to it, then assign ' +
+      'models, keys and agents to it from their create forms or with the Team selector below.');
+    return;
+  }
+  if (!teams.some((t) => t.id === selectedTeamId)) selectedTeamId = teams[0].id;
+  const rows = teams.map((t) => `<tr class="${t.id === selectedTeamId ? 'table-active' : ''}">
+      <td><a href="#teams" class="fw-medium text-decoration-none" data-team-select="${esc(t.id)}">${esc(t.name)}</a>
+        ${t.description ? `<div class="small text-secondary">${esc(t.description)}</div>` : ''}</td>
+      <td class="mono small text-nowrap">${esc(t.slug)}</td>
+      <td class="text-end">${fmtInt(t.member_count)}</td>
+      <td class="small text-nowrap">${esc(ago(t.created_at))}</td>
+    </tr>`).join('');
+  // Keep the open team's detail on screen while it reloads, so the 5 s poll does not
+  // blank the panel the operator is reading.
+  const previous = document.getElementById('team-detail');
+  const kept = previous && previous.dataset.teamId === selectedTeamId ? previous.innerHTML : '';
+  body.innerHTML = `
+    <div class="row g-4">
+      <div class="col-lg-5">${sectionCard('Teams', teamCache.allTeams
+        ? 'You can see every team (scope.all).' : 'The teams you belong to.',
+        tableHtml('<th>Team</th><th>Slug</th><th class="text-end">Members</th><th>Created</th>', rows))}</div>
+      <div class="col-lg-7" id="team-detail" data-team-id="${esc(selectedTeamId)}">${kept}</div>
+    </div>`;
+  document.querySelectorAll('[data-team-select]').forEach((link) => {
+    link.onclick = (event) => {
+      event.preventDefault();
+      selectedTeamId = link.dataset.teamSelect;
+      renderTeams();
+    };
+  });
+  await renderTeamDetail(selectedTeamId);
+}
+
+const RESOURCE_LABEL = {
+  models: 'Models', aliases: 'Aliases', api_clients: 'API clients', agents: 'Agents',
+  knowledge_bases: 'Knowledge bases',
+};
+
+async function renderTeamDetail(teamId) {
+  const slot = document.getElementById('team-detail');
+  const team = await api(`/teams/${teamId}`);
+  const meOwner = team.members.some((m) => m.user_id === currentUser.id && m.role === 'owner');
+  const manage = can('team.manage') || meOwner;
+  const users = manage && can('user.view') ? (await api('/users?limit=200')).items : [];
+  const memberIds = new Set(team.members.map((m) => m.user_id));
+  const candidates = users.filter((u) => !memberIds.has(u.id));
+
+  const resources = Object.entries(team.resources)
+    .map(([k, n]) => `<span class="chip">${esc(RESOURCE_LABEL[k] || k)}: ${fmtInt(n)}</span>`).join(' ');
+  const memberRows = team.members.map((m) => `<tr>
+      <td><span class="fw-medium">${esc(m.username)}</span>
+        ${m.full_name ? `<div class="small text-secondary">${esc(m.full_name)}</div>` : ''}</td>
+      <td>${manage ? `<select class="form-select form-select-sm" style="width:auto"
+              data-member-role="${esc(m.user_id)}" aria-label="Team role of ${esc(m.username)}">
+              <option value="member" ${m.role === 'member' ? 'selected' : ''}>Member</option>
+              <option value="owner" ${m.role === 'owner' ? 'selected' : ''}>Owner</option></select>`
+            : pill(m.role === 'owner' ? 'INFO' : 'IDLE', titleCase(m.role))}</td>
+      <td class="small">${esc(ago(m.added_at))}</td>
+      <td class="text-end">${manage ? `<button class="btn btn-sm btn-outline-danger"
+              data-member-remove="${esc(m.user_id)}" data-member-name="${esc(m.username)}">Remove</button>` : ''}</td>
+    </tr>`).join('');
+
+  const addForm = manage ? (candidates.length ? `
+      <div class="card-body border-top d-flex gap-2 flex-wrap align-items-center">
+        <select class="form-select form-select-sm" id="member-add-user" style="max-width:16rem"
+                aria-label="User to add">
+          ${candidates.map((u) => `<option value="${esc(u.id)}">${esc(u.username)}</option>`).join('')}
+        </select>
+        <select class="form-select form-select-sm" id="member-add-role" style="width:auto" aria-label="Team role">
+          <option value="member">Member</option><option value="owner">Owner</option>
+        </select>
+        <button class="btn btn-sm btn-primary" id="member-add">Add member</button>
+      </div>` : (can('user.view') ? '' : `<div class="card-body border-top small text-secondary">
+        Adding members needs user.view to list users.</div>`)) : '';
+
+  slot.innerHTML = `
+    <div class="card mb-4">
+      <div class="card-body">
+        <div class="d-flex align-items-start gap-2">
+          <div class="min-w-0">
+            <h6 class="mb-1">${esc(team.name)} <span class="mono small text-secondary">${esc(team.slug)}</span></h6>
+            ${team.description ? `<p class="small text-secondary mb-2">${esc(team.description)}</p>` : ''}
+          </div>
+          ${can('team.manage') ? `<button class="btn btn-sm btn-outline-danger ms-auto" id="team-delete"
+            >Delete team</button>` : ''}
+        </div>
+        <div class="small text-secondary mb-1">Owns</div>
+        <div class="d-flex flex-wrap gap-1">${resources}</div>
+      </div>
+      ${tableHtml('<th>Member</th><th>Team role</th><th>Added</th><th></th>', memberRows ||
+        `<tr><td colspan="4" class="text-secondary small">No members yet.</td></tr>`)}
+      ${addForm}
+    </div>`;
+
+  document.getElementById('member-add')?.addEventListener('click', (event) => guard(event.target, async () => {
+    await api(`/teams/${teamId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ user_id: field('member-add-user'), role: field('member-add-role') }),
+    });
+    alert('Member added. Their next request sees the team\'s resources.', 'success');
+    await renderTeams();
+  }));
+  document.querySelectorAll('[data-member-role]').forEach((select) => {
+    select.onchange = async () => {
+      try {
+        await api(`/teams/${teamId}/members/${select.dataset.memberRole}`, {
+          method: 'PATCH', body: JSON.stringify({ role: select.value }),
+        });
+        alert('Team role changed.', 'success');
+      } catch (err) {
+        alert(err.message);
+      }
+      await renderTeams();
+    };
+  });
+  document.querySelectorAll('[data-member-remove]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(`Remove ${button.dataset.memberName} from ${team.name}?`)) return;
+      await api(`/teams/${teamId}/members/${button.dataset.memberRemove}`, { method: 'DELETE' });
+      alert('Member removed.', 'success');
+      await renderTeams();
+    });
+  });
+  document.getElementById('team-delete')?.addEventListener('click', (event) => guard(event.target, async () => {
+    if (!confirm(`Delete team ${team.name}? This is refused while it still owns resources.`)) return;
+    await api(`/teams/${teamId}`, { method: 'DELETE' });
+    selectedTeamId = null;
+    alert('Team deleted.', 'success');
+    await loadTeams();
+    await renderTeams();
+  }));
+}
+
+onModalSubmit('team-form', 'team-error', async (form) => {
+  const team = await api('/teams', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: field('team-name'),
+      slug: field('team-slug') || null,
+      description: field('team-desc') || null,
+    }),
+  });
+  closeModal('team-modal');
+  form.reset();
+  selectedTeamId = team.id;
+  alert(`Created ${team.name}. Add members, then assign resources to it.`, 'success');
+  await loadTeams();
+  await renderTeams();
+});
+
+document.querySelectorAll('.modal').forEach((modal) => {
+  if (modal.querySelector('.team-picker')) modal.addEventListener('show.bs.modal', fillTeamPickers);
+});
 
 async function renderUsagePage() {
   const body = document.getElementById('usage-page-body');
@@ -3002,10 +3214,19 @@ async function syncQuotaSubject() {
       'Use * for every user individually. Self-reported names are never limited.';
     return;
   }
-  const every = scope === 'api_key' ? 'Every API key (each its own budget)' : 'Every model (each its own limit)';
+  const every = {
+    api_key: 'Every API key (each its own budget)',
+    model: 'Every model (each its own limit)',
+    team: 'Every team (each its own budget)',
+  }[scope];
   let options = [`<option value="*">${every}</option>`];
   try {
-    if (scope === 'api_key') {
+    if (scope === 'team') {
+      const teams = (await loadTeams()).all;
+      options = options.concat(teams.map((t) =>
+        `<option value="${esc(t.id)}">${esc(t.name)}</option>`));
+      help.textContent = 'Shared by every key whose application belongs to the team.';
+    } else if (scope === 'api_key') {
       const keys = await api('/api-keys');
       options = options.concat(keys.filter((k) => !k.revoked_at).map((k) =>
         `<option value="${esc(k.id)}">${esc(k.name)} (${esc(k.prefix)}…)</option>`));
@@ -3068,6 +3289,7 @@ const RENDERERS = {
   knowledge: renderKnowledge,
   memory: renderMemory,
   voice: renderVoice,
+  teams: renderTeams,
   users: renderUsers,
   audit: renderAudit,
 };
@@ -3095,7 +3317,8 @@ function navigate(page) {
   document.querySelectorAll('.nav-item[data-page]').forEach((a) =>
     a.classList.toggle('active', a.dataset.page === page));
   document.getElementById('alert-slot').innerHTML = '';
-  refresh({ force: true });
+  // Team names for chips and pickers first; cheap, and membership can change between pages.
+  loadTeams().finally(() => refresh({ force: true }));
 }
 
 function startPolling() {
@@ -3245,6 +3468,7 @@ onModalSubmit('agent-form', 'agent-error', async (form) => {
       max_iterations: numberField('agt-iter') ?? 10,
       tool_ids: selectedValues('agt-tools'),
       skill_ids: selectedValues('agt-skills'),
+      team_id: teamField('agt-team'),
     }),
   });
   closeModal('agent-modal');
@@ -3361,6 +3585,7 @@ onModalSubmit('model-form', 'model-error', async (form) => {
       context_length: numberField('mdl-context'),
       required_gpu_memory_mib: external ? 0 : numberField('mdl-mem'),
       min_gpu_count: external ? 0 : (numberField('mdl-gpus') ?? 1),
+      team_id: teamField('mdl-team'),
     }),
   });
   closeModal('model-modal');
@@ -3391,7 +3616,9 @@ onModalSubmit('deploy-form', 'deploy-error', async (form) => {
 onModalSubmit('alias-form', 'alias-error', async (form) => {
   await api('/model-aliases', {
     method: 'POST',
-    body: JSON.stringify({ alias: field('alias-name'), model_id: field('alias-model') }),
+    body: JSON.stringify({
+      alias: field('alias-name'), model_id: field('alias-model'), team_id: teamField('alias-team'),
+    }),
   });
   closeModal('alias-modal');
   form.reset();
@@ -3465,7 +3692,7 @@ document.getElementById('new-client').onclick = async () => {
   if (!name) return;
   try {
     const created = await api('/api-clients', {
-      method: 'POST', body: JSON.stringify({ name }),
+      method: 'POST', body: JSON.stringify({ name, team_id: teamField('key-team') }),
     });
     const select = document.getElementById('key-client');
     select.insertAdjacentHTML('beforeend',
@@ -3560,6 +3787,7 @@ onModalSubmit('kb-form', 'kb-error', async (form) => {
       tenant_id: field('kb-tenant') || 'default',
       chunk_size: numberField('kb-chunk') ?? 1200,
       chunk_overlap: numberField('kb-overlap') ?? 150,
+      team_id: teamField('kb-team'),
     }),
   });
   closeModal('kb-modal');

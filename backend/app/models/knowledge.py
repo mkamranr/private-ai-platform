@@ -121,6 +121,12 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: Owning team (E3). NULL means shared with everyone who holds the permission —
+    #: what every row created before teams existed is. RESTRICT: deleting a team that
+    #: still owns resources would silently make them shared.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), index=True
+    )
     description: Mapped[str | None] = mapped_column(Text)
 
     #: The scope everything in this base belongs to (§M16). A single-tenant install leaves

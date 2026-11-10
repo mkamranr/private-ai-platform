@@ -26,13 +26,14 @@ these limits:
 | `api_key` | the key's **id** (not its secret or prefix) | |
 | `end_user` | a **trusted** forwarded identity, e.g. an email | Self-reported `user` values are never limited, because anyone could type someone else's name and exhaust their budget. |
 | `model` | the name of the model that **answers** (not an alias) | Repointing an alias cannot move traffic out from under a model's limit. |
+| `team` | the team's **id** (E3) | One budget shared by every key whose API client belongs to the team. See [teams.md](teams.md). |
 
 `*` as the subject means "each one individually, unless it has its own row". A `*` daily
 budget on `end_user` gives every chat user their own budget; it is never one shared pool.
 A row naming the subject wins over the `*` row.
 
-A call is checked against every quota that applies to it (its key, its trusted end user
-and its model) and refused with **429** and a `Retry-After` header if any limit is
+A call is checked against every quota that applies to it (its key, its key's team, its
+trusted end user and its model) and refused with **429** and a `Retry-After` header if any limit is
 reached. The error body says which: `details.scope`, `details.quota`, `details.limit`,
 and `details.used` for budgets.
 

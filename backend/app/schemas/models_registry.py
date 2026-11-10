@@ -48,6 +48,13 @@ class ModelRegisterRequest(BaseModel):
     min_gpu_count: int = Field(default=1, ge=0, le=16)
     description: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    team_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Owning team (E3). Omit for a shared resource, visible to everyone with the "
+            "permission. You must be a member of the team unless you hold scope.all."
+        ),
+    )
 
 
 class ModelFileRead(ORMModel):
@@ -76,6 +83,8 @@ class ModelRead(ORMModel):
     status: str
     status_detail: str | None = None
     description: str | None = None
+    #: Owning team (E3); null means shared.
+    team_id: uuid.UUID | None = None
     created_at: dt.datetime
 
 
@@ -178,6 +187,13 @@ class AliasCreateRequest(BaseModel):
     enabled: bool = True
     #: Alias to serve from when this one's model cannot (E2). Explicit, one hop.
     fallback_alias_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Owning team (E3). Omit for a shared resource, visible to everyone with the "
+            "permission. You must be a member of the team unless you hold scope.all."
+        ),
+    )
 
 
 class AliasUpdateRequest(BaseModel):
@@ -198,6 +214,8 @@ class AliasRead(ORMModel):
     description: str | None = None
     enabled: bool
     fallback_alias_id: uuid.UUID | None = None
+    #: Owning team (E3); null means shared.
+    team_id: uuid.UUID | None = None
     created_at: dt.datetime
 
 
@@ -236,6 +254,13 @@ class ApiClientCreateRequest(BaseModel):
             "encrypted and never returned."
         ),
     )
+    team_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Owning team (E3). The client's keys can then call this team's models, aliases "
+            "and agents as well as shared ones; usage and team quotas are charged to it."
+        ),
+    )
 
 
 class ApiClientRead(ORMModel):
@@ -246,6 +271,8 @@ class ApiClientRead(ORMModel):
     trusted_identity_headers: bool
     #: Whether a signature is required — never the secret itself.
     identity_signature_required: bool = False
+    #: Owning team (E3); null means shared.
+    team_id: uuid.UUID | None = None
     created_at: dt.datetime
 
 

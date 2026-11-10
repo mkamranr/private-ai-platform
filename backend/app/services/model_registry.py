@@ -172,14 +172,21 @@ class ModelRegistryService:
 
     # -- reads -------------------------------------------------------------
     async def list_models(
-        self, *, model_type: str | None = None, limit: int = 100, offset: int = 0
+        self,
+        *,
+        model_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        where: Any = None,
     ) -> list[Model]:
         return list(
-            await self._models.list_models(model_type=model_type, limit=limit, offset=offset)
+            await self._models.list_models(
+                model_type=model_type, limit=limit, offset=offset, where=where
+            )
         )
 
-    async def count_models(self) -> int:
-        return await self._models.count()
+    async def count_models(self, *, model_type: str | None = None, where: Any = None) -> int:
+        return await self._models.count_matching(model_type=model_type, where=where)
 
     async def get_model(self, model_id: uuid.UUID) -> Model:
         model = await self._models.get_with_files(model_id)

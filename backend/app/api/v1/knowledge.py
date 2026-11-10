@@ -8,7 +8,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Path, Query, Response, UploadFile, status
 
-from app.api.deps import KnowledgeServiceDep, MemoryServiceDep, require_permission
+from app.api.deps import (
+    KnowledgeServiceDep,
+    MemoryServiceDep,
+    ScopeDep,
+    ScopeGuardDep,
+    require_permission,
+)
 from app.core.errors import ValidationError
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
@@ -45,8 +51,9 @@ MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 async def list_knowledge_bases(
     service: KnowledgeServiceDep,
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    scope: ScopeDep,
 ) -> list[KnowledgeBaseRead]:
-    return [KnowledgeBaseRead.model_validate(b) for b in await service.list_bases()]
+    return [KnowledgeBaseRead.model_validate(b) for b in scope.filter(await service.list_bases())]
 
 
 @router.post(
@@ -59,6 +66,7 @@ async def create_knowledge_base(
     payload: KnowledgeBaseCreateRequest,
     service: KnowledgeServiceDep,
     actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    guard: ScopeGuardDep,
 ) -> KnowledgeBaseRead:
     """Create a base and its vector collection.
 
@@ -67,18 +75,20 @@ async def create_knowledge_base(
     number that was wrong would create a collection that rejects every vector, with nothing
     to tell the operator what the right number was.
     """
-    return KnowledgeBaseRead.model_validate(
-        await service.create_base(
-            name=payload.name,
-            display_name=payload.display_name,
-            description=payload.description,
-            embedding_model=payload.embedding_model,
-            chunk_size=payload.chunk_size,
-            chunk_overlap=payload.chunk_overlap,
-            tenant_id=payload.tenant_id,
-            actor=actor,
-        )
+    await guard.assignable(payload.team_id)
+    await guard.model_name(payload.embedding_model)
+    base = await service.create_base(
+        name=payload.name,
+        display_name=payload.display_name,
+        description=payload.description,
+        embedding_model=payload.embedding_model,
+        chunk_size=payload.chunk_size,
+        chunk_overlap=payload.chunk_overlap,
+        tenant_id=payload.tenant_id,
+        actor=actor,
     )
+    await guard.place(base, payload.team_id)
+    return KnowledgeBaseRead.model_validate(base)
 
 
 @router.get(
@@ -89,8 +99,10 @@ async def create_knowledge_base(
 async def get_knowledge_base(
     service: KnowledgeServiceDep,
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
     base_id: uuid.UUID = Path(...),
 ) -> KnowledgeBaseDetail:
+    await guard.knowledge_base(base_id)
     base = await service.get_base(base_id)
     stats = await service.stats(base)
     # Built from the base's own read model plus the counts, not by `model_validate` on the
@@ -117,6 +129,7 @@ async def get_knowledge_base(
 async def delete_knowledge_base(
     service: KnowledgeServiceDep,
     actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    guard: ScopeGuardDep,
     base_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
     """Deletes the base, its documents, its stored originals **and its vectors**.
@@ -125,6 +138,7 @@ async def delete_knowledge_base(
     anything holding the collection name — for a deletion requested on privacy grounds,
     precisely the wrong outcome.
     """
+    await guard.knowledge_base(base_id)
     await service.delete_base(base_id, actor=actor)
     return MessageResponse(
         message="Knowledge base deleted, along with its documents and vector collection."
@@ -142,8 +156,10 @@ async def delete_knowledge_base(
 async def list_documents(
     service: KnowledgeServiceDep,
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
     base_id: uuid.UUID = Path(...),
 ) -> list[DocumentRead]:
+    await guard.knowledge_base(base_id)
     return [DocumentRead.model_validate(d) for d in await service.list_documents(base_id)]
 
 
@@ -156,6 +172,7 @@ async def list_documents(
 async def upload_document(
     service: KnowledgeServiceDep,
     actor: Annotated[User, require_permission(Perm.DOCUMENT_UPLOAD)],
+    guard: ScopeGuardDep,
     response: Response,
     base_id: uuid.UUID = Path(...),
     file: UploadFile = File(...),
@@ -166,6 +183,7 @@ async def upload_document(
     timeout — so the bytes are stored, the document is queued, and the caller polls
     `poll_url` for the §M15 lifecycle. The same reasoning as model deployment (M08).
     """
+    await guard.knowledge_base(base_id)
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValidationError(
@@ -200,11 +218,13 @@ async def upload_document(
 async def get_document(
     service: KnowledgeServiceDep,
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
     document_id: uuid.UUID = Path(...),
 ) -> DocumentRead:
     """Poll this after upload. `status` walks the §M15 lifecycle; `error` explains a FAILED
     one, and `status_detail` explains a NO_TEXT one — which is usually a scanned file
     awaiting OCR rather than anything broken."""
+    await guard.document(document_id)
     return DocumentRead.model_validate(await service.get_document(document_id))
 
 
@@ -214,8 +234,10 @@ async def get_document(
 async def delete_document(
     service: KnowledgeServiceDep,
     actor: Annotated[User, require_permission(Perm.DOCUMENT_DELETE)],
+    guard: ScopeGuardDep,
     document_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
+    await guard.document(document_id)
     await service.delete_document(document_id, actor=actor)
     return MessageResponse(
         message="Document deleted, with its chunks, vectors and stored original."
@@ -234,6 +256,7 @@ async def search_knowledge_base(
     payload: SearchRequest,
     service: KnowledgeServiceDep,
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
     base_id: uuid.UUID = Path(...),
 ) -> SearchResponse:
     """Semantic search, for checking what an agent would retrieve.
@@ -242,6 +265,7 @@ async def search_knowledge_base(
     whether retrieval found the right passages, and this answers it without running an
     agent at all.
     """
+    await guard.knowledge_base(base_id)
     base = await service.get_base(base_id)
     results = await service.search(
         [base], payload.query, limit=payload.limit, score_threshold=payload.score_threshold

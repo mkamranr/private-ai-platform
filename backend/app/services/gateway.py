@@ -51,6 +51,7 @@ from app.core.errors import (
 )
 from app.core.interfaces.llm import ChatMessage
 from app.core.logging import get_logger
+from app.core.scope import Scope
 from app.core.security import SecretCipher, hash_api_key
 from app.models.models_registry import ApiKey, Model, ModelAlias, ModelDeployment, UsageRecord
 from app.models.operations import QuotaScope
@@ -141,6 +142,20 @@ class GatewayContext:
 
     #: Budgets and concurrency slots this call was admitted against (E2).
     admission: Admission = field(default_factory=Admission)
+
+    @property
+    def team_id(self) -> uuid.UUID | None:
+        """The calling key's team (E3) — its client's. None for shared keys and for
+        internal callers (voice, agents), which carry no key."""
+        return self.api_key.client.team_id if self.api_key is not None else None
+
+    @property
+    def scope(self) -> Scope:
+        """What this call may reach. A key sees shared resources plus its client's team;
+        a call with no key is the platform acting for itself and sees everything."""
+        if self.api_key is None:
+            return Scope.everything()
+        return Scope.for_team(self.team_id)
 
 
 class GatewayService:
@@ -262,7 +277,7 @@ class GatewayService:
             )
 
     # -- resolution (§12, §13) --------------------------------------------
-    async def resolve(self, requested: str) -> ResolvedTarget:
+    async def resolve(self, requested: str, scope: Scope | None = None) -> ResolvedTarget:
         """Turn a caller's model name into a live endpoint.
 
         Accepts an alias or a model name. Aliases win: that is what lets an operator
@@ -272,17 +287,25 @@ class GatewayService:
         When the alias's model has nothing serving, or every deployment's circuit is
         open, its explicit fallback alias is used instead (E2). One hop only: the
         fallback's own fallback is never followed, so a cycle cannot loop.
+
+        ``scope`` (E3) hides other teams' aliases and models: one out of scope is
+        reported exactly as one that does not exist. None means unrestricted.
         """
+        scope = scope or Scope.everything()
         model: Model | None = None
 
         alias = await self._aliases.get_by_alias(requested)
+        if alias is not None and not self._visible(scope, alias):
+            alias = None
         if alias is not None:
             model = alias.model
         else:
             model = await self._models.get_by_name(requested)
+            if model is not None and not scope.can_see(model.team_id):
+                model = None
 
         if model is None:
-            available = [a.alias for a in await self._aliases.list_all()]
+            available = [a.alias for a in await self._aliases.list_all() if self._visible(scope, a)]
             raise NotFoundError(
                 f"No model or alias named {requested!r}.",
                 details={"available": sorted(available)[:20]},
@@ -292,7 +315,7 @@ class GatewayService:
             return await self._target(requested, model, alias)
         except DependencyUnavailableError:
             fallback = await self._fallback_alias(alias)
-            if fallback is None:
+            if fallback is None or not self._visible(scope, fallback):
                 raise
             target = await self._target(requested, fallback.model, None)
             target.fallback_from = requested
@@ -301,6 +324,11 @@ class GatewayService:
                 "alias_fallback", alias=requested, fallback=fallback.alias, reason="unavailable"
             )
             return target
+
+    @staticmethod
+    def _visible(scope: Scope, alias: ModelAlias) -> bool:
+        """An alias is usable only if both it and the model behind it are in scope."""
+        return scope.can_see(alias.team_id) and scope.can_see(alias.model.team_id)
 
     async def _fallback_alias(self, alias: ModelAlias | None) -> ModelAlias | None:
         if alias is None or alias.fallback_alias_id is None:
@@ -378,6 +406,8 @@ class GatewayService:
             subjects.append((QuotaScope.API_KEY, str(context.api_key.id)))
         if context.end_user and context.end_user_trusted:
             subjects.append((QuotaScope.END_USER, context.end_user))
+        if context.team_id is not None:
+            subjects.append((QuotaScope.TEAM, str(context.team_id)))
         subjects.append((QuotaScope.MODEL, target.model.name))
         await self._policy.admit(context.admission, subjects)
 
@@ -395,7 +425,7 @@ class GatewayService:
         if target.fallback_from is not None or target.fallback_alias_id is None:
             return None
         alias = await self._aliases.get_enabled(target.fallback_alias_id)
-        if alias is None:
+        if alias is None or not self._visible(context.scope, alias):
             return None
         try:
             fallback = await self._target(target.requested_model, alias.model, None)
@@ -443,18 +473,19 @@ class GatewayService:
         BREAKERS.record_success(target.breaker_key)
         return result, target
 
-    async def list_available(self) -> list[dict[str, Any]]:
+    async def list_available(self, scope: Scope | None = None) -> list[dict[str, Any]]:
         """The OpenAI-shaped model list.
 
         Reports aliases *and* deployed model names, and only things actually serving —
         a list containing models that cannot answer would send every developer's first
         call into a 503.
         """
+        scope = scope or Scope.everything()
         entries: list[dict[str, Any]] = []
         seen: set[str] = set()
 
         for alias in await self._aliases.list_all():
-            if not alias.enabled:
+            if not alias.enabled or not self._visible(scope, alias):
                 continue
             serving = await self._deployments.serving_for_model(alias.model_id)
             if not serving:
@@ -477,7 +508,7 @@ class GatewayService:
 
         for deployment in await self._deployments.list_deployments(states=["RUNNING"]):
             name = deployment.model.name
-            if name in seen:
+            if name in seen or not scope.can_see(deployment.model.team_id):
                 continue
             entries.append(
                 {
@@ -560,7 +591,7 @@ class GatewayService:
         *,
         filename: str = "audio.wav",
     ) -> dict[str, Any]:
-        target = await self.resolve(str(body.get("model") or ""))
+        target = await self.resolve(str(body.get("model") or ""), context.scope)
         await self._admit(context, target)
         try:
             transcript, target = await self._attempt(
@@ -618,7 +649,7 @@ class GatewayService:
         text = str(body.get("input") or "")
         if not text:
             raise ValidationError("'input' is required.")
-        target = await self.resolve(str(body.get("model") or ""))
+        target = await self.resolve(str(body.get("model") or ""), context.scope)
         await self._admit(context, target)
         try:
             speech, target = await self._attempt(
@@ -688,7 +719,7 @@ class GatewayService:
     ) -> dict[str, Any]:
         """Non-streaming chat completion."""
         self.attribute(context, body)
-        target = await self.resolve(body.get("model", ""))
+        target = await self.resolve(body.get("model", ""), context.scope)
         messages = self._messages(body.get("messages") or [])
         if not messages:
             raise ValidationError("'messages' must contain at least one message.")
@@ -765,7 +796,9 @@ class GatewayService:
         """
         if not body.get("messages"):
             raise ValidationError("'messages' must contain at least one message.")
-        target = await self.resolve(body.get("model", ""))
+        target = await self.resolve(
+            body.get("model", ""), context.scope if context is not None else None
+        )
         if context is not None:
             await self._admit(context, target)
         return target
@@ -885,7 +918,7 @@ class GatewayService:
 
     async def embeddings(self, body: dict[str, Any], context: GatewayContext) -> dict[str, Any]:
         self.attribute(context, body)
-        target = await self.resolve(body.get("model", ""))
+        target = await self.resolve(body.get("model", ""), context.scope)
         raw = body.get("input")
         if raw is None:
             raise ValidationError("'input' is required.")
@@ -961,6 +994,7 @@ class GatewayService:
             end_user=context.end_user,
             end_user_trusted=context.end_user_trusted,
             fallback_from=target.fallback_from,
+            team_id=context.team_id,
         )
 
         # Prometheus counters alongside the usage row (M19). Both, not one: the row is

@@ -102,6 +102,12 @@ class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: Owning team (E3). NULL means shared with everyone who holds the permission —
+    #: what every row created before teams existed is. RESTRICT: deleting a team that
+    #: still owns resources would silently make them shared.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), index=True
+    )
     version: Mapped[str] = mapped_column(String(64), default="1.0", nullable=False)
     type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     architecture: Mapped[str | None] = mapped_column(String(64))
@@ -304,6 +310,12 @@ class ModelAlias(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     description: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    #: Owning team (E3). NULL means shared with everyone who holds the permission —
+    #: what every row created before teams existed is. RESTRICT: deleting a team that
+    #: still owns resources would silently make them shared.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), index=True
+    )
     #: Where to send a request when this alias's model cannot serve it (E2). Explicit,
     #: never inferred: an operator decides that `enterprise-chat` may fall back to a
     #: smaller model, because only they know whether that answer is acceptable. One hop
@@ -334,6 +346,12 @@ class ApiClient(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    #: Owning team (E3). NULL means shared with everyone who holds the permission —
+    #: what every row created before teams existed is. RESTRICT: deleting a team that
+    #: still owns resources would silently make them shared.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), index=True
+    )
 
     # May this client tell the gateway *who* a request is for? (M17, §M24)
     #
@@ -427,6 +445,7 @@ class UsageRecord(Base):
         Index("ix_usage_records_recorded", "recorded_at"),
         Index("ix_usage_records_key_recorded", "api_key_id", "recorded_at"),
         Index("ix_usage_records_model_recorded", "model", "recorded_at"),
+        Index("ix_usage_records_team_recorded", "team_id", "recorded_at"),
         # Partial: only rows carrying an end user are aggregated on this axis, and on a
         # table this size indexing the NULLs would be most of it for nothing.
         Index(
@@ -467,6 +486,12 @@ class UsageRecord(Base):
     #: The alias that could not serve this call, when its fallback answered instead (E2).
     #: `requested_model` stays what the caller asked for and `model` what answered.
     fallback_from: Mapped[str | None] = mapped_column(String(128))
+    #: The calling key's team at the time of the call (E3), for per-team reporting and
+    #: team quotas. Copied, not joined: moving a client to another team must not
+    #: rewrite whose usage last month was.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL")
+    )
 
     # Who the call was *for*, behind a shared frontend (M17). Distinct from `user_id`,
     # which is a platform account: an Open WebUI user need not have one.

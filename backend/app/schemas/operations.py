@@ -149,7 +149,7 @@ class AlertSummary(BaseModel):
 # ---------------------------------------------------------------------------
 # Gateway quotas and usage (E2)
 # ---------------------------------------------------------------------------
-QuotaScopeLiteral = Literal["api_key", "end_user", "model"]
+QuotaScopeLiteral = Literal["api_key", "end_user", "model", "team"]
 
 _TPM = Field(default=None, ge=1, le=100_000_000)
 _BUDGET = Field(default=None, ge=1, le=10**15)
