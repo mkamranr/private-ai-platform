@@ -1,126 +1,180 @@
-/* Private AI Platform — admin UI styles (M21).
-   Layered over Bootstrap; only what Bootstrap does not already provide. */
+/* Private AI Platform — admin UI styles (M21, restyled in E1).
+   Layered over Bootstrap; only what Bootstrap does not already provide.
+
+   Design language (E1): a deep-navy sidebar against a light, airy content area; one
+   indigo-to-violet accent; white rounded cards with a soft shadow; KPI tiles that lead
+   with a tinted icon; status as pill badges. Every existing class keeps its name, so
+   the seventeen pages that predate E1 move to the new look without being rewritten.
+
+   Light is the default now. Dark remains one click away (the toggle in the top bar) and
+   uses the same structure with a night palette. */
 
 :root {
-  --sidebar-width: 15rem;
-  --ok: #2ea043;
-  --warn: #d29922;
-  --crit: #f85149;
-  --idle: #6e7681;
-}
+  --sidebar-width: 16rem;
 
-/* Theme ------------------------------------------------------------------- */
-/* The status colours above are GitHub's, so the rest of the palette is taken from the
-   same system rather than a second one invented alongside it — two palettes in one
-   console is how "green" ends up meaning a slightly different green in three places.
+  /* Status. Meaning, not decoration: never use these for anything but state. */
+  --ok: #16a34a;
+  --warn: #d97706;
+  --crit: #dc2626;
+  --idle: #64748b;
+  --info: #2563eb;
 
-   Set as Bootstrap's own variables, not as new classes: every card, table, modal and
-   form control already reads these, so the whole surface moves together and nothing
-   has to be restyled component by component.
+  /* The one accent. */
+  --brand: #4f46e5;
+  --brand-2: #7c3aed;
+  --brand-rgb: 79, 70, 229;
+  --brand-gradient: linear-gradient(135deg, #4f46e5 0%, #6d28d9 100%);
 
-   Dark is the default because this is watched on a wall for hours; `data-bs-theme`
-   still switches the whole thing to light for anyone who wants it. */
-[data-bs-theme="dark"] {
-  --bs-body-bg: #0d1117;
-  --bs-body-color: #e6edf3;
-  --bs-emphasis-color: #ffffff;
-  --bs-secondary-color: #8b949e;
-  --bs-secondary-bg: #161b22;
-  --bs-tertiary-bg: #10151c;
-  --bs-border-color: #30363d;
-  --bs-border-color-translucent: #30363d;
-  --bs-primary: #2f81f7;
-  --bs-primary-rgb: 47, 129, 247;
-  --bs-primary-bg-subtle: #12233d;
-  --bs-primary-border-subtle: #1f4b8f;
-  --bs-primary-text-emphasis: #79b8ff;
-  --bs-link-color: #79b8ff;
-  --bs-link-hover-color: #a5d0ff;
-  --bs-code-color: #ff9bce;
-  /* One step above the page, used for anything that should read as a raised panel.
-     Bootstrap has no token for this, and without it cards on a near-black page are
-     distinguishable only by their border. */
-  --surface-raised: #161b22;
-  --surface-hover: #1c2330;
+  /* Sidebar is navy in both themes: it is the frame, not the content. */
+  --side-bg: linear-gradient(180deg, #0b1437 0%, #111d4f 55%, #0d1640 100%);
+  --side-text: #c7cff5;
+  --side-muted: #7f8bc4;
+  --side-hover: rgba(255, 255, 255, .07);
+  --side-active: linear-gradient(90deg, #4f46e5 0%, #6366f1 100%);
+
+  --radius: .9rem;
+  --radius-sm: .55rem;
 }
 
 [data-bs-theme="light"] {
+  --bs-body-bg: #f4f6fb;
+  --bs-body-color: #1e2440;
+  --bs-emphasis-color: #0f1430;
+  --bs-secondary-color: #6b7394;
+  --bs-secondary-bg: #eef1f8;
+  --bs-tertiary-bg: #f7f8fc;
+  --bs-border-color: #e3e7f1;
+  --bs-border-color-translucent: #e3e7f1;
+  --bs-primary: #4f46e5;
+  --bs-primary-rgb: 79, 70, 229;
+  --bs-primary-bg-subtle: #eef0ff;
+  --bs-primary-border-subtle: #c9cdfb;
+  --bs-primary-text-emphasis: #3730a3;
+  --bs-link-color: #4f46e5;
+  --bs-link-hover-color: #3730a3;
   --surface-raised: #ffffff;
-  --surface-hover: #f2f5f9;
+  --surface-hover: #f5f7ff;
+  --shadow: 0 1px 2px rgba(16, 24, 64, .04), 0 6px 20px rgba(16, 24, 64, .06);
+  --shadow-hover: 0 2px 4px rgba(16, 24, 64, .06), 0 12px 28px rgba(16, 24, 64, .1);
 }
 
-body {
-  /* A very low-contrast wash, so a full-screen dashboard is not a flat black rectangle.
-     Fixed, because scrolling a gradient is a repaint on every frame for no benefit. */
-  background-image:
-    radial-gradient(60rem 30rem at 15% -10%, rgba(47, 129, 247, .07), transparent 60%),
-    radial-gradient(50rem 25rem at 100% 0%, rgba(46, 160, 67, .05), transparent 55%);
-  background-attachment: fixed;
-}
-
-.card,
-.stat-card {
-  background-color: var(--surface-raised);
-}
-
-/* Typography -------------------------------------------------------------- */
-h4 {
-  font-size: 1.15rem;
-  font-weight: 600;
-  letter-spacing: -.01em;
-}
-
-/* Focus ring. Bootstrap's default is a wide translucent slab that swamps a dense
-   table; this is tighter and reads as a ring rather than a glow. */
-.btn:focus-visible,
-.form-control:focus,
-.form-select:focus {
-  box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb), .35);
-  border-color: var(--bs-primary);
+[data-bs-theme="dark"] {
+  --bs-body-bg: #0a0f24;
+  --bs-body-color: #e3e7fb;
+  --bs-emphasis-color: #ffffff;
+  --bs-secondary-color: #949dc4;
+  --bs-secondary-bg: #18203f;
+  --bs-tertiary-bg: #121935;
+  --bs-border-color: #252e55;
+  --bs-border-color-translucent: #252e55;
+  --bs-primary: #7c83ff;
+  --bs-primary-rgb: 124, 131, 255;
+  --bs-primary-bg-subtle: #1e2556;
+  --bs-primary-border-subtle: #3b44a0;
+  --bs-primary-text-emphasis: #b4b9ff;
+  --bs-link-color: #a5abff;
+  --bs-link-hover-color: #c8cbff;
+  --bs-code-color: #ff9bce;
+  --surface-raised: #121935;
+  --surface-hover: #182148;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+  --shadow-hover: 0 2px 6px rgba(0, 0, 0, .35), 0 14px 32px rgba(0, 0, 0, .35);
+  --side-bg: linear-gradient(180deg, #070c22 0%, #0c1438 100%);
 }
 
 body {
   min-height: 100vh;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Typography -------------------------------------------------------------- */
+h4 {
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  color: var(--bs-emphasis-color);
+}
+
+h5, h6 { font-weight: 650; letter-spacing: -.01em; }
+
+.page-subtitle {
+  color: var(--bs-secondary-color);
+  font-size: .9rem;
+  margin: .2rem 0 0;
+}
+
+/* Focus ring: a ring, not a glow. */
+.btn:focus-visible,
+.form-control:focus,
+.form-select:focus,
+.form-check-input:focus {
+  box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb), .25);
+  border-color: var(--bs-primary);
+}
+
+/* Buttons ------------------------------------------------------------------ */
+.btn { border-radius: var(--radius-sm); font-weight: 500; }
+
+.btn-primary {
+  --bs-btn-bg: var(--brand);
+  --bs-btn-border-color: var(--brand);
+  --bs-btn-hover-bg: #4338ca;
+  --bs-btn-hover-border-color: #4338ca;
+  --bs-btn-active-bg: #3730a3;
+  --bs-btn-active-border-color: #3730a3;
+  background-image: var(--brand-gradient);
+  border: 0;
+  box-shadow: 0 4px 14px rgba(var(--brand-rgb), .3);
+}
+
+.btn-primary:hover { filter: brightness(1.06); }
+
+.btn-outline-primary {
+  --bs-btn-color: var(--bs-primary);
+  --bs-btn-border-color: var(--bs-primary-border-subtle);
+  --bs-btn-hover-bg: var(--bs-primary-bg-subtle);
+  --bs-btn-hover-color: var(--bs-primary-text-emphasis);
+  --bs-btn-hover-border-color: var(--bs-primary-border-subtle);
+}
+
+.form-control, .form-select { border-radius: var(--radius-sm); }
+
+.form-check-input:checked {
+  background-color: var(--brand);
+  border-color: var(--brand);
+}
+
+/* Live indicator ------------------------------------------------------------ */
 .brand-dot {
   display: inline-block;
-  width: .55rem;
-  height: .55rem;
+  width: .5rem;
+  height: .5rem;
   border-radius: 50%;
   background: var(--ok);
   margin-right: .4rem;
   vertical-align: middle;
-  /* A live indicator should look live. Kept slow and subtle: this sits in the corner of
-     a screen someone stares at all day. */
-  box-shadow: 0 0 0 0 rgba(46, 160, 67, .55);
+  box-shadow: 0 0 0 0 rgba(22, 163, 74, .55);
   animation: brand-pulse 3.2s ease-out infinite;
 }
 
 @keyframes brand-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(46, 160, 67, .5); }
-  70%  { box-shadow: 0 0 0 .45rem rgba(46, 160, 67, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(22, 163, 74, .5); }
+  70%  { box-shadow: 0 0 0 .45rem rgba(22, 163, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
 }
 
-/* Anyone who has asked the OS to stop moving things means it. */
 @media (prefers-reduced-motion: reduce) {
   .brand-dot { animation: none; }
-  .meter-fill { transition: none; }
+  .meter-fill, .card, .stat-card, .tile { transition: none; }
 }
 
-/* The mark itself. Inline SVG rather than an image file: it inherits the theme through
-   currentColor, costs no request, and cannot be the one asset a bundle forgets. */
 .brand-mark {
   width: 1.4rem;
   height: 1.4rem;
   vertical-align: -.28rem;
   margin-right: .45rem;
   color: var(--bs-primary);
-}
-
-.navbar {
-  background-color: var(--surface-raised);
 }
 
 .login-art svg {
@@ -130,92 +184,362 @@ body {
   color: var(--bs-primary);
 }
 
+/* Top bar ------------------------------------------------------------------- */
+.navbar {
+  background-color: color-mix(in srgb, var(--bs-body-bg) 82%, transparent);
+  backdrop-filter: blur(10px);
+  min-height: 3.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+}
+
+/* Signed in, the sidebar carries the brand and spans the full height; the top bar
+   becomes a slim utility strip over the content column only. */
+body.app-active .navbar {
+  margin-left: var(--sidebar-width);
+  border-bottom-color: var(--bs-border-color) !important;
+}
+body.app-active .navbar-brand { visibility: hidden; }
+
 /* Sidebar ----------------------------------------------------------------- */
 .sidebar {
   width: var(--sidebar-width);
   min-width: var(--sidebar-width);
-  min-height: calc(100vh - 3.5rem);
+  background: var(--side-bg);
+  color: var(--side-text);
+  border: 0 !important;
+  min-height: 100vh;
 }
 
+body.app-active .sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  overflow-y: auto;
+  z-index: 1030;
+  padding: 1.1rem .85rem !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, .15) transparent;
+}
+
+body.app-active main {
+  margin-left: var(--sidebar-width);
+  min-width: 0;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  padding: .2rem .5rem 1.2rem;
+  color: #fff;
+  text-decoration: none;
+}
+
+.sidebar-brand-logo {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: .7rem;
+  display: grid;
+  place-items: center;
+  background: var(--brand-gradient);
+  box-shadow: 0 6px 18px rgba(79, 70, 229, .45);
+  flex: 0 0 auto;
+}
+
+.sidebar-brand-logo svg { width: 1.45rem; height: 1.45rem; color: #fff; }
+.sidebar-brand-name { font-weight: 700; font-size: 1rem; line-height: 1.15; }
+.sidebar-brand-tag { font-size: .72rem; color: var(--side-muted); }
+
 .nav-section {
-  font-size: .7rem;
+  font-size: .66rem;
   text-transform: uppercase;
-  letter-spacing: .06em;
-  color: var(--bs-secondary-color);
-  margin-bottom: .35rem;
+  letter-spacing: .09em;
+  color: var(--side-muted);
+  margin: 0 0 .35rem .6rem;
+  font-weight: 600;
 }
 
 .nav-item {
-  /* Flex rather than block now the items carry an icon: it aligns the glyph to the text
-     baseline without magic margins, and lets the Approvals count sit hard right instead
-     of trailing the label. */
   display: flex;
   align-items: center;
-  gap: .55rem;
-  padding: .34rem .6rem;
-  border-radius: .3rem;
-  color: var(--bs-body-color);
+  gap: .65rem;
+  padding: .5rem .7rem;
+  margin-bottom: .12rem;
+  border-radius: .6rem;
+  color: var(--side-text);
   text-decoration: none;
-  font-size: .9rem;
+  font-size: .89rem;
+  transition: background .15s ease, color .15s ease;
 }
 
 .nav-icon {
-  width: 1rem;
-  height: 1rem;
+  width: 1.1rem;
+  height: 1.1rem;
   flex: 0 0 auto;
-  /* Dimmed until the row matters. An icon at full strength on every row competes with
-     the label it is supposed to be helping you find. */
-  opacity: .6;
+  opacity: .75;
   transition: opacity .15s ease;
 }
 
 .nav-item:hover:not(.disabled) .nav-icon,
-.nav-item.active .nav-icon {
-  opacity: 1;
-}
+.nav-item.active .nav-icon { opacity: 1; }
 
-/* The pending count belongs at the end of the row, not glued to the word. */
-.nav-item .badge {
-  margin-left: auto;
-}
+.nav-item .badge { margin-left: auto; }
 
 .nav-item:hover:not(.disabled) {
-  background: var(--bs-secondary-bg);
+  background: var(--side-hover);
+  color: #fff;
 }
 
 .nav-item.active {
-  background: var(--bs-primary-bg-subtle);
-  color: var(--bs-primary-text-emphasis);
-  font-weight: 500;
+  background: var(--side-active);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 6px 16px rgba(79, 70, 229, .4);
 }
 
-/* Sections whose module has not landed yet. Shown rather than hidden so the
-   platform's shape is legible from the start, with a title explaining which
-   phase delivers each one. */
 .nav-item.disabled {
-  color: var(--bs-secondary-color);
+  color: var(--side-muted);
   opacity: .45;
   cursor: not-allowed;
 }
 
-/* Cards and stats --------------------------------------------------------- */
-.stat-card {
-  border: 1px solid var(--bs-border-color);
-  border-radius: .5rem;
-  padding: .85rem 1rem;
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-top: 1.5rem;
+  padding: .7rem .6rem;
+  border-radius: .7rem;
+  background: rgba(255, 255, 255, .05);
+  color: #fff;
 }
 
+.sidebar-avatar {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand-gradient);
+  font-weight: 700;
+  font-size: .85rem;
+  flex: 0 0 auto;
+}
+
+.sidebar-user-name { font-size: .85rem; font-weight: 600; line-height: 1.2; }
+.sidebar-user-role { font-size: .72rem; color: var(--side-muted); }
+
+/* Page header ---------------------------------------------------------------- */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.4rem;
+}
+
+.page-header .page-actions { margin-left: auto; display: flex; gap: .5rem; align-items: center; }
+
+/* Cards and stats --------------------------------------------------------- */
+.card,
+.stat-card {
+  background-color: var(--surface-raised);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.stat-card { padding: 1.1rem 1.2rem; }
+
 .stat-value {
-  font-size: 1.5rem;
-  font-weight: 600;
+  font-size: 1.65rem;
+  font-weight: 700;
   line-height: 1.1;
+  letter-spacing: -.02em;
+  color: var(--bs-emphasis-color);
 }
 
 .stat-label {
-  font-size: .75rem;
+  font-size: .8rem;
   color: var(--bs-secondary-color);
-  text-transform: uppercase;
-  letter-spacing: .04em;
+  font-weight: 500;
+}
+
+.card-title-sm {
+  font-size: 1rem;
+  font-weight: 650;
+  color: var(--bs-emphasis-color);
+  margin-bottom: .9rem;
+}
+
+/* KPI tile: icon left, label over figure, a short note underneath. */
+.kpi {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.kpi-icon {
+  width: 3.1rem;
+  height: 3.1rem;
+  border-radius: .85rem;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.kpi-icon svg { width: 1.5rem; height: 1.5rem; }
+
+.tone-blue   .kpi-icon { background: #e8edff; color: #4f46e5; }
+.tone-green  .kpi-icon { background: #e3f8ec; color: #16a34a; }
+.tone-amber  .kpi-icon { background: #fff2dd; color: #ea7a0c; }
+.tone-violet .kpi-icon { background: #f1e8ff; color: #7c3aed; }
+.tone-red    .kpi-icon { background: #fde8e8; color: #dc2626; }
+
+[data-bs-theme="dark"] .tone-blue   .kpi-icon { background: #1e2556; color: #a5abff; }
+[data-bs-theme="dark"] .tone-green  .kpi-icon { background: #12342a; color: #4ade80; }
+[data-bs-theme="dark"] .tone-amber  .kpi-icon { background: #3a2a12; color: #fbbf24; }
+[data-bs-theme="dark"] .tone-violet .kpi-icon { background: #2b1d52; color: #c4a5ff; }
+[data-bs-theme="dark"] .tone-red    .kpi-icon { background: #3d1717; color: #f87171; }
+
+.kpi-note { font-size: .78rem; margin-top: .2rem; color: var(--bs-secondary-color); }
+
+/* Hero banner (dashboard). Real status only: the pill reflects open alerts. */
+.hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: calc(var(--radius) + .2rem);
+  padding: 1.7rem 1.9rem;
+  margin-bottom: 1.4rem;
+  color: #fff;
+  background:
+    radial-gradient(40rem 18rem at 85% -20%, rgba(124, 58, 237, .55), transparent 60%),
+    radial-gradient(30rem 14rem at 100% 120%, rgba(56, 189, 248, .35), transparent 60%),
+    linear-gradient(120deg, #0b1437 0%, #172a7a 60%, #2a2fa8 100%);
+  box-shadow: 0 14px 34px rgba(17, 29, 79, .28);
+}
+
+.hero::after {
+  /* A faint grid: reads as "infrastructure" without a stock photo. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(90deg, transparent 35%, #000 100%);
+  pointer-events: none;
+}
+
+.hero h2 { font-size: 1.6rem; font-weight: 750; letter-spacing: -.02em; margin: .55rem 0 .3rem; }
+.hero p { margin: 0; color: #c9d1ff; }
+.hero > * { position: relative; z-index: 1; }
+
+/* Pills -------------------------------------------------------------------- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .22rem .62rem;
+  border-radius: 999px;
+  font-size: .74rem;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.pill::before {
+  content: "";
+  width: .42rem;
+  height: .42rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill.no-dot::before { display: none; }
+
+.pill-ok   { background: #e3f8ec; color: #15803d; }
+.pill-warn { background: #fff2dd; color: #b45309; }
+.pill-crit { background: #fde8e8; color: #b91c1c; }
+.pill-idle { background: #eef1f6; color: #475569; }
+.pill-info { background: #e8edff; color: #4338ca; }
+
+[data-bs-theme="dark"] .pill-ok   { background: #12342a; color: #4ade80; }
+[data-bs-theme="dark"] .pill-warn { background: #3a2a12; color: #fbbf24; }
+[data-bs-theme="dark"] .pill-crit { background: #3d1717; color: #f87171; }
+[data-bs-theme="dark"] .pill-idle { background: #1f2747; color: #a3acd0; }
+[data-bs-theme="dark"] .pill-info { background: #1e2556; color: #a5abff; }
+
+.hero .pill-ok { background: rgba(34, 197, 94, .18); color: #86efac; }
+.hero .pill-crit { background: rgba(239, 68, 68, .2); color: #fca5a5; }
+.hero .pill-warn { background: rgba(245, 158, 11, .2); color: #fcd34d; }
+
+/* Small tag chips, e.g. capabilities. */
+.chip {
+  display: inline-block;
+  padding: .12rem .5rem;
+  border-radius: .4rem;
+  font-size: .72rem;
+  font-weight: 600;
+  background: var(--bs-primary-bg-subtle);
+  color: var(--bs-primary-text-emphasis);
+  margin: 0 .25rem .25rem 0;
+}
+
+/* Tile grid (cards like the mockup's model catalogue) ---------------------- */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 1rem;
+}
+
+.tile {
+  background: var(--surface-raised);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: .7rem;
+  transition: box-shadow .2s ease, transform .2s ease;
+}
+
+.tile:hover { box-shadow: var(--shadow-hover); transform: translateY(-1px); }
+
+.tile-head { display: flex; align-items: center; gap: .75rem; }
+.tile-title { font-weight: 700; color: var(--bs-emphasis-color); line-height: 1.2; }
+.tile-sub { font-size: .8rem; color: var(--bs-secondary-color); word-break: break-all; }
+.tile-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+.tile-meta .v { font-weight: 650; color: var(--bs-emphasis-color); }
+.tile-meta .k { font-size: .72rem; color: var(--bs-secondary-color); }
+.tile-actions { display: flex; gap: .4rem; margin-top: auto; flex-wrap: wrap; }
+
+/* Tabs: underline style ------------------------------------------------------ */
+.nav-tabs {
+  border-bottom: 1px solid var(--bs-border-color);
+  gap: .25rem;
+}
+
+.nav-tabs .nav-link {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--bs-secondary-color);
+  font-weight: 550;
+  padding: .55rem .9rem;
+  background: transparent;
+}
+
+.nav-tabs .nav-link:hover { color: var(--bs-emphasis-color); border-bottom-color: var(--bs-border-color); }
+
+.nav-tabs .nav-link.active {
+  color: var(--bs-primary);
+  border-bottom-color: var(--bs-primary);
+  background: transparent;
 }
 
 /* Status ------------------------------------------------------------------ */
@@ -230,39 +554,55 @@ body {
 
 .status-ONLINE, .status-HEALTHY, .status-RUNNING { background: var(--ok); }
 .status-DEGRADED, .status-WARNING, .status-RESTARTING { background: var(--warn); }
-.status-OFFLINE, .status-CRITICAL, .status-DEAD { background: var(--crit); }
-.status-UNKNOWN, .status-EXITED, .status-CREATED, .status-PAUSED { background: var(--idle); }
+.status-OFFLINE, .status-CRITICAL, .status-DEAD, .status-UNHEALTHY { background: var(--crit); }
+.status-UNKNOWN, .status-EXITED, .status-CREATED, .status-PAUSED, .status-DISABLED { background: var(--idle); }
 
 /* Utilisation bars -------------------------------------------------------- */
 .meter {
-  height: .4rem;
-  border-radius: .2rem;
+  height: .45rem;
+  border-radius: 999px;
   background: var(--bs-secondary-bg);
   overflow: hidden;
   min-width: 5rem;
 }
 
-.meter-fill {
-  height: 100%;
-  border-radius: .2rem;
-  transition: width .4s ease;
-}
-
+.meter-fill { height: 100%; border-radius: 999px; transition: width .4s ease; }
 .meter-fill.low { background: var(--ok); }
 .meter-fill.mid { background: var(--warn); }
 .meter-fill.high { background: var(--crit); }
 
 /* Tables ------------------------------------------------------------------ */
+.table {
+  --bs-table-bg: transparent;
+  margin-bottom: 0;
+}
+
 .table > :not(caption) > * > * {
-  padding: .55rem .6rem;
+  padding: .7rem .75rem;
+  border-bottom-color: var(--bs-border-color);
 }
 
 .table thead th {
-  font-size: .72rem;
-  text-transform: uppercase;
-  letter-spacing: .04em;
+  font-size: .74rem;
+  text-transform: none;
+  letter-spacing: 0;
   color: var(--bs-secondary-color);
-  font-weight: 500;
+  font-weight: 600;
+  background: var(--bs-tertiary-bg);
+  border-bottom-color: var(--bs-border-color);
+}
+
+.table > tbody > tr:hover > * { background-color: var(--surface-hover); }
+
+/* A bare table directly on the page gets the card treatment, so every list reads as a
+   panel without touching the markup that renders it. */
+.page > .table-responsive,
+.page > table.table {
+  background: var(--surface-raised);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .mono {
@@ -270,73 +610,52 @@ body {
   font-size: .82rem;
 }
 
-.gpu-row {
-  cursor: pointer;
-}
+.gpu-row { cursor: pointer; }
+.gpu-row:hover { background: var(--bs-secondary-bg); }
 
-.gpu-row:hover {
-  background: var(--bs-secondary-bg);
-}
-
-/* A node reporting fabricated telemetry must be unmistakable — presenting
-   synthetic numbers as real capacity is the single most misleading thing this
-   UI could do. */
+/* Synthetic telemetry must be unmistakable. */
 .badge-synthetic {
-  background: #7a4b00;
-  color: #ffd8a8;
+  background: #fff2dd;
+  color: #9a4b00;
 }
 
-/* An empty table is the first thing a new operator sees on most of these screens, and
-   a bare dashed box tells them nothing. The illustration marks it as "nothing here yet"
-   rather than "something failed to load" — which is the ambiguity worth removing, since
-   the two look identical and want opposite responses. */
+[data-bs-theme="dark"] .badge-synthetic { background: #7a4b00; color: #ffd8a8; }
+
+.badge { font-weight: 600; border-radius: .45rem; }
+
+/* Empty states -------------------------------------------------------------- */
 .empty-state {
-  border: 1px dashed var(--bs-border-color);
-  border-radius: .5rem;
-  padding: 2.25rem 1rem;
+  border: 1.5px dashed var(--bs-border-color);
+  border-radius: var(--radius);
+  padding: 2.5rem 1rem;
   text-align: center;
   color: var(--bs-secondary-color);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: .75rem;
+  background: var(--surface-raised);
 }
 
 .empty-state svg {
   width: 3.25rem;
   height: 3.25rem;
-  opacity: .5;
-  color: var(--bs-secondary-color);
+  opacity: .55;
+  color: var(--bs-primary);
 }
 
-.empty-state-text {
-  max-width: 34rem;
-  font-size: .875rem;
-  line-height: 1.5;
+.empty-state-text { max-width: 34rem; font-size: .9rem; line-height: 1.5; }
+
+/* Modals and alerts ---------------------------------------------------------- */
+.modal-content {
+  border-radius: calc(var(--radius) + .1rem);
+  border: 1px solid var(--bs-border-color);
+  box-shadow: 0 24px 60px rgba(16, 24, 64, .25);
 }
 
-/* Sidebar and table polish ------------------------------------------------ */
-.sidebar {
-  background-color: var(--surface-raised);
-}
+.alert { border-radius: var(--radius-sm); }
 
-/* A 3px rail on the active item. On a screen of near-identical rows, position is read
-   faster than a background tint alone. */
-.nav-item.active {
-  box-shadow: inset .18rem 0 0 var(--bs-primary);
-}
-
-.table > tbody > tr:hover > * {
-  background-color: var(--surface-hover);
-}
-
-.table thead th {
-  border-bottom-color: var(--bs-border-color);
-}
-
-/* Container logs. A model that fails to load leaves its only explanation here, so the
-   pane is tall enough to read a stack trace without scrolling a line at a time, and
-   never wraps — vLLM output is column-aligned and wrapping destroys it. */
+/* Container logs: tall, unwrapped, column-aligned. */
 .logs {
   max-height: 60vh;
   overflow: auto;
@@ -347,11 +666,31 @@ body {
   padding: .75rem;
   background: var(--bs-tertiary-bg);
   border: 1px solid var(--bs-border-color);
-  border-radius: .375rem;
+  border-radius: var(--radius-sm);
 }
 
-/* Dashboard headline figures. Colour carries meaning here — a green "0 GPUs free" would
-   be worse than no colour at all. */
+/* Dashboard headline figures. Colour carries meaning. */
 .dash-ok   { color: var(--ok); }
 .dash-warn { color: var(--warn); }
 .dash-crit { color: var(--crit); }
+
+/* Activity list (dashboard) ------------------------------------------------- */
+.activity { list-style: none; margin: 0; padding: 0; }
+.activity li { display: flex; gap: .75rem; align-items: center; padding: .55rem 0; }
+.activity li + li { border-top: 1px solid var(--bs-border-color); }
+.activity-icon {
+  width: 2rem; height: 2rem; border-radius: 50%;
+  display: grid; place-items: center; flex: 0 0 auto;
+}
+.activity-icon svg { width: 1rem; height: 1rem; }
+
+/* Narrow screens: the sidebar folds away above the content. */
+@media (max-width: 991.98px) {
+  body.app-active .sidebar { position: static; width: 100%; min-height: auto; }
+  body.app-active main,
+  body.app-active .navbar { margin-left: 0; }
+  #app-view > .d-flex { flex-direction: column; }
+}
+
+.min-w-0 { min-width: 0; }
+.table thead th { white-space: nowrap; }

@@ -27,6 +27,7 @@ from app.core.interfaces.agent import AgentRuntime
 from app.core.interfaces.compute import ComputeBackend
 from app.core.interfaces.container import ContainerRuntime
 from app.core.interfaces.gpu import GpuProbe
+from app.core.interfaces.inference_backend import InferenceBackendAdapter
 from app.core.interfaces.llm import LLMProvider
 from app.core.interfaces.scheduler import Scheduler
 from app.core.interfaces.tools import ToolExecutor
@@ -37,6 +38,7 @@ __all__ = [
     "ComputeBackend",
     "ContainerRuntime",
     "GpuProbe",
+    "InferenceBackendAdapter",
     "LLMProvider",
     "Scheduler",
     "ToolExecutor",

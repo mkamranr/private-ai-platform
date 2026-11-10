@@ -33,6 +33,10 @@ class Permission:
     MODEL_STOP: Final = "model.stop"
     MODEL_DELETE: Final = "model.delete"
     MODEL_INFERENCE: Final = "model.inference"
+    # Inference backends (E1, plan §5.2). Separate from MODEL_REGISTER: pointing the
+    # platform at a new server, with its credential, is an infrastructure decision.
+    BACKEND_VIEW: Final = "backend.view"
+    BACKEND_MANAGE: Final = "backend.manage"
 
     # --- agents (M10, M14) ---
     AGENT_VIEW: Final = "agent.view"
@@ -79,6 +83,9 @@ class Permission:
     # --- observability (M19) ---
     MONITORING_VIEW: Final = "monitoring.view"
     TRACE_VIEW: Final = "trace.view"
+    # In-app alerts (E1, plan §5.15).
+    ALERT_VIEW: Final = "alert.view"
+    ALERT_MANAGE: Final = "alert.manage"
 
 
 #: ``permission name -> human description``, used by the seeder and the admin UI.
@@ -94,6 +101,8 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.MODEL_STOP: "Stop and restart model deployments",
     Permission.MODEL_DELETE: "Delete models and deployments",
     Permission.MODEL_INFERENCE: "Call inference endpoints through the gateway",
+    Permission.BACKEND_VIEW: "View inference backends and their health",
+    Permission.BACKEND_MANAGE: "Register, test, modify and remove inference backends",
     Permission.AGENT_VIEW: "View agents and their run history",
     Permission.AGENT_CREATE: "Create agents",
     Permission.AGENT_EDIT: "Modify agents and publish new versions",
@@ -123,6 +132,8 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.BACKUP_MANAGE: "Create, verify and restore backups",
     Permission.MONITORING_VIEW: "View metrics and dashboards",
     Permission.TRACE_VIEW: "View LLM and agent execution traces",
+    Permission.ALERT_VIEW: "View platform alerts",
+    Permission.ALERT_MANAGE: "Acknowledge and resolve platform alerts",
 }
 
 
@@ -177,6 +188,10 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.MODEL_STOP,
                 Permission.MODEL_DELETE,
                 Permission.MODEL_INFERENCE,
+                Permission.BACKEND_VIEW,
+                Permission.BACKEND_MANAGE,
+                Permission.ALERT_VIEW,
+                Permission.ALERT_MANAGE,
                 Permission.KNOWLEDGE_VIEW,
                 Permission.KNOWLEDGE_MANAGE,
                 Permission.DOCUMENT_UPLOAD,
@@ -200,6 +215,9 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.GPU_VIEW,
                 Permission.MONITORING_VIEW,
                 Permission.MODEL_VIEW,
+                Permission.BACKEND_VIEW,
+                Permission.ALERT_VIEW,
+                Permission.ALERT_MANAGE,
             }
         ),
     ),
@@ -261,6 +279,8 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.USAGE_VIEW,
                 Permission.USER_VIEW,
                 Permission.INFRASTRUCTURE_VIEW,
+                Permission.BACKEND_VIEW,
+                Permission.ALERT_VIEW,
             }
         )
         | _VIEWER,

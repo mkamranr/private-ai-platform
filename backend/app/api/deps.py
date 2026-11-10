@@ -71,6 +71,7 @@ from app.repositories.models_registry import (
     ModelRepository,
     UsageRepository,
 )
+from app.repositories.operations import AlertRepository, InferenceBackendRepository
 from app.repositories.user import PermissionRepository, RoleRepository, UserRepository
 from app.repositories.voice import (
     VoiceEventRepository,
@@ -85,6 +86,7 @@ from app.services.agent_registry import (
 )
 from app.services.agent_runs import AgentRunService
 from app.services.agent_runtime import PlatformAgentRuntime
+from app.services.alerts import AlertService
 from app.services.api_keys import ApiKeyService
 from app.services.audit import AuditService
 from app.services.auth import AuthService
@@ -97,6 +99,7 @@ from app.services.federation import FederationService
 from app.services.gateway import GatewayContext, GatewayService
 from app.services.health import HealthService
 from app.services.identity import resolve_forwarded_identity
+from app.services.inference_backends import InferenceBackendService
 from app.services.infrastructure import GpuService, NodeService
 from app.services.knowledge import KnowledgeService
 from app.services.media_provider import ResolvingOcrEngine
@@ -533,6 +536,33 @@ def get_model_registry(
 
 
 ModelRegistryDep = Annotated[ModelRegistryService, Depends(get_model_registry)]
+
+
+# ---------------------------------------------------------------------------
+# Inference backends and alerts (E1)
+# ---------------------------------------------------------------------------
+def get_alert_service(session: SessionDep, audit: AuditDep) -> AlertService:
+    return AlertService(AlertRepository(session), audit)
+
+
+AlertServiceDep = Annotated[AlertService, Depends(get_alert_service)]
+
+
+def get_inference_backend_service(
+    session: SessionDep,
+    audit: AuditDep,
+    cipher: CipherDep,
+    alerts: AlertServiceDep,
+    registry: ModelRegistryDep,
+) -> InferenceBackendService:
+    return InferenceBackendService(
+        InferenceBackendRepository(session), cipher, audit, alerts, registry
+    )
+
+
+InferenceBackendServiceDep = Annotated[
+    InferenceBackendService, Depends(get_inference_backend_service)
+]
 
 
 def get_deployment_service(

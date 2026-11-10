@@ -162,36 +162,68 @@ async function renderDashboard() {
   const data = await api(`/dashboard?window_hours=${hours}`);
 
   const cards = [];
-  if (data.fleet) {
-    cards.push(
-      ['Nodes online', `${data.fleet.online} / ${data.fleet.total}`,
-        data.fleet.offline ? `${data.fleet.offline} offline` : 'full fleet reporting',
-        data.fleet.offline ? 'crit' : 'ok'],
-    );
+  if (data.models) {
+    cards.push({
+      label: 'Models serving', value: `${data.models.running} / ${data.models.registered}`,
+      note: `${data.models.available} available` + (data.models.failed ? ` · ${data.models.failed} failed` : ''),
+      tone: data.models.failed ? 'red' : 'blue', iconId: 'i-models',
+    });
+  }
+  if (data.gateway) {
+    cards.push({
+      label: 'Gateway requests', value: data.gateway.requests.toLocaleString(),
+      note: `${(data.gateway.prompt_tokens + data.gateway.completion_tokens).toLocaleString()} tokens`,
+      tone: 'green', iconId: 'i-pulse',
+    });
+    cards.push({
+      label: 'Avg. latency',
+      value: data.gateway.requests ? `${data.gateway.avg_latency_ms.toFixed(0)} ms` : '—',
+      note: data.gateway.requests ? 'end to end, this window' : 'no traffic in this window',
+      tone: 'amber', iconId: 'i-deployments',
+    });
   }
   if (data.gpus) {
     const used = data.gpus.memory_total_mib
       ? Math.round((data.gpus.memory_used_mib / data.gpus.memory_total_mib) * 100) : 0;
-    cards.push(
-      ['GPUs free', `${data.gpus.free} / ${data.gpus.total}`,
-        `${data.gpus.avg_utilization_percent.toFixed(0)}% busy · ${used}% memory`,
-        data.gpus.free ? 'ok' : 'warn'],
-    );
+    cards.push({
+      label: 'GPU utilization',
+      value: data.gpus.total ? `${data.gpus.avg_utilization_percent.toFixed(0)}%` : '—',
+      note: data.gpus.total ? `${data.gpus.free} of ${data.gpus.total} free · ${used}% memory` : 'no GPUs reporting',
+      tone: 'violet', iconId: 'i-gpus',
+    });
   }
-  if (data.models) {
-    cards.push(
-      ['Models serving', data.models.running,
-        `${data.models.available} available of ${data.models.registered} registered`,
-        data.models.failed ? 'crit' : 'ok'],
-    );
+  if (data.fleet && cards.length < 4) {
+    cards.push({
+      label: 'Nodes online', value: `${data.fleet.online} / ${data.fleet.total}`,
+      note: data.fleet.offline ? `${data.fleet.offline} offline` : 'full fleet reporting',
+      tone: data.fleet.offline ? 'red' : 'green', iconId: 'i-nodes',
+    });
   }
-  if (data.gateway) {
-    cards.push(
-      ['Gateway requests', data.gateway.requests.toLocaleString(),
-        `${(data.gateway.prompt_tokens + data.gateway.completion_tokens).toLocaleString()} tokens · ` +
-        `${data.gateway.avg_latency_ms.toFixed(0)}ms avg`, 'ok'],
-    );
+
+  // The hero's status reflects open alerts, so "System healthy" is a claim the platform
+  // can back, not decoration. Without alert.view it falls back to the fleet.
+  const alertSummary = await updateAlertBadge();
+  let heroStatus;
+  if (alertSummary) {
+    heroStatus = alertSummary.CRITICAL
+      ? `<span class="pill pill-crit">${alertSummary.CRITICAL} critical alert(s)</span>`
+      : alertSummary.total
+        ? `<span class="pill pill-warn">${alertSummary.total} open alert(s)</span>`
+        : '<span class="pill pill-ok">System healthy</span>';
+  } else if (data.fleet) {
+    heroStatus = data.fleet.offline
+      ? `<span class="pill pill-warn">${data.fleet.offline} node(s) offline</span>`
+      : '<span class="pill pill-ok">All nodes reporting</span>';
+  } else {
+    heroStatus = '';
   }
+  const firstName = (currentUser?.full_name || currentUser?.username || '').split(' ')[0];
+  const hero = `
+    <div class="hero">
+      ${heroStatus}
+      <h2>Welcome back${firstName ? `, ${esc(firstName)}` : ''}</h2>
+      <p>Manage, deploy and monitor your private AI infrastructure.</p>
+    </div>`;
 
   // Synthetic capacity must never read as real. Called out above the fold rather than
   // as a badge somewhere in a table.
@@ -203,23 +235,17 @@ async function renderDashboard() {
        </div>` : '';
 
   document.getElementById('dashboard-body').innerHTML = `
+    ${hero}
     ${syntheticWarning}
     <div class="row g-3 mb-4">
-      ${cards.map(([label, value, note, band]) => `
-        <div class="col-6 col-lg-3">
-          <div class="stat-card">
-            <div class="stat-value dash-${band}">${esc(value)}</div>
-            <div class="stat-label">${esc(label)}</div>
-            <div class="small text-secondary mt-1">${esc(note)}</div>
-          </div>
-        </div>`).join('')}
+      ${cards.map(kpiTile).join('')}
     </div>
 
     ${data.gateway ? `
       <div class="row g-3">
         <div class="col-lg-7">
           <div class="stat-card">
-            <div class="stat-label mb-2">Gateway traffic</div>
+            <div class="card-title-sm">Gateway traffic</div>
             <canvas id="usage-chart" height="130"></canvas>
             <div id="usage-chart-empty" class="empty-state d-none">
               <div class="empty-state-text">
@@ -231,7 +257,7 @@ async function renderDashboard() {
         </div>
         <div class="col-lg-5">
           <div class="stat-card">
-            <div class="stat-label mb-2">Busiest models</div>
+            <div class="card-title-sm">Busiest models</div>
             ${data.gateway.top_models.length ? `
               <table class="table table-sm align-middle mb-0">
                 <tbody>${data.gateway.top_models.map((m) => `
@@ -249,7 +275,7 @@ async function renderDashboard() {
 
     ${data.activity ? `
       <div class="stat-card mt-3">
-        <div class="stat-label mb-2">Recent activity</div>
+        <div class="card-title-sm">Recent activity</div>
         ${data.activity.length ? `
           <table class="table table-sm align-middle mb-0">
             <tbody>${data.activity.map((a) => `
@@ -292,14 +318,14 @@ function drawUsageChart(series) {
         // across the whole plot — a solid block that reads as a rendering fault rather
         // than as "four requests, once".
         { label: 'Requests', data: series.map((p) => p.requests),
-          backgroundColor: '#2ea043', maxBarThickness: 44, yAxisID: 'y' },
+          backgroundColor: 'rgba(79, 70, 229, .85)', borderRadius: 6, maxBarThickness: 44, yAxisID: 'y' },
         // `pointRadius: 0` is right for a dense line and wrong for a sparse one: a line
         // needs two points to draw anything, so a single hour of traffic rendered as
         // nothing at all while the legend still advertised "Tokens".
         { label: 'Tokens', data: series.map((p) => p.tokens), type: 'line',
-          borderColor: '#58a6ff', tension: .3, borderWidth: 2, yAxisID: 'y1',
+          borderColor: '#06b6d4', tension: .3, borderWidth: 2, yAxisID: 'y1',
           pointRadius: series.filter((p) => p.tokens > 0).length === 1 ? 3 : 0,
-          pointBackgroundColor: '#58a6ff' },
+          pointBackgroundColor: '#06b6d4' },
       ],
     },
     options: {
@@ -1139,7 +1165,7 @@ async function showGpuChart(gpuId, gpuName) {
         { label: 'Utilisation %', data: series.samples.map((s) => s.utilization_percent),
           borderColor: '#2ea043', tension: .3, pointRadius: 0, borderWidth: 2 },
         { label: 'Memory %', data: series.samples.map((s) => s.memory_utilization_percent),
-          borderColor: '#58a6ff', tension: .3, pointRadius: 0, borderWidth: 2 },
+          borderColor: '#06b6d4', tension: .3, pointRadius: 0, borderWidth: 2 },
         { label: 'Temp °C', data: series.samples.map((s) => s.temperature_celsius),
           borderColor: '#d29922', tension: .3, pointRadius: 0, borderWidth: 2 },
       ],
@@ -2430,8 +2456,322 @@ function memoryRow(entry, tenant) {
 /* -------------------------------------------------------------------------- */
 /* Navigation and polling                                                     */
 /* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/* Shared E1 helpers                                                          */
+/* -------------------------------------------------------------------------- */
+
+/** The signed-in user, from /auth/me. Used to hide controls a user cannot use — a
+ *  rendering convenience only; every action is re-authorised server-side. */
+let currentUser = null;
+const can = (permission) =>
+  Boolean(currentUser && (currentUser.is_superuser || (currentUser.permissions || []).includes(permission)));
+
+/** Status -> pill. Unknown states render neutral rather than green: a state the UI has
+ *  never heard of has demonstrated nothing. */
+const PILL_TONE = {
+  HEALTHY: 'ok', RUNNING: 'ok', ONLINE: 'ok', AVAILABLE: 'ok', RESOLVED: 'ok', INDEXED: 'ok',
+  UNHEALTHY: 'crit', FAILED: 'crit', OFFLINE: 'crit', CRITICAL: 'crit',
+  DEGRADED: 'warn', WARNING: 'warn', ACKNOWLEDGED: 'warn', STARTING: 'warn',
+  ACTIVE: 'crit', INFO: 'info',
+};
+const pill = (status, label) =>
+  `<span class="pill pill-${PILL_TONE[status] || 'idle'}">${esc(label ?? titleCase(status))}</span>`;
+const titleCase = (s) => String(s || '').toLowerCase().replace(/(^|_)(\w)/g, (_, sep, c) => (sep ? ' ' : '') + c.toUpperCase());
+
+const icon = (id) => `<svg aria-hidden="true"><use href="#${id}"/></svg>`;
+
+/** A KPI tile in the E1 style: tinted icon, label, figure, note. */
+const kpiTile = ({ label, value, note = '', tone = 'blue', iconId = 'i-pulse', valueClass = '' }) => `
+  <div class="col-sm-6 col-xl-3">
+    <div class="stat-card tone-${tone} h-100">
+      <div class="kpi">
+        <div class="kpi-icon">${icon(iconId)}</div>
+        <div class="min-w-0">
+          <div class="stat-label">${esc(label)}</div>
+          <div class="stat-value ${valueClass}">${esc(value)}</div>
+          ${note ? `<div class="kpi-note">${esc(note)}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+/* -------------------------------------------------------------------------- */
+/* Alerts (E1)                                                                */
+/* -------------------------------------------------------------------------- */
+async function updateAlertBadge() {
+  const badge = document.getElementById('alert-badge');
+  if (!can('alert.view')) { badge.classList.add('d-none'); return null; }
+  try {
+    const summary = await api('/alerts/summary');
+    badge.textContent = summary.total;
+    badge.classList.toggle('d-none', summary.total === 0);
+    return summary;
+  } catch {
+    // The badge is a hint; a failure here must not break whatever page is rendering.
+    return null;
+  }
+}
+
+async function renderAlerts() {
+  const body = document.getElementById('alerts-body');
+  if (!can('alert.view')) {
+    body.innerHTML = empty('You do not have permission to view alerts (alert.view).');
+    return;
+  }
+  const filter = document.getElementById('alert-filter').value;
+  const params = new URLSearchParams({ limit: '100' });
+  if (filter === 'open') params.set('open', 'true');
+  else if (filter !== 'all') params.set('state', filter);
+
+  const [page, summary] = await Promise.all([api(`/alerts?${params}`), updateAlertBadge()]);
+  const manage = can('alert.manage');
+
+  const tiles = summary ? `
+    <div class="row g-3 mb-4">
+      ${kpiTile({ label: 'Open alerts', value: summary.total, tone: summary.total ? 'red' : 'green',
+                  iconId: 'i-alerts', note: summary.total ? 'needs attention' : 'all clear' })}
+      ${kpiTile({ label: 'Critical', value: summary.CRITICAL, tone: 'red', iconId: 'i-alerts' })}
+      ${kpiTile({ label: 'Warning', value: summary.WARNING, tone: 'amber', iconId: 'i-alerts' })}
+      ${kpiTile({ label: 'Info', value: summary.INFO, tone: 'blue', iconId: 'i-alerts' })}
+    </div>` : '';
+
+  body.innerHTML = tiles + (page.items.length ? `
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead><tr>
+            <th>Severity</th><th>Alert</th><th>Source</th><th class="text-end">Seen</th>
+            <th>Last seen</th><th>State</th><th></th>
+          </tr></thead>
+          <tbody>${page.items.map((a) => alertRow(a, manage)).join('')}</tbody>
+        </table>
+      </div>
+    </div>` : empty(filter === 'open'
+      ? 'No open alerts. The platform raises one when a backend stops answering or a deployment fails.'
+      : 'No alerts match this filter.'));
+
+  body.querySelectorAll('[data-alert-action]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      await api(`/alerts/${button.dataset.alertId}/${button.dataset.alertAction}`, { method: 'POST' });
+      await refresh({ force: true });
+    });
+  });
+}
+
+function alertRow(a, manage) {
+  const actions = manage && a.state !== 'RESOLVED' ? `
+    ${a.state === 'ACTIVE' ? `<button class="btn btn-sm btn-outline-secondary" data-alert-action="acknowledge"
+        data-alert-id="${esc(a.id)}">Acknowledge</button>` : ''}
+    <button class="btn btn-sm btn-outline-primary" data-alert-action="resolve"
+        data-alert-id="${esc(a.id)}">Resolve</button>` : '';
+  return `
+    <tr>
+      <td>${pill(a.severity)}</td>
+      <td>
+        <div class="fw-semibold">${esc(a.title)}</div>
+        ${a.message ? `<div class="small text-secondary">${esc(a.message)}</div>` : ''}
+      </td>
+      <td class="small text-secondary">${esc(titleCase(a.source))}</td>
+      <td class="text-end small">${a.occurrences > 1 ? `${a.occurrences}×` : 'once'}</td>
+      <td class="small text-secondary" title="${esc(a.last_seen_at)}">${esc(ago(a.last_seen_at))}</td>
+      <td>${pill(a.state)}</td>
+      <td class="text-end text-nowrap">${actions}</td>
+    </tr>`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Inference backends (E1)                                                    */
+/* -------------------------------------------------------------------------- */
+const BACKEND_TYPE_LABEL = { vllm: 'vLLM', ollama: 'Ollama', openai_compatible: 'OpenAI-compatible' };
+
+async function renderBackends() {
+  const body = document.getElementById('backends-body');
+  const addButton = document.querySelector('[data-bs-target="#backend-modal"]');
+  addButton.classList.toggle('d-none', !can('backend.manage'));
+  if (!can('backend.view')) {
+    body.innerHTML = empty('You do not have permission to view inference backends (backend.view).');
+    return;
+  }
+  const page = await api('/backends?limit=200');
+  const items = page.items;
+  const healthy = items.filter((b) => b.status === 'HEALTHY').length;
+  const unhealthy = items.filter((b) => b.status === 'UNHEALTHY').length;
+  const models = items.reduce((n, b) => n + (b.model_count || 0), 0);
+  const checked = items.filter((b) => b.last_latency_ms != null && b.status === 'HEALTHY');
+  const latency = checked.length
+    ? `${Math.round(checked.reduce((n, b) => n + b.last_latency_ms, 0) / checked.length)} ms` : '—';
+
+  const tiles = `
+    <div class="row g-3 mb-4">
+      ${kpiTile({ label: 'Backends', value: items.length, tone: 'blue', iconId: 'i-backends',
+                  note: `${items.filter((b) => b.enabled).length} enabled` })}
+      ${kpiTile({ label: 'Healthy', value: `${healthy} / ${items.length}`, tone: unhealthy ? 'red' : 'green',
+                  iconId: 'i-check', note: unhealthy ? `${unhealthy} unreachable` : 'all reachable' })}
+      ${kpiTile({ label: 'Models served', value: models, tone: 'violet', iconId: 'i-models',
+                  note: 'as reported at last check' })}
+      ${kpiTile({ label: 'Avg. response', value: latency, tone: 'amber', iconId: 'i-pulse',
+                  note: 'model list, healthy backends' })}
+    </div>`;
+
+  body.innerHTML = tiles + (items.length
+    ? `<div class="tile-grid">${items.map(backendTile).join('')}</div>`
+    : empty('No inference backends yet. Add the vLLM, Ollama or OpenAI-compatible servers you ' +
+            'already run, and the platform will watch their health and can catalogue their models.'));
+  wireBackendActions();
+}
+
+function backendTile(b) {
+  const manage = can('backend.manage');
+  const status = b.enabled ? b.status : 'DISABLED';
+  return `
+    <div class="tile tone-blue">
+      <div class="tile-head">
+        <div class="kpi-icon" style="width:2.6rem;height:2.6rem">${icon('i-backends')}</div>
+        <div class="min-w-0 flex-grow-1">
+          <div class="tile-title text-truncate" title="${esc(b.name)}">${esc(b.name)}</div>
+          <div class="tile-sub">${esc(b.base_url)}</div>
+        </div>
+        ${pill(status)}
+      </div>
+      <div>
+        <span class="chip">${esc(BACKEND_TYPE_LABEL[b.backend_type] || b.backend_type)}</span>
+        ${b.version ? `<span class="chip">v${esc(b.version)}</span>` : ''}
+        ${b.has_api_key ? '<span class="chip">API key</span>' : ''}
+        ${b.verify_tls ? '' : '<span class="chip">TLS not verified</span>'}
+      </div>
+      ${b.description ? `<div class="small text-secondary">${esc(b.description)}</div>` : ''}
+      <div class="tile-meta">
+        <div><div class="v">${b.model_count ?? '—'}</div><div class="k">models</div></div>
+        <div><div class="v">${b.last_latency_ms != null ? `${Math.round(b.last_latency_ms)} ms` : '—'}</div>
+             <div class="k">response</div></div>
+        <div><div class="v">${esc(ago(b.last_checked_at))}</div><div class="k">last check</div></div>
+      </div>
+      ${b.status_detail && status !== 'HEALTHY'
+        ? `<div class="small ${status === 'UNHEALTHY' ? 'text-danger' : 'text-secondary'}">${esc(b.status_detail)}</div>` : ''}
+      <div class="tile-actions">
+        ${manage ? `<button class="btn btn-sm btn-primary" data-be-test="${esc(b.id)}">Test</button>` : ''}
+        <button class="btn btn-sm btn-outline-primary" data-be-models="${esc(b.id)}"
+                data-be-name="${esc(b.name)}" ${b.enabled ? '' : 'disabled'}>Models</button>
+        ${manage ? `
+          <button class="btn btn-sm btn-outline-secondary" data-be-toggle="${esc(b.id)}"
+                  data-be-enabled="${b.enabled}">${b.enabled ? 'Disable' : 'Enable'}</button>
+          <button class="btn btn-sm btn-outline-danger ms-auto" data-be-delete="${esc(b.id)}" title="Remove this backend"
+                  data-be-name="${esc(b.name)}">Remove</button>` : ''}
+      </div>
+    </div>`;
+}
+
+function wireBackendActions() {
+  document.querySelectorAll('[data-be-test]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      const result = await api(`/backends/${button.dataset.beTest}/test`, { method: 'POST' });
+      if (result.ok) {
+        alert(`Reachable in ${Math.round(result.latency_ms)} ms · ${result.model_count} model(s)` +
+          (result.version ? ` · version ${result.version}` : ''), 'success');
+      } else {
+        alert(`Not reachable: ${result.error}`);
+      }
+      await refresh({ force: true });
+      updateAlertBadge();
+    });
+  });
+  document.querySelectorAll('[data-be-toggle]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      const enabled = button.dataset.beEnabled !== 'true';
+      await api(`/backends/${button.dataset.beToggle}`, {
+        method: 'PATCH', body: JSON.stringify({ enabled }),
+      });
+      await refresh({ force: true });
+      updateAlertBadge();
+    });
+  });
+  document.querySelectorAll('[data-be-delete]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(`Remove backend ${button.dataset.beName}? Models discovered on it stay in the catalogue.`)) return;
+      const result = await api(`/backends/${button.dataset.beDelete}`, { method: 'DELETE' });
+      alert(result.message, 'success');
+      await refresh({ force: true });
+      updateAlertBadge();
+    });
+  });
+  document.querySelectorAll('[data-be-models]').forEach((button) => {
+    button.onclick = () => guard(button, () => openDiscover(button.dataset.beModels, button.dataset.beName));
+  });
+}
+
+async function openDiscover(backendId, backendName) {
+  document.getElementById('discover-title').textContent = `Models on ${backendName}`;
+  const body = document.getElementById('discover-body');
+  const register = document.getElementById('discover-register');
+  body.innerHTML = '<div class="small text-secondary">Asking the backend…</div>';
+  register.classList.toggle('d-none', !(can('backend.manage') && can('model.register')));
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('discover-modal')).show();
+
+  try {
+    const models = await api(`/backends/${backendId}/models`);
+    body.innerHTML = models.length ? `
+      <table class="table table-sm align-middle">
+        <thead><tr><th>Served as</th><th>Catalogue name</th><th>In catalogue</th></tr></thead>
+        <tbody>${models.map((m) => `
+          <tr>
+            <td class="mono">${esc(m.id)}</td>
+            <td class="mono small">${esc(m.platform_name)}</td>
+            <td>${m.registered ? pill('AVAILABLE', 'Registered') : pill('UNKNOWN', 'Not yet')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : empty('This backend reports no models.');
+    register.disabled = !models.length;
+  } catch (err) {
+    body.innerHTML = `<div class="alert alert-danger small mb-0">${esc(err.message)}</div>`;
+    register.disabled = true;
+  }
+
+  register.onclick = () => guard(register, async () => {
+    try {
+      const rows = await api(`/backends/${backendId}/models/register`, {
+        method: 'POST', body: JSON.stringify({}),
+      });
+      const added = rows.filter((r) => r.status === 'registered' || r.status === 'linked').length;
+      body.insertAdjacentHTML('afterbegin',
+        `<div class="alert alert-success small">${added} model(s) registered or linked. ` +
+        'Deploy one from the Model Registry to serve it through the gateway.</div>');
+    } catch (err) {
+      body.insertAdjacentHTML('afterbegin', `<div class="alert alert-danger small">${esc(err.message)}</div>`);
+    }
+  });
+}
+
+onModalSubmit('backend-form', 'backend-error', async (form) => {
+  const key = document.getElementById('be-key').value;
+  const backend = await api('/backends', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: field('be-name'),
+      backend_type: document.getElementById('be-type').value,
+      base_url: field('be-url'),
+      api_key: key || null,
+      timeout_seconds: numberField('be-timeout') || 10,
+      verify_tls: document.getElementById('be-tls').checked,
+      description: field('be-desc') || null,
+    }),
+  });
+  closeModal('backend-modal');
+  form.reset();
+  // Check straight away, so the tile shows a real status instead of "Unknown" for a minute.
+  try {
+    await api(`/backends/${backend.id}/test`, { method: 'POST' });
+  } catch { /* the tile will show the outcome either way */ }
+  alert(`Added ${backend.name}.`, 'success');
+  await refresh({ force: true });
+  updateAlertBadge();
+});
+
+document.getElementById('alert-filter').addEventListener('change', () => refresh({ force: true }));
+
 const RENDERERS = {
   dashboard: renderDashboard,
+  alerts: renderAlerts,
+  backends: renderBackends,
   agents: renderAgents,
   skills: renderSkills,
   tools: renderTools,
@@ -2459,6 +2799,7 @@ async function refresh({ force = false } = {}) {
 
   try {
     await RENDERERS[currentPage]();
+    if (currentPage !== 'alerts') updateAlertBadge();
     document.getElementById('poll-status').textContent = `updated ${new Date().toLocaleTimeString()}`;
   } catch (err) {
     if (!/Session expired/.test(err.message)) alert(err.message);
@@ -2492,6 +2833,8 @@ function stopPolling() {
 /* -------------------------------------------------------------------------- */
 function showLogin() {
   stopPolling();
+  currentUser = null;
+  document.body.classList.remove('app-active');
   document.getElementById('login-view').classList.remove('d-none');
   document.getElementById('app-view').classList.add('d-none');
   document.getElementById('user-badge').classList.add('d-none');
@@ -2501,8 +2844,17 @@ function showLogin() {
 
 async function showApp() {
   const me = await api('/auth/me');
+  currentUser = me;
+  document.body.classList.add('app-active');
   document.getElementById('login-view').classList.add('d-none');
   document.getElementById('app-view').classList.remove('d-none');
+
+  const displayName = me.full_name || me.username;
+  document.getElementById('sidebar-user-name').textContent = displayName;
+  document.getElementById('sidebar-avatar').textContent = (displayName || '?').trim().charAt(0).toUpperCase();
+  const roleNames = (me.roles || []).map((r) => (typeof r === 'string' ? r : r.name)).filter(Boolean);
+  document.getElementById('sidebar-user-role').textContent =
+    me.is_superuser ? 'Superuser' : titleCase(roleNames[0] || 'user');
 
   const badge = document.getElementById('user-badge');
   badge.textContent = me.is_superuser ? `${me.username} · superuser` : me.username;
@@ -3053,8 +3405,8 @@ onModalSubmit('voice-config-form', 'voice-error', async () => {
 /* -------------------------------------------------------------------------- */
 /* Colour theme                                                               */
 /* -------------------------------------------------------------------------- */
-/* Dark is the default and stays the default: this is watched for hours at a time, and
-   the status palette was chosen against a dark surface. The choice is remembered per
+/* Light is the default since E1, matching the console's design; dark is one click away
+   for a wall display watched for hours. The choice is remembered per
    browser rather than per user — it is a property of the screen someone is sitting at,
    not of the account, and the same operator on a wall display and a laptop wants
    different answers. */
@@ -3085,7 +3437,7 @@ onModalSubmit('voice-config-form', 'voice-error', async () => {
     // Private browsing, or storage disabled by policy. Not worth failing over: the
     // default is still correct, the choice simply will not survive a reload.
   }
-  apply(stored === 'light' ? 'light' : 'dark');
+  apply(stored === 'dark' ? 'dark' : 'light');
 
   button.addEventListener('click', () => {
     const next = root.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';

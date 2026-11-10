@@ -7,7 +7,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | # | Feature | Plan priority | Status | Where | Gap to close |
 |---|---|---|---|---|---|
 | 1 | Unified dashboard | P0 | Partial | `api/v1/dashboard.py`, `services/dashboard.py`, `frontend/admin` | Time range, alerts, ingestion and agent failure counts, "unavailable" vs zero audit |
-| 2 | Backend registry | P0 | Partial | `services/llm_provider.py`, `POST /models/import-ollama` | `inference_backends` table, test connection, discovery, capabilities, Backends page |
+| 2 | Backend registry | P0 | Existing (E1) | `services/inference_backends.py`, `api/v1/backends.py`, `core/url_policy.py` | Gateway use of backend API keys (E2); deploy/stop/metrics capabilities |
 | 3 | Model registry | P0 | Partial | `models/models_registry.py`, `services/model_registry.py` | License, approval status (approved/experimental/deprecated/blocked), version grouping, team access, offline manifest import UI (`models/manifests/` exists) |
 | 4 | OpenAI-compatible gateway | P0 | Existing | `api/v1/gateway.py`, `services/gateway.py` | Circuit breaker, fallback policy, per-model concurrency |
 | 5 | API key management | P0 | Existing | `services/api_keys.py`, `frontend/developer` | Expiry and allowed-alias scopes: verify against `test_api_key_scopes.py` |
@@ -30,7 +30,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 22 | Advanced chargeback | P2 | Partial | per-user attribution (`services/identity.py`) | Rates, reports |
 | 23 | Large connector catalogue | P2 | Planned | `mcp/manifests/` (3) | More connectors |
 | 24 | Teams / tenant isolation | (5.12) | Partial | `tenant_id` on knowledge only | Teams, memberships, scope on all resources |
-| 25 | In-app alerts | (5.15) | Planned | Prometheus rules only | `alerts` table, Alerts page |
+| 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | GPU-threshold alerts, notification channels |
 | 26 | Settings page | (§6) | Partial | `models/system.py` | UI |
 | 27 | Diagnostics bundle | (5.16) | Planned | none | Redacted support bundle |
 | 28 | Speech, OCR, voice | (beyond plan) | Existing | `services/voice.py`, `media_provider.py` | none |

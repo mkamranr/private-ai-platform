@@ -11,8 +11,10 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     agents,
+    alerts,
     audit,
     auth,
+    backends,
     dashboard,
     health,
     infrastructure,
@@ -49,6 +51,9 @@ api_router.include_router(monitoring.router)
 # the WebSocket in app.api.voice_ws, which is not a REST resource and is mounted in
 # app.main alongside /metrics.
 api_router.include_router(voice.router)
+# E1: inference backends and in-app alerts.
+api_router.include_router(backends.router)
+api_router.include_router(alerts.router)
 
 # The OpenAI-compatible gateway is deliberately NOT here. It mounts at `/v1` in
 # app.main, because the SDK derives its paths from base_url and `GET {base}/models`

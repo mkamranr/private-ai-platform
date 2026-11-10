@@ -11,7 +11,7 @@
   Phase 1 covers Infrastructure: Nodes, GPUs, Containers. The remaining §M21 sections
   arrive with their modules.
 -->
-<html lang="en" data-bs-theme="dark">
+<html lang="en" data-bs-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -63,6 +63,14 @@
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.4" cy="8.4" r="3.4"/><path d="M3.4 19.4c0-3.1 2.7-5.2 6-5.2s6 2.1 6 5.2"/><path d="M16 5.4a3.2 3.2 0 0 1 0 6M17.6 14.6c2 .7 3.4 2.4 3.4 4.8"/></symbol>
     <symbol id="i-audit" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.6" y="3.4" width="14.8" height="17.2" rx="2"/><path d="M8.4 8.2h7.2M8.4 12h7.2M8.4 15.8h4.4"/></symbol>
+    <symbol id="i-backends" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.8" width="17.6" height="7" rx="1.8"/><rect x="3.2" y="13.2" width="17.6" height="7" rx="1.8"/><path d="M7 7.3h.01M7 16.7h.01" stroke-width="2.2"/><path d="M11 7.3h6M11 16.7h6"/></symbol>
+    <symbol id="i-alerts" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.2 16.6V11a5.8 5.8 0 0 1 11.6 0v5.6l1.6 1.8H4.6l1.6-1.8Z"/><path d="M10 20.4a2.1 2.1 0 0 0 4 0"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 5 12 2.5-6H21"/></symbol>
   </defs>
 </svg>
 
@@ -147,9 +155,29 @@
 <div id="app-view" class="d-none">
   <div class="d-flex">
     <aside class="sidebar border-end border-secondary-subtle p-3">
+      <a class="sidebar-brand" href="#dashboard">
+        <span class="sidebar-brand-logo">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 2.4 4.4 5.3v6c0 4.5 3.1 8.7 7.6 10.3 4.5-1.6 7.6-5.8 7.6-10.3v-6L12 2.4Z"
+                  stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            <circle cx="12" cy="8.6" r="1.5" fill="currentColor"/>
+            <circle cx="8.4" cy="14.2" r="1.5" fill="currentColor"/>
+            <circle cx="15.6" cy="14.2" r="1.5" fill="currentColor"/>
+            <path d="M12 8.6 8.4 14.2m3.6-5.6 3.6 5.6m-7.2 0h7.2" stroke="currentColor"
+                  stroke-width="1.1" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span>
+          <span class="sidebar-brand-name d-block">Private AI Platform</span>
+          <span class="sidebar-brand-tag d-block">Your AI. Your infrastructure.</span>
+        </span>
+      </a>
       <div class="nav-section">Overview</div>
       <a class="nav-item active" data-page="dashboard" href="#dashboard"><svg class="nav-icon" aria-hidden="true"><use href="#i-dashboard"/></svg>Dashboard</a>
       <a class="nav-item" data-page="chat" href="#chat"><svg class="nav-icon" aria-hidden="true"><use href="#i-chat"/></svg>Chat</a>
+      <a class="nav-item" data-page="alerts" href="#alerts"><svg class="nav-icon" aria-hidden="true"><use href="#i-alerts"/></svg>
+        Alerts <span id="alert-badge" class="badge text-bg-danger d-none">0</span>
+      </a>
 
       <div class="nav-section mt-4">Infrastructure</div>
       <a class="nav-item" data-page="nodes" href="#nodes"><svg class="nav-icon" aria-hidden="true"><use href="#i-nodes"/></svg>Nodes</a>
@@ -158,6 +186,7 @@
 
       <div class="nav-section mt-4">AI Models</div>
       <a class="nav-item" data-page="models" href="#models"><svg class="nav-icon" aria-hidden="true"><use href="#i-models"/></svg>Model Registry</a>
+      <a class="nav-item" data-page="backends" href="#backends"><svg class="nav-icon" aria-hidden="true"><use href="#i-backends"/></svg>Inference Backends</a>
       <a class="nav-item" data-page="deployments" href="#deployments"><svg class="nav-icon" aria-hidden="true"><use href="#i-deployments"/></svg>Deployments</a>
       <a class="nav-item" data-page="endpoints" href="#endpoints"><svg class="nav-icon" aria-hidden="true"><use href="#i-endpoints"/></svg>Endpoints &amp; Keys</a>
 
@@ -178,6 +207,14 @@
       <a class="nav-item" href="/voice/" target="_blank" rel="noopener"><svg class="nav-icon" aria-hidden="true"><use href="#i-external"/></svg>Open Assistant ↗</a>
       <a class="nav-item" data-page="users" href="#users"><svg class="nav-icon" aria-hidden="true"><use href="#i-users"/></svg>Users &amp; Roles</a>
       <a class="nav-item" data-page="audit" href="#audit"><svg class="nav-icon" aria-hidden="true"><use href="#i-audit"/></svg>Audit Log</a>
+
+      <div class="sidebar-user">
+        <span id="sidebar-avatar" class="sidebar-avatar">?</span>
+        <span class="min-w-0">
+          <span id="sidebar-user-name" class="sidebar-user-name d-block text-truncate"></span>
+          <span id="sidebar-user-role" class="sidebar-user-role d-block"></span>
+        </span>
+      </div>
     </aside>
 
     <main class="flex-grow-1 p-4">
@@ -185,8 +222,11 @@
 
       <!-- Dashboard -->
       <section id="page-dashboard" class="page">
-        <div class="d-flex align-items-center mb-3">
-          <h4 class="mb-0">Dashboard</h4>
+        <div class="page-header">
+          <div>
+            <h4 class="mb-0">Dashboard</h4>
+            <p class="page-subtitle">Health, capacity and activity across the platform</p>
+          </div>
           <select id="dash-window" class="form-select form-select-sm ms-auto" style="width:auto">
             <option value="24" selected>Last 24 hours</option>
             <option value="6">Last 6 hours</option>
@@ -194,6 +234,44 @@
           </select>
         </div>
         <div id="dashboard-body"></div>
+      </section>
+
+      <!-- Alerts (E1) -->
+      <section id="page-alerts" class="page d-none">
+        <div class="page-header">
+          <div>
+            <h4 class="mb-0">Alerts</h4>
+            <p class="page-subtitle">Problems the platform has detected, newest first. Repeats are
+              counted on one alert rather than listed again.</p>
+          </div>
+          <div class="page-actions">
+            <select id="alert-filter" class="form-select form-select-sm" style="width:auto"
+                    aria-label="Which alerts to show">
+              <option value="open" selected>Open</option>
+              <option value="ACTIVE">Active</option>
+              <option value="ACKNOWLEDGED">Acknowledged</option>
+              <option value="RESOLVED">Resolved</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+        </div>
+        <div id="alerts-body"></div>
+      </section>
+
+      <!-- Inference backends (E1) -->
+      <section id="page-backends" class="page d-none">
+        <div class="page-header">
+          <div>
+            <h4 class="mb-0">Inference Backends</h4>
+            <p class="page-subtitle">Servers that already serve models: vLLM, Ollama or any
+              OpenAI-compatible endpoint. Enabled backends are health-checked automatically.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#backend-modal">
+              + Add backend</button>
+          </div>
+        </div>
+        <div id="backends-body"></div>
       </section>
 
       <!-- Chat -->
@@ -871,6 +949,85 @@
 </div>
 
 <!-- Register model modal ----------------------------------------------------->
+<!-- Add an inference backend (E1) -->
+<div class="modal fade" id="backend-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="backend-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Add inference backend</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="be-name">Name</label>
+              <input class="form-control" id="be-name" placeholder="gpu-01-vllm" required
+                     maxlength="128" pattern="[A-Za-z0-9._ \-]+">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="be-type">Type</label>
+              <select class="form-select" id="be-type">
+                <option value="vllm">vLLM</option>
+                <option value="ollama">Ollama</option>
+                <option value="openai_compatible">OpenAI-compatible</option>
+              </select>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="be-url">Base URL</label>
+              <input class="form-control" id="be-url" placeholder="http://gpu-01:8000" required>
+              <div class="form-text small">From inside the platform's containers <code>localhost</code>
+                is the container itself, so use <code>host.docker.internal</code> or the server's
+                address. A trailing <code>/v1</code> is removed automatically.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="be-key">API key (optional)</label>
+              <input class="form-control" id="be-key" type="password" autocomplete="off">
+              <div class="form-text small">Stored encrypted and never shown again.</div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary" for="be-timeout">Timeout (s)</label>
+              <input class="form-control" id="be-timeout" type="number" min="1" max="300" value="10">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="be-tls" checked>
+                <label class="form-check-label small" for="be-tls">Verify TLS</label>
+              </div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="be-desc">Description</label>
+              <input class="form-control" id="be-desc" maxlength="2000">
+            </div>
+          </div>
+          <div id="backend-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" type="submit">Add backend</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Models discovered on a backend (E1) -->
+<div class="modal fade" id="discover-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="discover-title">Models on backend</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="discover-body"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="discover-register">Register all in catalogue</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="model-modal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">

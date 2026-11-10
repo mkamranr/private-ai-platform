@@ -30,6 +30,7 @@ import yaml
 from app.config.settings import EXTERNAL_RUNTIMES, Settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.core.url_policy import PUBLIC_AI_HOSTS
 from app.models.audit import AuditAction
 from app.models.auth import User
 from app.models.models_registry import Model, ModelFile, ModelStatus, ModelType
@@ -86,22 +87,9 @@ class _DirectoryScan:
 #: Hosts that are, by definition, somebody else's computer. Registering one would send
 #: prompts, documents and recorded speech off the premises — which is the single thing
 #: this platform exists to prevent, and which an air-gapped site could not do anyway
-#: (Rule 4, §M23). Matched on the registrable suffix so a subdomain cannot slip past.
-_PUBLIC_AI_HOSTS = (
-    "openai.com",
-    "openai.azure.com",
-    "anthropic.com",
-    "elevenlabs.io",
-    "googleapis.com",
-    "google.com",
-    "cognitiveservices.azure.com",
-    "azure.com",
-    "amazonaws.com",
-    "deepgram.com",
-    "assemblyai.com",
-    "speechmatics.com",
-    "huggingface.co",
-)
+#: (Rule 4, §M23). The list itself lives in `app.core.url_policy`, shared with the
+#: inference-backend registry so the two cannot drift apart.
+_PUBLIC_AI_HOSTS = PUBLIC_AI_HOSTS
 
 
 def _refuse_public_endpoint(endpoint_url: str) -> None:
@@ -195,6 +183,11 @@ class ModelRegistryService:
         if model is None:
             raise NotFoundError(f"No model with id {model_id}.")
         return model
+
+    async def find_by_name(self, name: str) -> Model | None:
+        """Like `get_model_by_name`, but None instead of a 404 — for callers deciding
+        whether to register or update."""
+        return await self._models.get_by_name(name)
 
     async def get_model_by_name(self, name: str) -> Model:
         model = await self._models.get_by_name(name)

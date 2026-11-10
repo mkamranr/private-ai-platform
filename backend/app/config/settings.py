@@ -605,6 +605,10 @@ class WorkersSettings(BaseModel):
     # Node polling cadence is `gpu.poll_interval_seconds`; these are the jobs that do
     # not track it.
     container_sync_interval_seconds: int = 60
+    #: How often every enabled inference backend is health-checked (E1). Each check is
+    #: one cheap request per backend; a minute means an outage raises an alert within a
+    #: minute without polling anybody's server hard.
+    backend_health_interval_seconds: int = Field(default=60, ge=10, le=3600)
 
 
 class TracingSettings(BaseModel):

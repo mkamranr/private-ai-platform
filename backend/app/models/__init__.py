@@ -65,6 +65,15 @@ from app.models.models_registry import (
     ModelType,
     UsageRecord,
 )
+from app.models.operations import (
+    OPEN_ALERT_STATES,
+    Alert,
+    AlertSeverity,
+    AlertState,
+    BackendStatus,
+    BackendType,
+    InferenceBackend,
+)
 from app.models.system import SystemSetting
 from app.models.voice import (
     TERMINAL_VOICE_STATES,
@@ -76,6 +85,7 @@ from app.models.voice import (
 
 __all__ = [
     "ACTIVE_STATES",
+    "OPEN_ALERT_STATES",
     "TERMINAL_STATES",
     "TERMINAL_VOICE_STATES",
     "Agent",
@@ -84,12 +94,17 @@ __all__ = [
     "AgentSkill",
     "AgentTool",
     "AgentVersion",
+    "Alert",
+    "AlertSeverity",
+    "AlertState",
     "ApiClient",
     "ApiKey",
     "ApprovalState",
     "AuditAction",
     "AuditLog",
     "AuditResult",
+    "BackendStatus",
+    "BackendType",
     "Container",
     "ContainerState",
     "Conversation",
@@ -106,6 +121,7 @@ __all__ = [
     "GpuHealthEvent",
     "GpuMetric",
     "GpuProcess",
+    "InferenceBackend",
     "KnowledgeBase",
     "McpServer",
     "MemoryEntry",

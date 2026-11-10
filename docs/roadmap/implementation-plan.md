@@ -22,19 +22,21 @@ UI, tests, docs, then a phase report.
 Chosen because both are P0, purely additive (no existing behaviour changes) and give the
 dashboard real signals.
 
-- Migration: `inference_backends` (name, type, base_url, auth secret ref (Fernet), tls_verify, timeouts, enabled, last_health, capabilities JSON) and `alerts` (severity, resource, message, state, acknowledged_by).
-- Nullable `model_deployments.backend_id`; backfill from existing external-runtime endpoints. Inline fields remain readable.
-- `InferenceBackend` ABC in `core/interfaces/` with declared capabilities; adapters for vLLM, Ollama and custom OpenAI-compatible endpoints, wrapping existing providers.
-- Routes: `/api/v1/backends` (CRUD, `test`, `discover`) and `/api/v1/alerts` (list, acknowledge, resolve).
-- A shared outbound-URL validator (SSRF) used by backends, external providers and MCP.
-- An APScheduler job health-checks backends and raises or resolves alerts. Deployment failures and GPU thresholds also raise alerts.
-- UI: Backends page, Alerts page, alert count on the dashboard.
-- Permissions: `backends:read|write` and `alerts:read|write`, seeded in `services/seed.py`.
-- Tests: adapter capability mapping, SSRF rejection, authorization per route, alert lifecycle.
+- [x] Migration `2bb97540af22`: `inference_backends` (Fernet-encrypted key, `verify_tls`, timeout, enabled, status, capabilities JSON) and `alerts` (severity, state, fingerprint, occurrences, acknowledged/resolved by).
+- [x] Nullable `models.backend_id` (on the model rather than the deployment: an external backend's models are served without a platform deployment). **No backfill** of existing models.
+- [x] `InferenceBackendAdapter` ABC in `core/interfaces/` with declared capabilities; adapters for vLLM, Ollama and OpenAI-compatible endpoints.
+- [x] Routes: `/api/v1/backends` (CRUD, `test`, `models`, `models/register`) and `/api/v1/alerts` (list, summary, acknowledge, resolve).
+- [x] Shared outbound-URL validator `core/url_policy.py`, used by backends and the model registry. MCP not yet switched over.
+- [x] Worker job `backend_health` raises/resolves alerts; deployment failures raise alerts. GPU-threshold alerts deferred.
+- [x] UI: Backends page, Alerts page, sidebar alert badge, dashboard status from real alert counts. Console restyled (navy sidebar, light theme default).
+- [x] Permissions `backend.view|manage`, `alert.view|manage` (existing dotted naming), seeded and reconciled.
+- [x] Tests: `test_url_policy.py`, `test_backend_adapters.py`, `tests/api/test_backends.py`.
+- [x] Doc: [docs/backends.md](../backends.md). Gateway use of backend API keys moves to E2.
 
 ## E2: Gateway policy and quotas (P0/P1)
 
 - Token-per-minute and daily/monthly budgets per key and per user (Valkey counters, usage records as source of truth).
+- Gateway sends the stored backend API key for models linked by `backend_id`.
 - Per-model concurrency limit; circuit breaker per backend; explicit `fallback_alias` on aliases (never implicit). Record the actual deployment served.
 - Admin Usage page with breakdown by key, user and model.
 

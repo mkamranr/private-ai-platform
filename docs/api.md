@@ -510,3 +510,25 @@ No write verbs exist on `/audit`; all four return 405 from routing.
 | method | path | permission |
 |---|---|---|
 | POST | `/models/import-ollama` | `model.register` — catalogue an external Ollama's models |
+
+## Inference backends and alerts — Expansion E1
+
+Under `/api/v1`, authenticated with the platform JWT. See [backends.md](backends.md).
+
+| method | path | permission |
+|---|---|---|
+| GET | `/backends` | `backend.view` |
+| POST | `/backends` | `backend.manage` — URL passes the outbound-URL policy |
+| GET | `/backends/{id}` | `backend.view` — includes linked model names |
+| PATCH | `/backends/{id}` | `backend.manage` — `api_key: ""` removes the stored key |
+| DELETE | `/backends/{id}` | `backend.manage` — linked models keep working, `backend_id` becomes null |
+| POST | `/backends/{id}/test` | `backend.manage` — live check; updates status and raises/clears the alert |
+| GET | `/backends/{id}/models` | `backend.view` — models the server reports right now |
+| POST | `/backends/{id}/models/register` | `model.register` **and** `backend.manage` |
+| GET | `/alerts` | `alert.view` — filters `state`, `open`, `severity` |
+| GET | `/alerts/summary` | `alert.view` — open counts by severity |
+| POST | `/alerts/{id}/acknowledge` | `alert.manage` — 409 unless `ACTIVE` |
+| POST | `/alerts/{id}/resolve` | `alert.manage` — 409 if already `RESOLVED` |
+
+Backend API keys are stored Fernet-encrypted and never returned; responses carry only
+`has_api_key`.

@@ -23,7 +23,7 @@ from app.core.interfaces.compute import ComputeBackend
 from app.core.logging import get_logger
 from app.core.security import SecretCipher
 from app.models.infrastructure import Node
-from app.models.models_registry import DeploymentState
+from app.models.models_registry import DeploymentState, ModelDeployment
 from app.repositories.audit import AuditRepository
 from app.repositories.infrastructure import (
     ContainerRepository,
@@ -35,6 +35,8 @@ from app.repositories.infrastructure import (
     NodeRepository,
 )
 from app.repositories.models_registry import ModelDeploymentRepository, ModelRepository
+from app.repositories.operations import AlertRepository
+from app.services.alerts import AlertService, deployment_failed_fingerprint
 from app.services.audit import AuditService
 from app.services.compute_backend import DockerComputeBackend
 from app.services.deployment import ComputeBackendFactory, DeploymentService
@@ -135,10 +137,36 @@ class DeploymentWorker:
                         )
                     finally:
                         self._in_flight.discard(key)
+                    if (
+                        str(deployment.state) == DeploymentState.FAILED
+                        and str(before) != DeploymentState.FAILED
+                    ):
+                        await self._alert_failed(session, deployment)
 
                 await session.commit()
         except Exception:
             log.exception("deployment_worker_tick_failed")
+
+    async def _alert_failed(self, session: AsyncSession, deployment: ModelDeployment) -> None:
+        """Raise an in-app alert for a deployment that just failed (E1).
+
+        In a savepoint, so a problem writing the alert rolls back only the alert and
+        never the FAILED state it is reporting on.
+        """
+        try:
+            async with session.begin_nested():
+                audit = AuditService(AuditRepository(session))
+                await AlertService(AlertRepository(session), audit).raise_alert(
+                    fingerprint=deployment_failed_fingerprint(deployment.id),
+                    severity="CRITICAL",
+                    source="deployment",
+                    title="Model deployment failed",
+                    message=deployment.error_message or deployment.state_detail,
+                    resource_type="deployment",
+                    resource_id=str(deployment.id),
+                )
+        except Exception:
+            log.exception("deployment_failure_alert_failed", deployment=str(deployment.id))
 
     async def _report_orphans(self) -> None:
         """Log any managed container without a deployment record. Never removes."""

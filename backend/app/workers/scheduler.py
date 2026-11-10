@@ -10,6 +10,12 @@ Three jobs in Phase 1:
 * **stale node marking** — flag nodes that have stopped reporting, so a host that dies
   between polls does not sit in the UI showing its last-known-good state forever.
 
+E1 adds a fourth:
+
+* **backend health** — test every enabled inference backend, record the result and
+  raise or clear its alert. The same `InferenceBackendService.check` the console's
+  "Test connection" button calls, so the two cannot disagree about what healthy means.
+
 APScheduler rather than Celery, per §M22 — the jobs are periodic and in-process, and a
 broker plus worker fleet would be infrastructure to run, bundle and secure for no gain
 at this scale.
@@ -46,7 +52,10 @@ from app.repositories.infrastructure import (
     GpuRepository,
     NodeRepository,
 )
+from app.repositories.operations import AlertRepository, InferenceBackendRepository
+from app.services.alerts import AlertService
 from app.services.audit import AuditService
+from app.services.inference_backends import InferenceBackendService
 from app.services.infrastructure import GpuService, NodeService
 
 log = get_logger(__name__)
@@ -183,6 +192,30 @@ class InfrastructureWorker:
         except Exception:
             log.exception("stale_node_check_failed")
 
+    async def check_backends(self) -> None:
+        """Health-check every enabled inference backend. Never raises."""
+        try:
+            async with self._session_factory() as session:
+                audit = AuditService(
+                    AuditRepository(session), session_factory=self._session_factory
+                )
+                service = InferenceBackendService(
+                    InferenceBackendRepository(session),
+                    self._cipher,
+                    audit,
+                    AlertService(AlertRepository(session), audit),
+                )
+                results = await service.check_all_enabled()
+                await session.commit()
+            if results:
+                log.info(
+                    "backend_health_completed",
+                    backends=len(results),
+                    unhealthy=sum(1 for _, r in results if not r.ok),
+                )
+        except Exception:
+            log.exception("backend_health_failed")
+
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
         interval = self._settings.gpu.poll_interval_seconds
@@ -213,6 +246,17 @@ class InfrastructureWorker:
             name="Mark nodes that have stopped reporting",
             coalesce=True,
             max_instances=1,
+        )
+
+        backend_interval = self._settings.workers.backend_health_interval_seconds
+        self._scheduler.add_job(
+            self.check_backends,
+            IntervalTrigger(seconds=backend_interval),
+            id="backend_health",
+            name="Health-check enabled inference backends",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=backend_interval,
         )
 
         self._scheduler.start()

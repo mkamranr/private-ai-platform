@@ -146,6 +146,15 @@ class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: runtimes in EXTERNAL_RUNTIMES; null for anything the platform deploys itself,
     #: where the address is a property of the container the platform created.
     endpoint_url: Mapped[str | None] = mapped_column(String(512))
+    #: The registered inference backend this model was discovered on (E1), if any.
+    #: SET NULL on delete: removing a backend must not delete the catalogue entries or
+    #: the usage history that references them. Null for every model registered before
+    #: E1 and for anything the platform deploys itself.
+    backend_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("inference_backends.id", ondelete="SET NULL"),
+        index=True,
+    )
 
     # What the scheduler needs to place it (§9).
     required_gpu_memory_mib: Mapped[int | None] = mapped_column(Integer)
