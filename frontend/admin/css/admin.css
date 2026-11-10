@@ -707,3 +707,31 @@ body.app-active main {
 /* Team chip (E3): which team owns a resource. Shared resources show nothing. */
 .chip-team { display: inline-flex; align-items: center; gap: .25rem; font-weight: 500; vertical-align: middle; }
 .chip-team svg { width: .85rem; height: .85rem; }
+
+/* -------------------------------------------------------------------------- */
+/* E4: model governance and deployment revisions                              */
+/* -------------------------------------------------------------------------- */
+.family-row td {
+  background: var(--bs-tertiary-bg) !important;
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  padding-top: .45rem;
+  padding-bottom: .45rem;
+}
+.governance {
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--radius-sm);
+  padding: .75rem;
+  background: var(--bs-tertiary-bg);
+}
+.deploy-review {
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--radius-sm);
+  padding: .75rem;
+  margin-bottom: .75rem;
+}
+.deploy-review .table { margin-bottom: 0; }
+.deploy-review td { padding-top: .3rem; padding-bottom: .3rem; }
+.deploy-review td:first-child { width: 40%; }
+#logs-modal .modal-header .btn-close { margin-left: auto; }

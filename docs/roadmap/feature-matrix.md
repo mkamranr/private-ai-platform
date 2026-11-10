@@ -8,14 +8,14 @@ are relative to `backend/app/` unless they start with a top-level directory.
 |---|---|---|---|---|---|
 | 1 | Unified dashboard | P0 | Partial | `api/v1/dashboard.py`, `services/dashboard.py`, `frontend/admin` | Time range, alerts, ingestion and agent failure counts, "unavailable" vs zero audit |
 | 2 | Backend registry | P0 | Existing (E1) | `services/inference_backends.py`, `api/v1/backends.py`, `core/url_policy.py` | Gateway use of backend API keys (E2); deploy/stop/metrics capabilities |
-| 3 | Model registry | P0 | Partial | `models/models_registry.py`, `services/model_registry.py` | License, approval status (approved/experimental/deprecated/blocked), version grouping, team access, offline manifest import UI (`models/manifests/` exists) |
+| 3 | Model registry | P0 | Existing (E3, E4) | `models/models_registry.py`, `services/model_registry.py`, [model-governance.md](../model-governance.md) | Grouping is by `family`, not a `model_versions` table (deliberate) |
 | 4 | OpenAI-compatible gateway | P0 | Existing | `api/v1/gateway.py`, `services/gateway.py`, `services/gateway_policy.py` | Round-robin across replicas; mid-stream failover |
 | 5 | API key management | P0 | Existing | `services/api_keys.py`, `frontend/developer` | Expiry and allowed-alias scopes: verify against `test_api_key_scopes.py` |
 | 6 | vLLM / Ollama adapters | P0 | Existing | `services/llm_provider.py`; `ollama` is an external runtime | Declared-capability contract per adapter |
 | 7 | Basic RBAC | P0 | Existing (E3) | `core/permissions.py`, `models/auth.py`, `services/seed.py` | Mapped to the plan's 8 roles in E3 (`KNOWLEDGE_ADMIN` added); see `docs/teams.md` |
 | 8 | Audit trail | P0 | Existing | `models/audit.py`, `services/audit.py` | Export, correlation-ID filter in UI |
 | 9 | Offline installation | P0 | Existing | `offline/`, `scripts/build_bundle.py`, `make gate-phase8` | Signed manifest, SBOM |
-| 10 | Deployment lifecycle | P1 | Partial | `services/deployment.py`, `workers/deployments.py`, `services/scheduler.py` | Revisions, rollback, validated wizard, logs streaming via SSE |
+| 10 | Deployment lifecycle | P1 | Existing (E4) | `services/deployment.py`, `workers/deployments.py`, `services/scheduler.py` | Zero-downtime (blue/green) revisions need replicas |
 | 11 | GPU monitoring | P1 | Existing | `node-agent/`, `models/infrastructure.py` | Thresholds feeding alerts |
 | 12 | RAG knowledge bases | P1 | Existing | `services/knowledge.py`, `retrieval.py`, `workers/ingestion.py` | Document versioning, per-document ACL |
 | 13 | Reranking / retrieval trace | P1 | Partial | `RERANKER` model type only | Rerank stage in `retrieval.py`, retrieval playground with scores |

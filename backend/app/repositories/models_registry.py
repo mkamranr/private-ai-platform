@@ -14,6 +14,7 @@ from app.models.models_registry import (
     ACTIVE_STATES,
     ApiClient,
     ApiKey,
+    DeploymentRevision,
     DeploymentState,
     Model,
     ModelAlias,
@@ -35,29 +36,61 @@ class ModelRepository(BaseRepository[Model]):
         stmt = select(Model).where(Model.id == model_id).options(selectinload(Model.files))
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    @staticmethod
+    def _filtered(
+        stmt: Any,
+        *,
+        model_type: str | None,
+        approval_status: str | None,
+        family: str | None,
+        where: Any,
+    ) -> Any:
+        if model_type:
+            stmt = stmt.where(Model.type == model_type)
+        if approval_status:
+            stmt = stmt.where(Model.approval_status == approval_status)
+        if family:
+            stmt = stmt.where(Model.family == family)
+        if where is not None:
+            stmt = stmt.where(where)
+        return stmt
+
     async def list_models(
         self,
         *,
         model_type: str | None = None,
+        approval_status: str | None = None,
+        family: str | None = None,
         limit: int = 100,
         offset: int = 0,
         where: Any = None,
     ) -> Sequence[Model]:
         """``where`` is an extra condition — in practice a team-scope clause (E3)."""
-        stmt = select(Model).options(selectinload(Model.files))
-        if model_type:
-            stmt = stmt.where(Model.type == model_type)
-        if where is not None:
-            stmt = stmt.where(where)
+        stmt = self._filtered(
+            select(Model).options(selectinload(Model.files)),
+            model_type=model_type,
+            approval_status=approval_status,
+            family=family,
+            where=where,
+        )
         stmt = stmt.order_by(Model.name).limit(limit).offset(offset)
         return (await self.session.execute(stmt)).scalars().all()
 
-    async def count_matching(self, *, model_type: str | None = None, where: Any = None) -> int:
-        stmt = select(func.count()).select_from(Model)
-        if model_type:
-            stmt = stmt.where(Model.type == model_type)
-        if where is not None:
-            stmt = stmt.where(where)
+    async def count_matching(
+        self,
+        *,
+        model_type: str | None = None,
+        approval_status: str | None = None,
+        family: str | None = None,
+        where: Any = None,
+    ) -> int:
+        stmt = self._filtered(
+            select(func.count()).select_from(Model),
+            model_type=model_type,
+            approval_status=approval_status,
+            family=family,
+            where=where,
+        )
         return int((await self.session.execute(stmt)).scalar_one())
 
     async def replace_files(self, model_id: uuid.UUID, files: Sequence[ModelFile]) -> None:
@@ -150,6 +183,35 @@ class ModelDeploymentRepository(BaseRepository[ModelDeployment]):
                 await self.session.execute(select(func.count()).select_from(ModelDeployment))
             ).scalar_one()
         )
+
+
+class DeploymentRevisionRepository(BaseRepository[DeploymentRevision]):
+    """Append-only configuration history of a deployment (E4)."""
+
+    model = DeploymentRevision
+
+    async def for_deployment(self, deployment_id: uuid.UUID) -> Sequence[DeploymentRevision]:
+        stmt = (
+            select(DeploymentRevision)
+            .where(DeploymentRevision.deployment_id == deployment_id)
+            .order_by(DeploymentRevision.revision.desc())
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def get_revision(
+        self, deployment_id: uuid.UUID, revision: int
+    ) -> DeploymentRevision | None:
+        stmt = select(DeploymentRevision).where(
+            DeploymentRevision.deployment_id == deployment_id,
+            DeploymentRevision.revision == revision,
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def latest_number(self, deployment_id: uuid.UUID) -> int:
+        stmt = select(func.max(DeploymentRevision.revision)).where(
+            DeploymentRevision.deployment_id == deployment_id
+        )
+        return int((await self.session.execute(stmt)).scalar_one() or 0)
 
 
 class ModelAliasRepository(BaseRepository[ModelAlias]):

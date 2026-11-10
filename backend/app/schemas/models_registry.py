@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -48,12 +48,71 @@ class ModelRegisterRequest(BaseModel):
     min_gpu_count: int = Field(default=1, ge=0, le=16)
     description: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    license: str | None = Field(
+        default=None, max_length=128, description="SPDX id where there is one."
+    )
+    source_reference: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Where the weights came from. Provenance only; never fetched.",
+    )
+    publisher: str | None = Field(default=None, max_length=128)
+    family: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Groups versions and quantised variants of the same model.",
+    )
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=32
+    )
     team_id: uuid.UUID | None = Field(
         default=None,
         description=(
             "Owning team (E3). Omit for a shared resource, visible to everyone with the "
             "permission. You must be a member of the team unless you hold scope.all."
         ),
+    )
+
+
+ApprovalStatus = Literal["approved", "experimental", "deprecated", "blocked"]
+
+
+class ModelUpdateRequest(BaseModel):
+    """Catalogue metadata (E4). Omitted fields are left unchanged; ``null`` clears one.
+
+    Not the approval status, which has its own route and permission, and not anything
+    that changes how the model is served (runtime, paths, GPU needs): those belong to
+    a new registration or a deployment revision.
+    """
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    version: str | None = Field(default=None, min_length=1, max_length=64)
+    license: str | None = Field(
+        default=None, max_length=128, description="SPDX id where there is one."
+    )
+    source_reference: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Where the weights came from. Provenance only; never fetched.",
+    )
+    publisher: str | None = Field(default=None, max_length=128)
+    family: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Groups versions and quantised variants of the same model.",
+    )
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(
+        default=None, max_length=32
+    )
+
+
+class ModelApprovalRequest(BaseModel):
+    status: ApprovalStatus
+    note: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Why. Shown next to the status and kept in the audit log.",
     )
 
 
@@ -85,6 +144,16 @@ class ModelRead(ORMModel):
     description: str | None = None
     #: Owning team (E3); null means shared.
     team_id: uuid.UUID | None = None
+    #: Governance (E4).
+    approval_status: str = "approved"
+    approval_note: str | None = None
+    approved_by: uuid.UUID | None = None
+    approved_at: dt.datetime | None = None
+    license: str | None = None
+    source_reference: str | None = None
+    publisher: str | None = None
+    family: str | None = None
+    tags: list[str] = Field(default_factory=list)
     created_at: dt.datetime
 
 
@@ -136,6 +205,8 @@ class DeploymentRead(ORMModel):
     tensor_parallel_size: int
     max_model_len: int | None = None
     gpu_memory_utilization: float
+    #: The configuration revision now applied (E4).
+    current_revision: int = 1
     error_message: str | None = None
     started_at: dt.datetime | None = None
     healthy_at: dt.datetime | None = None
@@ -175,6 +246,74 @@ class DeploymentLogsRead(BaseModel):
     deployment_id: uuid.UUID
     lines: str
     tail: int
+
+
+# ---------------------------------------------------------------------------
+# Deploy validation and revisions (E4, plan §5.4)
+# ---------------------------------------------------------------------------
+class PlacementPreview(BaseModel):
+    node_id: uuid.UUID
+    node_name: str | None = None
+    gpu_indices: list[int]
+    rationale: str
+
+
+class DeployValidationResponse(BaseModel):
+    """A dry run of `POST /models/{id}/deploy`: nothing is reserved or started.
+
+    The placement is what the scheduler would choose *now*. Another deployment can take
+    the GPUs before the real request arrives, so the real request re-checks everything.
+    """
+
+    ok: bool
+    model: str
+    runtime: str
+    external: bool
+    approval_status: str
+    placement: PlacementPreview | None = None
+    #: The configuration the deployment would start with, defaults filled in.
+    config: dict[str, Any] = Field(default_factory=dict)
+    #: Figures taken from the model's catalogue entry, not measured. Labelled so nobody
+    #: reads them as observed usage.
+    estimates: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class DeploymentRevisionRead(ORMModel):
+    id: uuid.UUID
+    deployment_id: uuid.UUID
+    revision: int
+    config: dict[str, Any]
+    change_note: str | None = None
+    rolled_back_from: int | None = None
+    created_by: uuid.UUID | None = None
+    created_at: dt.datetime
+    #: Filled in by the route: whether this revision is the one now applied.
+    current: bool = False
+
+
+class DeploymentRevisionRequest(BaseModel):
+    """Change how a managed deployment runs. Omitted fields keep their current value.
+
+    The GPU set is not changeable here. The reservation is kept across the change so
+    nothing else can take the devices; a different GPU count is a new deployment.
+    """
+
+    image: str | None = Field(
+        default=None,
+        max_length=512,
+        description=("The runtime's configured image or one in MODELS__RUNTIME_IMAGE_ALLOWLIST."),
+    )
+    tensor_parallel_size: int | None = Field(default=None, ge=1, le=16)
+    max_model_len: int | None = Field(default=None, ge=1)
+    gpu_memory_utilization: float | None = Field(default=None, gt=0.0, le=1.0)
+    change_note: str | None = Field(default=None, max_length=2000)
+
+
+class DeploymentRollbackRequest(BaseModel):
+    revision: int = Field(ge=1)
+    change_note: str | None = Field(default=None, max_length=2000)
 
 
 # ---------------------------------------------------------------------------

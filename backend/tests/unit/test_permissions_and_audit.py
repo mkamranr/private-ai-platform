@@ -108,6 +108,11 @@ class TestRoleDefinitions:
         holders = {r for r, (_, p) in ROLE_DEFINITIONS.items() if Permission.BACKUP_MANAGE in p}
         assert holders == {Role.SUPER_ADMIN}
 
+    def test_model_approval_stays_with_model_administrators(self) -> None:
+        """Signing a model off for production (E4) is narrower than deploying one."""
+        holders = {r for r, (_, p) in ROLE_DEFINITIONS.items() if Permission.MODEL_APPROVE in p}
+        assert holders == {Role.SUPER_ADMIN, Role.ADMIN, Role.AI_ADMIN}
+
     def test_tool_approval_is_not_granted_with_mere_execution(self) -> None:
         """Approving a HIGH-risk action is a different privilege from performing a
         routine one (§10). Any role that could approve its own calls defeats the

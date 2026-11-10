@@ -408,6 +408,11 @@ class ModelsSettings(BaseModel):
             # External runtimes have no image on purpose: the platform never starts them.
         }
     )
+    #: Further images a deployment revision may switch to, per runtime (E4). The image in
+    #: `runtime_images` is always allowed. Listing a newer engine image here, once it has
+    #: been loaded on the nodes, is how it is rolled out to one deployment at a time —
+    #: and rolled back if it misbehaves. Nothing outside these lists is ever started.
+    runtime_image_allowlist: dict[str, list[str]] = Field(default_factory=dict)
 
     #: Where an already-running Ollama lives. `host.docker.internal` reaches the Docker
     #: host from inside a container, which is what "I have Ollama on my machine" means in

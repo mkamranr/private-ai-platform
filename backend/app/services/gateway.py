@@ -53,7 +53,14 @@ from app.core.interfaces.llm import ChatMessage
 from app.core.logging import get_logger
 from app.core.scope import Scope
 from app.core.security import SecretCipher, hash_api_key
-from app.models.models_registry import ApiKey, Model, ModelAlias, ModelDeployment, UsageRecord
+from app.models.models_registry import (
+    ApiKey,
+    Model,
+    ModelAlias,
+    ModelApprovalStatus,
+    ModelDeployment,
+    UsageRecord,
+)
 from app.models.operations import QuotaScope
 from app.repositories.models_registry import (
     ApiKeyRepository,
@@ -94,6 +101,16 @@ class ResolvedTarget:
     fallback_alias_id: uuid.UUID | None = None
     #: Which circuit breaker this call reports to — see CircuitBreakers.
     breaker_key: str = ""
+
+
+class ModelBlockedError(PermissionDeniedError):
+    """403: the model is blocked by governance (E4) and the alias has no usable fallback."""
+
+    code = "model_blocked"
+
+
+def _blocked(model: Model) -> bool:
+    return model.approval_status == ModelApprovalStatus.BLOCKED
 
 
 class _UpstreamFailedError(Exception):
@@ -313,16 +330,17 @@ class GatewayService:
 
         try:
             return await self._target(requested, model, alias)
-        except DependencyUnavailableError:
+        except (DependencyUnavailableError, ModelBlockedError) as exc:
+            # A blocked model (E4) falls back exactly like one that is down: the alias's
+            # callers keep working on the replacement the operator chose.
             fallback = await self._fallback_alias(alias)
-            if fallback is None or not self._visible(scope, fallback):
+            if fallback is None or not self._visible(scope, fallback) or _blocked(fallback.model):
                 raise
+            reason = "blocked" if isinstance(exc, ModelBlockedError) else "unavailable"
             target = await self._target(requested, fallback.model, None)
             target.fallback_from = requested
-            metrics.GATEWAY_FALLBACKS.labels("unavailable").inc()
-            log.info(
-                "alias_fallback", alias=requested, fallback=fallback.alias, reason="unavailable"
-            )
+            metrics.GATEWAY_FALLBACKS.labels(reason).inc()
+            log.info("alias_fallback", alias=requested, fallback=fallback.alias, reason=reason)
             return target
 
     @staticmethod
@@ -346,6 +364,13 @@ class GatewayService:
     async def _target(
         self, requested: str, model: Model, alias: ModelAlias | None
     ) -> ResolvedTarget:
+        if _blocked(model):
+            # The caller is told the model exists but may not be used, by name: what
+            # they asked for (an alias, perhaps) — never which model was behind it.
+            raise ModelBlockedError(
+                f"{requested!r} is blocked by an administrator and cannot be called.",
+                details={"model": requested},
+            )
         serving = await self._deployments.serving_for_model(model.id)
         live = [d for d in serving if d.internal_url]
         if not live:
@@ -425,7 +450,7 @@ class GatewayService:
         if target.fallback_from is not None or target.fallback_alias_id is None:
             return None
         alias = await self._aliases.get_enabled(target.fallback_alias_id)
-        if alias is None or not self._visible(context.scope, alias):
+        if alias is None or not self._visible(context.scope, alias) or _blocked(alias.model):
             return None
         try:
             fallback = await self._target(target.requested_model, alias.model, None)
@@ -485,7 +510,7 @@ class GatewayService:
         seen: set[str] = set()
 
         for alias in await self._aliases.list_all():
-            if not alias.enabled or not self._visible(scope, alias):
+            if not alias.enabled or not self._visible(scope, alias) or _blocked(alias.model):
                 continue
             serving = await self._deployments.serving_for_model(alias.model_id)
             if not serving:
@@ -508,7 +533,11 @@ class GatewayService:
 
         for deployment in await self._deployments.list_deployments(states=["RUNNING"]):
             name = deployment.model.name
-            if name in seen or not scope.can_see(deployment.model.team_id):
+            if (
+                name in seen
+                or not scope.can_see(deployment.model.team_id)
+                or _blocked(deployment.model)
+            ):
                 continue
             entries.append(
                 {

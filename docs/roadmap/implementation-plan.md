@@ -59,8 +59,14 @@ dashboard real signals.
 
 ## E4: Model governance and deployment revisions (P1)
 
-- Model license and approval status; version grouping.
-- `deployment_revisions` with rollback where the runtime supports it; validated deploy wizard; SSE log stream.
+- [x] Migration `4e1a7b3c9d20`: approval status (approved / experimental / deprecated / blocked), approval note, approver and time, license, source reference, publisher, family and tags on models; `deployment_revisions` and `model_deployments.current_revision`. Existing models are backfilled as approved and existing deployments get revision 1, so upgrading changes no behaviour.
+- [x] Rules: blocked and deprecated models refuse new deployments (409); blocked models are not served (alias fallback, else 403 `model_blocked`) and not listed in `/v1/models`. New models start experimental. Permission `model.approve` (AI_ADMIN), audited `MODEL_APPROVAL_CHANGED`; metadata via `PATCH /models/{id}`, audited `MODEL_UPDATED`.
+- [x] Version grouping by a `family` column instead of the plan's `model_versions` table (each variant keeps its own model row and deployments). Documented as a deviation.
+- [x] `POST /models/{id}/deploy/validate`: dry run with placement, effective configuration, warnings and catalogue-labelled estimates; nothing reserved.
+- [x] Revisions: `GET/POST /deployments/{id}/revisions`, `POST /deployments/{id}/rollback`. Append-only; GPUs kept reserved across the change; images limited to `runtime_images` plus `MODELS__RUNTIME_IMAGE_ALLOWLIST`; external runtimes refused. Audited `DEPLOYMENT_REVISED`, `DEPLOYMENT_ROLLED_BACK`.
+- [x] `GET /deployments/{id}/logs/stream` (SSE, new lines only, ten-minute cap).
+- [x] Admin: approval pills, filter and family grouping, Edit dialog with approval, two-step deploy wizard, Revisions dialog with rollback, live log viewer. Doc: [docs/model-governance.md](../model-governance.md).
+- [ ] Revisions are not zero-downtime (one container per deployment); blue/green needs replicas. Blocking a model does not stop its containers automatically.
 
 ## E5: RAG depth (P1)
 

@@ -368,6 +368,21 @@
             </button>
           </div>
         </div>
+        <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+          <select id="models-approval" class="form-select form-select-sm w-auto"
+                  aria-label="Filter by approval status">
+            <option value="">All approval states</option>
+            <option value="approved">Approved</option>
+            <option value="experimental">Experimental</option>
+            <option value="deprecated">Deprecated</option>
+            <option value="blocked">Blocked</option>
+          </select>
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="models-group" checked>
+            <label class="form-check-label small" for="models-group">Group by family</label>
+          </div>
+          <div id="models-approval-counts" class="ms-auto d-flex flex-wrap gap-1"></div>
+        </div>
         <div id="models-body"></div>
       </section>
 
@@ -1252,7 +1267,18 @@
               <label class="form-label small text-secondary" for="mdl-gpus">Minimum GPUs</label>
               <input class="form-control" id="mdl-gpus" type="number" min="0" max="16" value="1">
             </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="mdl-family">Family</label>
+              <input class="form-control" id="mdl-family" placeholder="qwen3-30b">
+              <div class="form-text small">Groups versions and quantised variants.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="mdl-license">License</label>
+              <input class="form-control" id="mdl-license" placeholder="apache-2.0">
+            </div>
           </div>
+          <div class="form-text small mt-2">New models start <strong>experimental</strong>.
+            Someone with <code>model.approve</code> signs them off.</div>
           <div class="mb-3 team-field mt-3">
             <label class="form-label small text-secondary" for="mdl-team">Team</label>
             <select class="form-select team-picker" id="mdl-team"></select>
@@ -1294,18 +1320,155 @@
             <label class="form-label small text-secondary" for="dep-gpus">GPU indices</label>
             <input class="form-control" id="dep-gpus" placeholder="e.g. 0,1 — blank to auto-select">
           </div>
-          <div class="mb-3">
-            <label class="form-label small text-secondary" for="dep-util">GPU memory utilisation</label>
-            <input class="form-control" id="dep-util" type="number" step="0.05" min="0.05" max="1"
-                   placeholder="0.90">
+          <div class="row g-3 mb-3">
+            <div class="col-4">
+              <label class="form-label small text-secondary" for="dep-util">GPU memory</label>
+              <input class="form-control" id="dep-util" type="number" step="0.05" min="0.05" max="1"
+                     placeholder="0.90">
+            </div>
+            <div class="col-4">
+              <label class="form-label small text-secondary" for="dep-maxlen">Context</label>
+              <input class="form-control" id="dep-maxlen" type="number" min="1" placeholder="model">
+            </div>
+            <div class="col-4">
+              <label class="form-label small text-secondary" for="dep-tp">Tensor parallel</label>
+              <input class="form-control" id="dep-tp" type="number" min="1" max="16" placeholder="auto">
+            </div>
           </div>
+          <div id="deploy-review"></div>
           <div id="deploy-error" class="alert alert-danger py-2 small d-none"></div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Deploy</button>
+          <button type="submit" class="btn btn-primary" id="deploy-submit">Validate</button>
         </div>
       </form>
+    </div>
+  </div>
+</div>
+
+<!-- Model edit modal (E4) ----------------------------------------------------->
+<div class="modal fade" id="model-edit-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="model-edit-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit <span id="edit-model-name" class="mono"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label small text-secondary" for="edit-display">Display name</label>
+              <input class="form-control" id="edit-display" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="edit-version">Version</label>
+              <input class="form-control" id="edit-version" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="edit-family">Family</label>
+              <input class="form-control" id="edit-family">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="edit-publisher">Publisher</label>
+              <input class="form-control" id="edit-publisher">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="edit-license">License</label>
+              <input class="form-control" id="edit-license" placeholder="apache-2.0">
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="edit-source">Source reference</label>
+              <input class="form-control mono" id="edit-source"
+                     placeholder="huggingface:Qwen/Qwen3-30B-A3B@revision">
+              <div class="form-text small">Provenance only. The platform never fetches it.</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="edit-tags">Tags</label>
+              <input class="form-control" id="edit-tags" placeholder="chat, multilingual">
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="edit-description">Description</label>
+              <textarea class="form-control" id="edit-description" rows="2"></textarea>
+            </div>
+          </div>
+          <div id="edit-governance" class="governance mt-3">
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <span class="fw-semibold small">Approval</span>
+              <span id="edit-approval-current"></span>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <select class="form-select" id="edit-approval" aria-label="Approval status">
+                  <option value="approved">Approved</option>
+                  <option value="experimental">Experimental</option>
+                  <option value="deprecated">Deprecated</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </div>
+              <div class="col-md-8">
+                <input class="form-control" id="edit-approval-note" maxlength="2000"
+                       placeholder="Why (kept in the audit log)">
+              </div>
+            </div>
+            <div class="form-text small">Deprecated: keeps serving, no new deployments.
+              Blocked: not deployed or served; aliases go to their fallback.</div>
+          </div>
+          <div id="model-edit-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Deployment revisions modal (E4) ------------------------------------------->
+<div class="modal fade" id="revisions-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Revisions — <span id="revisions-title"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="revisions-body"></div>
+        <form id="revision-form" class="governance mt-2">
+          <div class="fw-semibold small mb-2">New revision
+            <span class="text-secondary fw-normal">— blank fields keep their current value.
+              The container is recreated on the same GPUs.</span></div>
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="rev-image">Image</label>
+              <input class="form-control form-control-sm mono" id="rev-image">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-secondary" for="rev-maxlen">Context</label>
+              <input class="form-control form-control-sm" id="rev-maxlen" type="number" min="1">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-secondary" for="rev-tp">Tensor parallel</label>
+              <input class="form-control form-control-sm" id="rev-tp" type="number" min="1" max="16">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-secondary" for="rev-util">GPU memory</label>
+              <input class="form-control form-control-sm" id="rev-util" type="number"
+                     step="0.05" min="0.05" max="1">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+              <button type="submit" class="btn btn-sm btn-primary w-100">Apply</button>
+            </div>
+            <div class="col-12">
+              <input class="form-control form-control-sm" id="rev-note" maxlength="2000"
+                     placeholder="Change note">
+            </div>
+          </div>
+          <div id="revision-error" class="alert alert-danger py-2 small mt-2 d-none"></div>
+        </form>
+      </div>
     </div>
   </div>
 </div>
@@ -1610,6 +1773,9 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="logs-modal-title">Logs</h5>
+        <span id="logs-live" class="pill pill-idle ms-3">Connecting</span>
+        <button type="button" id="logs-reconnect" class="btn btn-sm btn-outline-secondary ms-2 d-none"
+                >Reconnect</button>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">

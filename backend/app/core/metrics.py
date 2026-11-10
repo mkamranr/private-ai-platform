@@ -105,7 +105,8 @@ GATEWAY_FALLBACKS = Counter(
     "ai_platform_gateway_fallbacks_total",
     "Calls served by an alias's explicit fallback.",
     # unavailable: primary had nothing serving or its circuit was open;
-    # upstream_error: primary failed the call and it was retried on the fallback.
+    # upstream_error: primary failed the call and it was retried on the fallback;
+    # blocked: primary model is blocked by governance (E4).
     ("reason",),
     registry=REGISTRY,
 )

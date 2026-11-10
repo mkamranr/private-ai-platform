@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import (
     ApiKeyServiceDep,
@@ -34,23 +37,30 @@ from app.schemas.models_registry import (
     ApiKeyRead,
     ApiKeyRotateRequest,
     ApiKeyRotateResponse,
+    ApprovalStatus,
     DeploymentAcceptedResponse,
     DeploymentDetail,
     DeploymentLogsRead,
     DeploymentRead,
+    DeploymentRevisionRead,
+    DeploymentRevisionRequest,
+    DeploymentRollbackRequest,
     DeployRequest,
+    DeployValidationResponse,
     EndUserUsageResponse,
     EndUserUsageRow,
+    ModelApprovalRequest,
     ModelDetail,
     ModelFileRead,
     ModelImportResponse,
     ModelRead,
     ModelRegisterRequest,
+    ModelUpdateRequest,
     OllamaImportResponse,
     UsageSummaryResponse,
     UsageSummaryRow,
 )
-from app.services.deployment import DeploymentRequestSpec
+from app.services.deployment import DeploymentRequestSpec, RevisionChange, follow_logs
 from app.services.model_registry import UNSET
 
 router = APIRouter(tags=["models"])
@@ -65,16 +75,17 @@ async def list_models(
     _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
     scope: ScopeDep,
     model_type: Annotated[str | None, Query(alias="type")] = None,
+    approval_status: ApprovalStatus | None = None,
+    family: Annotated[str | None, Query(max_length=128)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page[ModelRead]:
     where = scope.clause(ModelRow.team_id)
-    models = await service.list_models(
-        model_type=model_type, limit=limit, offset=offset, where=where
-    )
+    filters = {"model_type": model_type, "approval_status": approval_status, "family": family}
+    models = await service.list_models(**filters, limit=limit, offset=offset, where=where)
     return Page[ModelRead](
         items=[ModelRead.model_validate(m) for m in models],
-        total=await service.count_models(model_type=model_type, where=where),
+        total=await service.count_models(**filters, where=where),
         limit=limit,
         offset=offset,
     )
@@ -115,9 +126,56 @@ async def register_model(
         min_gpu_count=payload.min_gpu_count,
         description=payload.description,
         metadata=payload.metadata,
+        license=payload.license,
+        source_reference=payload.source_reference,
+        publisher=payload.publisher,
+        family=payload.family,
+        tags=payload.tags,
         actor=actor,
     )
     await guard.place(model, payload.team_id)
+    return ModelRead.model_validate(model)
+
+
+@router.patch("/models/{model_id}", response_model=ModelRead, summary="Edit model metadata")
+async def update_model(
+    payload: ModelUpdateRequest,
+    service: ModelRegistryDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_REGISTER)],
+    guard: ScopeGuardDep,
+    model_id: uuid.UUID = Path(...),
+) -> ModelRead:
+    """Catalogue metadata only: name, description, version, license, provenance, family
+    and tags. Omitted fields are unchanged. The approval status has its own route."""
+    await guard.model(model_id)
+    model = await service.update_model(
+        model_id, payload.model_dump(exclude_unset=True), actor=actor
+    )
+    return ModelRead.model_validate(model)
+
+
+@router.post(
+    "/models/{model_id}/approval",
+    response_model=ModelRead,
+    summary="Approve, deprecate or block a model",
+)
+async def set_model_approval(
+    payload: ModelApprovalRequest,
+    service: ModelRegistryDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_APPROVE)],
+    guard: ScopeGuardDep,
+    model_id: uuid.UUID = Path(...),
+) -> ModelRead:
+    """Governance (E4):
+
+    * **approved**: cleared for use;
+    * **experimental**: usable, flagged as not yet reviewed;
+    * **deprecated**: keeps serving where deployed, but new deployments are refused;
+    * **blocked**: not deployable and not served. Gateway calls through an alias go to
+      its fallback alias when it has one, and are otherwise refused with 403.
+    """
+    await guard.model(model_id)
+    model = await service.set_approval(model_id, payload.status, note=payload.note, actor=actor)
     return ModelRead.model_validate(model)
 
 
@@ -293,6 +351,38 @@ async def deploy_model(
     )
 
 
+@router.post(
+    "/models/{model_id}/deploy/validate",
+    response_model=DeployValidationResponse,
+    summary="Check a deployment without starting it",
+)
+async def validate_deployment(
+    payload: DeployRequest,
+    service: DeploymentServiceDep,
+    _actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
+    model_id: uuid.UUID = Path(...),
+) -> DeployValidationResponse:
+    """A dry run of `POST /models/{id}/deploy` (E4). Nothing is reserved or started.
+
+    Returns the configuration with defaults filled in, where the scheduler would place it
+    now, and every error and warning at once. The GPU figures come from the model's
+    catalogue entry and are labelled as estimates.
+    """
+    await guard.model(model_id)
+    return await service.plan_deployment(
+        DeploymentRequestSpec(
+            model_id=model_id,
+            node_id=payload.node_id,
+            gpu_ids=payload.gpu_ids,
+            runtime=payload.runtime,
+            tensor_parallel_size=payload.tensor_parallel_size,
+            max_model_len=payload.max_model_len,
+            gpu_memory_utilization=payload.gpu_memory_utilization,
+        )
+    )
+
+
 @router.get("/deployments", response_model=list[DeploymentDetail], summary="List deployments")
 async def list_deployments(
     service: DeploymentServiceDep,
@@ -446,6 +536,141 @@ async def deployment_logs(
         lines=await service.fetch_logs(deployment_id, tail=tail),
         tail=tail,
     )
+
+
+#: How long one log stream stays open. The console reconnects while it is shown.
+_LOG_STREAM_SECONDS = 600
+
+
+def _sse(event: str, data: object) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@router.get(
+    "/deployments/{deployment_id}/logs/stream",
+    summary="Follow deployment container logs (server-sent events)",
+    response_class=StreamingResponse,
+)
+async def stream_deployment_logs(
+    service: DeploymentServiceDep,
+    _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    guard: ScopeGuardDep,
+    deployment_id: uuid.UUID = Path(...),
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> StreamingResponse:
+    """New log lines as they appear (E4), as `text/event-stream`.
+
+    Events: `lines` (`{"lines": [...]}`) and a final `end` (`{"reason": ...}`). A
+    deployment with no container (external, or long gone) sends its stored excerpt once.
+    The stream closes after ten minutes; reconnect to continue.
+    """
+    await guard.deployment(deployment_id)
+    # Resolved before the response starts: the generator runs after the request's
+    # database session has closed, so it must not need one.
+    source = await service.log_source(deployment_id)
+
+    async def events() -> AsyncIterator[str]:
+        if isinstance(source, str):
+            yield _sse("lines", {"lines": source.splitlines()})
+            yield _sse("end", {"reason": "no_container"})
+            return
+        backend, handle = source
+        async for batch in follow_logs(backend, handle, tail=tail, max_seconds=_LOG_STREAM_SECONDS):
+            yield _sse("lines", {"lines": batch})
+        yield _sse("end", {"reason": "timeout"})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        # No proxy buffering: a buffered event stream arrives all at once at the end.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revisions (E4, plan §5.4)
+# ---------------------------------------------------------------------------
+@router.get(
+    "/deployments/{deployment_id}/revisions",
+    response_model=list[DeploymentRevisionRead],
+    summary="List a deployment's configuration revisions",
+)
+async def list_deployment_revisions(
+    service: DeploymentServiceDep,
+    _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    guard: ScopeGuardDep,
+    deployment_id: uuid.UUID = Path(...),
+) -> list[DeploymentRevisionRead]:
+    """Newest first. `current` marks the revision now applied."""
+    await guard.deployment(deployment_id)
+    deployment = await service.get_deployment(deployment_id)
+    rows = []
+    for revision in await service.list_revisions(deployment_id):
+        row = DeploymentRevisionRead.model_validate(revision)
+        row.current = revision.revision == deployment.current_revision
+        rows.append(row)
+    return rows
+
+
+@router.post(
+    "/deployments/{deployment_id}/revisions",
+    response_model=DeploymentRevisionRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Change a deployment's configuration",
+)
+async def create_deployment_revision(
+    payload: DeploymentRevisionRequest,
+    service: DeploymentServiceDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
+    deployment_id: uuid.UUID = Path(...),
+) -> DeploymentRevisionRead:
+    """Append a revision and roll it out. **Returns 202**, like a deploy.
+
+    The container is recreated with the new settings on the same GPUs, which stay
+    reserved throughout. The model is unavailable while the new container loads; calls
+    through an alias with a fallback go to the fallback meanwhile. Poll the deployment
+    for RUNNING or FAILED, and roll back if it fails.
+    """
+    await guard.deployment(deployment_id)
+    _, revision = await service.revise_deployment(
+        deployment_id,
+        RevisionChange(
+            image=payload.image,
+            tensor_parallel_size=payload.tensor_parallel_size,
+            max_model_len=payload.max_model_len,
+            gpu_memory_utilization=payload.gpu_memory_utilization,
+            change_note=payload.change_note,
+        ),
+        actor=actor,
+    )
+    row = DeploymentRevisionRead.model_validate(revision)
+    row.current = True
+    return row
+
+
+@router.post(
+    "/deployments/{deployment_id}/rollback",
+    response_model=DeploymentRevisionRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Roll a deployment back to an earlier revision",
+)
+async def rollback_deployment(
+    payload: DeploymentRollbackRequest,
+    service: DeploymentServiceDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
+    deployment_id: uuid.UUID = Path(...),
+) -> DeploymentRevisionRead:
+    """Restore an earlier revision's configuration. History is never rewritten: this
+    appends a new revision that copies the old one and records which it restored."""
+    await guard.deployment(deployment_id)
+    _, revision = await service.rollback_deployment(
+        deployment_id, payload.revision, note=payload.change_note, actor=actor
+    )
+    row = DeploymentRevisionRead.model_validate(revision)
+    row.current = True
+    return row
 
 
 # ---------------------------------------------------------------------------

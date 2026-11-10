@@ -585,3 +585,28 @@ Changes to existing routes, all backwards-compatible:
 - Gateway (`/v1`): a key reaches shared resources plus its client's team. Anything else
   is reported exactly like a name that does not exist.
 
+## Model governance and revisions — Expansion E4
+
+Under `/api/v1`, authenticated with the platform JWT. See
+[model-governance.md](model-governance.md).
+
+| method | path | permission |
+|---|---|---|
+| PATCH | `/models/{id}` | `model.register` — display name, description, version, license, source reference, publisher, family, tags; omitted fields unchanged |
+| POST | `/models/{id}/approval` | `model.approve` — `status` (`approved`/`experimental`/`deprecated`/`blocked`), optional `note` |
+| POST | `/models/{id}/deploy/validate` | `model.deploy` — same body as `/deploy`; dry run, nothing reserved |
+| GET | `/deployments/{id}/revisions` | `model.view` — newest first, `current` marks the applied one |
+| POST | `/deployments/{id}/revisions` | `model.deploy` — `image`, `tensor_parallel_size`, `max_model_len`, `gpu_memory_utilization`, `change_note`; **202** |
+| POST | `/deployments/{id}/rollback` | `model.deploy` — `revision`, optional `change_note`; appends a copy; **202** |
+| GET | `/deployments/{id}/logs/stream` | `model.view` — `text/event-stream`: `lines` events, then `end` |
+
+Changes to existing routes, all backwards-compatible:
+
+- Model responses include `approval_status`, `approval_note`, `approved_by`,
+  `approved_at`, `license`, `source_reference`, `publisher`, `family` and `tags`.
+  `POST /models` accepts the metadata fields; new models are `experimental`.
+- `GET /models` accepts `approval_status` and `family` filters.
+- `POST /models/{id}/deploy` answers **409** for a blocked or deprecated model.
+- Deployment responses include `current_revision`.
+- Gateway (`/v1`): a blocked model answers **403** `model_blocked` unless the alias has
+  an unblocked fallback, and is left out of `GET /v1/models`.

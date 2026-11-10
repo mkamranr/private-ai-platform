@@ -1277,18 +1277,62 @@ async function renderModels() {
     return;
   }
 
-  document.getElementById('models-body').innerHTML = `
+  const status = document.getElementById('models-approval').value;
+  const shown = status ? modelCache.filter((m) => m.approval_status === status) : modelCache;
+  const counts = Object.fromEntries(APPROVAL_STATES.map((s) =>
+    [s, modelCache.filter((m) => m.approval_status === s).length]));
+  document.getElementById('models-approval-counts').innerHTML = APPROVAL_STATES
+    .filter((s) => counts[s])
+    .map((s) => `<span class="pill ${APPROVAL_PILL[s]}">${counts[s]} ${s}</span>`).join(' ');
+
+  document.getElementById('models-body').innerHTML = shown.length ? `
     <div class="table-responsive">
       <table class="table table-sm align-middle">
         <thead><tr>
           <th>Model</th><th>Type</th><th>Runtime</th><th>Context</th>
           <th>Requires</th><th>Status</th><th class="text-end">Actions</th>
         </tr></thead>
-        <tbody>${modelCache.map(modelRow).join('')}</tbody>
+        <tbody>${modelRowsHtml(shown)}</tbody>
       </table>
-    </div>`;
+    </div>` : empty(`No ${esc(status)} models.`);
 
   wireModelActions();
+}
+
+/* Governance (E4). Approval is independent of whether the weights are present. */
+const APPROVAL_STATES = ['approved', 'experimental', 'deprecated', 'blocked'];
+const APPROVAL_PILL = {
+  approved: 'pill-ok', experimental: 'pill-info', deprecated: 'pill-warn', blocked: 'pill-crit',
+};
+const APPROVAL_HELP = {
+  approved: 'Cleared for production use',
+  experimental: 'Usable, but not yet reviewed',
+  deprecated: 'Still served where deployed; no new deployments',
+  blocked: 'Not deployable and not served',
+};
+
+function approvalPill(model) {
+  const status = model.approval_status || 'approved';
+  const title = [APPROVAL_HELP[status], model.approval_note].filter(Boolean).join(' — ');
+  return `<span class="pill ${APPROVAL_PILL[status] || 'pill-idle'}" title="${esc(title)}"
+    >${esc(status)}</span>`;
+}
+
+/** Rows, grouped under a header per family when "Group by family" is on. Within a
+ *  family, version and quantization tell the variants apart. */
+function modelRowsHtml(models) {
+  if (!document.getElementById('models-group').checked) return models.map(modelRow).join('');
+  const groups = new Map();
+  for (const model of models) {
+    const key = model.family || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(model);
+  }
+  const keys = [...groups.keys()].sort((a, b) => (!a ? 1 : !b ? -1 : a.localeCompare(b)));
+  return keys.map((key) => `
+    <tr class="family-row"><td colspan="7">${key ? esc(key) : 'No family'}
+      <span class="text-secondary fw-normal">· ${groups.get(key).length}</span></td></tr>
+    ${groups.get(key).map(modelRow).join('')}`).join('');
 }
 
 /* AVAILABLE is the only status that can serve — anything else is called out in colour
@@ -1310,7 +1354,17 @@ function modelRow(model) {
   const badge = MODEL_STATUS_CLASS[model.status] || 'text-bg-secondary';
   const detail = model.status_detail
     ? `<div class="small text-secondary">${esc(model.status_detail)}</div>` : '';
-  const deployable = model.status === 'AVAILABLE';
+  const governed = ['blocked', 'deprecated'].includes(model.approval_status);
+  const deployable = model.status === 'AVAILABLE' && !governed;
+  const deployTitle = governed
+    ? `A ${model.approval_status} model cannot be deployed`
+    : model.status === 'AVAILABLE' ? 'Deploy this model' : 'Only an AVAILABLE model can be deployed';
+  const provenance = [
+    model.version && `v${model.version}`,
+    model.quantization,
+    model.publisher,
+    model.license ? `license ${model.license}` : 'no license recorded',
+  ].filter(Boolean).map(esc).join(' · ');
 
   return `<tr>
     <td>
@@ -1320,6 +1374,9 @@ function modelRow(model) {
             + 'does not start, stop or schedule">external</span>' : ''}
       </div>
       <div class="small text-secondary">${esc(model.display_name)}</div>
+      <div class="small text-secondary">${provenance}</div>
+      ${(model.tags || []).length
+        ? `<div>${model.tags.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>` : ''}
       <div class="small text-secondary mono">${esc(model.storage_path)}</div>
       ${isExternal(model)
         ? `<div class="small text-secondary">runs at ${esc(model.endpoint_url)}</div>` : ''}
@@ -1334,15 +1391,18 @@ function modelRow(model) {
       <div class="text-secondary">${mib(model.required_gpu_memory_mib)} each</div>
     </td>
     <td>
-      <span class="badge ${badge}">${esc(model.status)}</span>${detail}
+      <div class="d-flex flex-wrap gap-1 align-items-center">
+        <span class="badge ${badge}">${esc(model.status)}</span>${approvalPill(model)}
+      </div>${detail}
     </td>
     <td class="text-end text-nowrap">
       <button class="btn btn-sm btn-outline-secondary me-1" data-import-model="${esc(model.id)}"
               title="Scan the storage path and verify checksums">Verify</button>
+      <button class="btn btn-sm btn-outline-secondary me-1" data-edit-model="${esc(model.id)}"
+              title="Metadata and approval">Edit</button>
       <button class="btn btn-sm btn-outline-primary me-1" data-deploy-model="${esc(model.id)}"
               data-model-name="${esc(model.name)}" ${deployable ? '' : 'disabled'}
-              title="${deployable ? 'Deploy this model' : 'Only an AVAILABLE model can be deployed'}"
-              >Deploy</button>
+              title="${esc(deployTitle)}">Deploy</button>
       <button class="btn btn-sm btn-outline-danger" data-delete-model="${esc(model.id)}"
               data-model-name="${esc(model.name)}">Delete</button>
     </td>
@@ -1364,6 +1424,10 @@ function wireModelActions() {
 
   document.querySelectorAll('[data-deploy-model]').forEach((button) => {
     button.onclick = () => openDeployModal(button.dataset.deployModel, button.dataset.modelName);
+  });
+
+  document.querySelectorAll('[data-edit-model]').forEach((button) => {
+    button.onclick = () => openModelEdit(button.dataset.editModel);
   });
 
   document.querySelectorAll('[data-delete-model]').forEach((button) => {
@@ -1390,11 +1454,131 @@ async function guard(button, action) {
   }
 }
 
+/** Metadata and, for holders of model.approve, the approval status (E4). */
+function openModelEdit(modelId) {
+  const model = modelCache.find((m) => m.id === modelId);
+  if (!model) return;
+  const form = document.getElementById('model-edit-form');
+  form.dataset.modelId = modelId;
+  document.getElementById('edit-model-name').textContent = model.name;
+  document.getElementById('model-edit-error').classList.add('d-none');
+  const set = (id, value) => { document.getElementById(id).value = value ?? ''; };
+  set('edit-display', model.display_name);
+  set('edit-version', model.version);
+  set('edit-family', model.family);
+  set('edit-publisher', model.publisher);
+  set('edit-license', model.license);
+  set('edit-source', model.source_reference);
+  set('edit-tags', (model.tags || []).join(', '));
+  set('edit-description', model.description);
+  set('edit-approval', model.approval_status);
+  set('edit-approval-note', model.approval_note);
+  document.getElementById('edit-governance').classList.toggle('d-none', !can('model.approve'));
+  document.getElementById('edit-approval-current').innerHTML = approvalPill(model) +
+    (model.approved_at
+      ? ` <span class="small text-secondary">since ${esc(ago(model.approved_at))}</span>` : '');
+  new bootstrap.Modal(document.getElementById('model-edit-modal')).show();
+}
+
+onModalSubmit('model-edit-form', 'model-edit-error', async (form) => {
+  const id = form.dataset.modelId;
+  const model = modelCache.find((m) => m.id === id) || {};
+  const text = (fieldId) => field(fieldId) || null;
+  await api(`/models/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      display_name: field('edit-display'),
+      version: field('edit-version'),
+      family: text('edit-family'),
+      publisher: text('edit-publisher'),
+      license: text('edit-license'),
+      source_reference: text('edit-source'),
+      tags: field('edit-tags').split(',').map((t) => t.trim()).filter(Boolean),
+      description: text('edit-description'),
+    }),
+  });
+  const status = field('edit-approval');
+  const note = text('edit-approval-note');
+  if (can('model.approve') && (status !== model.approval_status || note !== (model.approval_note || null))) {
+    await api(`/models/${id}/approval`, {
+      method: 'POST', body: JSON.stringify({ status, note }),
+    });
+  }
+  closeModal('model-edit-modal');
+  alert('Model updated.', 'success');
+  await renderModels();
+});
+
+/* Deploy wizard (E4): Validate runs the same checks as a deploy, reserving nothing;
+ * Confirm then deploys. Changing any field sends it back to Validate. */
+function resetDeployWizard() {
+  const form = document.getElementById('deploy-form');
+  form.dataset.validated = '';
+  document.getElementById('deploy-review').innerHTML = '';
+  const submit = document.getElementById('deploy-submit');
+  submit.textContent = 'Validate';
+  submit.disabled = false;
+}
+
+function deployPayload() {
+  const indices = field('dep-gpus');
+  return {
+    node_id: field('dep-node') || null,
+    gpu_ids: indices ? indices.split(',').map((n) => Number(n.trim())) : null,
+    gpu_memory_utilization: numberField('dep-util'),
+    max_model_len: numberField('dep-maxlen'),
+    tensor_parallel_size: numberField('dep-tp'),
+  };
+}
+
+const REVIEW_LABELS = {
+  runtime: 'Runtime',
+  image: 'Image',
+  endpoint_url: 'Endpoint',
+  tensor_parallel_size: 'Tensor parallel',
+  max_model_len: 'Context length',
+  gpu_memory_utilization: 'GPU memory fraction',
+  gpu_count: 'GPUs',
+  required_gpu_memory_mib_per_gpu: 'Memory per GPU',
+  context_length: 'Catalogued context',
+};
+
+function renderDeployReview(plan) {
+  const list = (items, tone) => items.length
+    ? `<div class="alert alert-${tone} py-2 small mb-2"><ul class="mb-0 ps-3">${
+      items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul></div>` : '';
+  const rows = (obj) => Object.entries(obj)
+    .filter(([key]) => key !== 'source')
+    .map(([key, value]) => `<tr><td class="text-secondary">${esc(REVIEW_LABELS[key] || key)}</td>
+      <td class="mono">${esc(key === 'required_gpu_memory_mib_per_gpu' && value != null
+        ? mib(value) : value ?? '—')}</td></tr>`).join('');
+  const placement = plan.placement
+    ? `<tr><td class="text-secondary">Node</td><td>${esc(plan.placement.node_name || plan.placement.node_id)}
+         <span class="text-secondary mono">${plan.placement.gpu_indices.length
+           ? `GPU ${plan.placement.gpu_indices.join(', ')}` : 'no GPUs'}</span>
+         <div class="small text-secondary">${esc(plan.placement.rationale)}</div></td></tr>` : '';
+  document.getElementById('deploy-review').innerHTML = `
+    <div class="deploy-review">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <span class="pill ${plan.ok ? 'pill-ok' : 'pill-crit'}">${plan.ok ? 'Ready to deploy' : 'Cannot deploy'}</span>
+        ${approvalPill(plan)}
+      </div>
+      ${list(plan.errors, 'danger')}${list(plan.warnings, 'warning')}
+      <table class="table table-sm small mb-2"><tbody>${placement}${rows(plan.config)}</tbody></table>
+      ${Object.keys(plan.estimates || {}).length ? `
+        <div class="small fw-semibold">Estimates <span class="text-secondary fw-normal">
+          (${esc(plan.estimates.source)})</span></div>
+        <table class="table table-sm small mb-0"><tbody>${rows(plan.estimates)}</tbody></table>` : ''}
+    </div>`;
+}
+
 async function openDeployModal(modelId, modelName) {
   const form = document.getElementById('deploy-form');
   form.dataset.modelId = modelId;
   document.getElementById('deploy-model-name').textContent = modelName;
   document.getElementById('deploy-error').classList.add('d-none');
+  form.reset();
+  resetDeployWizard();
 
   const nodes = (await api('/nodes?limit=100')).items.filter((n) => n.status === 'ONLINE');
   document.getElementById('dep-node').innerHTML =
@@ -1490,13 +1674,18 @@ function deploymentRow(deployment) {
     <td>${state}${detail}</td>
     <td class="small mono">
       ${esc(deployment.runtime)}
-      <div class="text-secondary">tp=${deployment.tensor_parallel_size}</div>
+      <div class="text-secondary">tp=${deployment.tensor_parallel_size}
+        · rev ${deployment.current_revision || 1}</div>
     </td>
     <td class="small text-secondary">${esc(ago(deployment.started_at || deployment.created_at))}</td>
     <td class="text-end text-nowrap">
       <button class="btn btn-sm btn-outline-secondary me-1"
               data-logs="${esc(deployment.id)}" data-dep-name="${esc(deployment.model_name)}"
               >Logs</button>
+      <button class="btn btn-sm btn-outline-secondary me-1"
+              data-revisions="${esc(deployment.id)}" data-dep-name="${esc(deployment.model_name)}"
+              ${deployment.node_id ? '' : 'disabled title="An external runtime has no configuration here"'}
+              >Revisions</button>
       <button class="btn btn-sm btn-outline-secondary me-1"
               data-dep-action="restart" data-dep="${esc(deployment.id)}"
               ${stoppable ? '' : 'disabled'}>Restart</button>
@@ -1528,17 +1717,178 @@ function wireDeploymentActions() {
   });
 
   document.querySelectorAll('[data-logs]').forEach((button) => {
-    button.onclick = () => guard(button, async () => {
+    button.onclick = () => {
       document.getElementById('logs-modal-title').textContent = `Logs — ${button.dataset.depName}`;
-      const body = document.getElementById('logs-body');
-      body.textContent = 'Loading…';
-      new bootstrap.Modal(document.getElementById('logs-modal')).show();
-      const result = await api(`/deployments/${button.dataset.logs}/logs?tail=500`);
-      body.textContent = result.lines || '(no output)';
-      body.scrollTop = body.scrollHeight;
+      document.getElementById('logs-modal').dataset.dep = button.dataset.logs;
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('logs-modal')).show();
+      streamLogs(button.dataset.logs);
+    };
+  });
+
+  document.querySelectorAll('[data-revisions]').forEach((button) => {
+    button.onclick = () => guard(button, () =>
+      openRevisions(button.dataset.revisions, button.dataset.depName));
+  });
+}
+
+/* Live logs (E4). Read with fetch rather than EventSource, which cannot send the
+ * Authorization header. Closed when the modal closes; the server ends a stream after
+ * ten minutes, and Reconnect picks it up again. */
+let logStream = null;
+const LOG_LINE_CAP = 5000;
+
+function setLogState(text, tone) {
+  const pill = document.getElementById('logs-live');
+  pill.className = `pill ${tone}`;
+  pill.textContent = text;
+  document.getElementById('logs-reconnect').classList.toggle('d-none', tone === 'pill-ok');
+}
+
+async function streamLogs(deploymentId) {
+  logStream?.abort();
+  const controller = new AbortController();
+  logStream = controller;
+  const body = document.getElementById('logs-body');
+  body.textContent = '';
+  let lineCount = 0;
+  setLogState('Connecting', 'pill-idle');
+
+  const append = (lines) => {
+    const follow = body.scrollTop + body.clientHeight >= body.scrollHeight - 24;
+    body.append(document.createTextNode(lines.map((l) => `${l}\n`).join('')));
+    lineCount += lines.length;
+    if (lineCount > LOG_LINE_CAP) {
+      const all = body.textContent.split('\n');
+      body.textContent = all.slice(-LOG_LINE_CAP).join('\n');
+      lineCount = LOG_LINE_CAP;
+    }
+    if (follow) body.scrollTop = body.scrollHeight;
+  };
+  const handle = (block) => {
+    let event = 'message';
+    let data = '';
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event: ')) event = line.slice(7);
+      else if (line.startsWith('data: ')) data += line.slice(6);
+    }
+    if (!data) return;
+    const payload = JSON.parse(data);
+    if (event === 'lines') append(payload.lines);
+    if (event === 'end') {
+      setLogState(payload.reason === 'no_container' ? 'Stored excerpt' : 'Stream ended', 'pill-idle');
+    }
+  };
+
+  try {
+    const response = await fetch(`${API}/deployments/${deploymentId}/logs/stream?tail=500`, {
+      headers: { Authorization: `Bearer ${token.get()}` }, signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Request failed (${response.status})`);
+    setLogState('Live', 'pill-ok');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        handle(buffer.slice(0, cut));
+        buffer = buffer.slice(cut + 2);
+      }
+    }
+    if (logStream === controller && document.getElementById('logs-live').textContent === 'Live') {
+      setLogState('Stream ended', 'pill-idle');
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    append([`(${err.message})`]);
+    setLogState('Disconnected', 'pill-crit');
+  }
+}
+
+document.getElementById('logs-modal').addEventListener('hidden.bs.modal', () => {
+  logStream?.abort();
+  logStream = null;
+});
+document.getElementById('logs-reconnect').onclick = () =>
+  streamLogs(document.getElementById('logs-modal').dataset.dep);
+
+/* Revisions (E4). Append-only: a rollback is a new revision copying an old one. */
+async function openRevisions(deploymentId, name) {
+  const modal = document.getElementById('revisions-modal');
+  modal.dataset.dep = deploymentId;
+  document.getElementById('revisions-title').textContent = name;
+  document.getElementById('revision-error').classList.add('d-none');
+  document.getElementById('revision-form').reset();
+  await renderRevisions();
+  bootstrap.Modal.getOrCreateInstance(modal).show();
+}
+
+async function renderRevisions() {
+  const deploymentId = document.getElementById('revisions-modal').dataset.dep;
+  const revisions = await api(`/deployments/${deploymentId}/revisions`);
+  const current = revisions.find((r) => r.current)?.config || {};
+  document.getElementById('rev-image').placeholder = current.image || '';
+  document.getElementById('rev-maxlen').placeholder = current.max_model_len ?? '';
+  document.getElementById('rev-tp').placeholder = current.tensor_parallel_size ?? '';
+  document.getElementById('rev-util').placeholder = current.gpu_memory_utilization ?? '';
+  const manage = can('model.deploy');
+  document.getElementById('revision-form').classList.toggle('d-none', !manage);
+
+  document.getElementById('revisions-body').innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-sm align-middle small">
+        <thead><tr><th>Rev</th><th>Configuration</th><th>Note</th><th>When</th><th></th></tr></thead>
+        <tbody>${revisions.map((r) => `<tr>
+          <td class="fw-semibold">${r.revision}
+            ${r.current ? '<span class="pill pill-ok ms-1">current</span>' : ''}</td>
+          <td class="mono">${esc(r.config.image || '')}
+            <div class="text-secondary">ctx ${esc(r.config.max_model_len ?? '—')}
+              · tp ${esc(r.config.tensor_parallel_size ?? '—')}
+              · mem ${esc(r.config.gpu_memory_utilization ?? '—')}</div></td>
+          <td>${esc(r.change_note || '')}${r.rolled_back_from
+            ? `<div class="text-secondary">restores revision ${r.rolled_back_from}</div>` : ''}</td>
+          <td class="text-secondary text-nowrap">${esc(ago(r.created_at))}</td>
+          <td class="text-end">${!r.current && manage
+            ? `<button class="btn btn-sm btn-outline-secondary" data-rollback="${r.revision}"
+                 >Roll back</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+
+  document.querySelectorAll('[data-rollback]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(`Restore revision ${button.dataset.rollback}? The container is recreated ` +
+        'on the same GPUs; the model is unavailable while it loads.')) return;
+      const revision = await api(`/deployments/${deploymentId}/rollback`, {
+        method: 'POST', body: JSON.stringify({ revision: Number(button.dataset.rollback) }),
+      });
+      alert(`Revision ${revision.revision} is rolling out.`, 'success');
+      await renderRevisions();
+      if (currentPage === 'deployments') await renderDeployments();
     });
   });
 }
+
+onModalSubmit('revision-form', 'revision-error', async (form) => {
+  const deploymentId = document.getElementById('revisions-modal').dataset.dep;
+  const revision = await api(`/deployments/${deploymentId}/revisions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      image: field('rev-image') || null,
+      max_model_len: numberField('rev-maxlen'),
+      tensor_parallel_size: numberField('rev-tp'),
+      gpu_memory_utilization: numberField('rev-util'),
+      change_note: field('rev-note') || null,
+    }),
+  });
+  form.reset();
+  alert(`Revision ${revision.revision} is rolling out.`, 'success');
+  await renderRevisions();
+  if (currentPage === 'deployments') await renderDeployments();
+});
 
 /* -------------------------------------------------------------------------- */
 /* Endpoints, keys and usage (§13, M20)                                       */
@@ -3585,6 +3935,8 @@ onModalSubmit('model-form', 'model-error', async (form) => {
       context_length: numberField('mdl-context'),
       required_gpu_memory_mib: external ? 0 : numberField('mdl-mem'),
       min_gpu_count: external ? 0 : (numberField('mdl-gpus') ?? 1),
+      license: field('mdl-license') || null,
+      family: field('mdl-family') || null,
       team_id: teamField('mdl-team'),
     }),
   });
@@ -3592,26 +3944,41 @@ onModalSubmit('model-form', 'model-error', async (form) => {
   form.reset();
   // Registration writes metadata only — it does not touch the filesystem, so the model
   // is REGISTERED, not AVAILABLE, until Verify confirms the weights are actually there.
-  alert(`Registered ${model.name} (${model.status}). Run Verify to catalogue its files.`,
-    'success');
+  alert(`Registered ${model.name} (${model.status}, ${model.approval_status}). ` +
+    'Run Verify to catalogue its files.', 'success');
   await renderModels();
 });
 
 onModalSubmit('deploy-form', 'deploy-error', async (form) => {
-  const indices = field('dep-gpus');
-  const accepted = await api(`/models/${form.dataset.modelId}/deploy`, {
-    method: 'POST',
-    body: JSON.stringify({
-      node_id: field('dep-node') || null,
-      gpu_ids: indices ? indices.split(',').map((n) => Number(n.trim())) : null,
-      gpu_memory_utilization: numberField('dep-util'),
-    }),
-  });
-  closeModal('deploy-modal');
-  form.reset();
-  alert(`${accepted.message} Watch it under Deployments.`, 'success');
-  navigate('deployments');
+  const submit = document.getElementById('deploy-submit');
+  if (!form.dataset.validated) {
+    const plan = await api(`/models/${form.dataset.modelId}/deploy/validate`, {
+      method: 'POST', body: JSON.stringify(deployPayload()),
+    });
+    renderDeployReview(plan);
+    if (plan.ok) {
+      form.dataset.validated = '1';
+      submit.textContent = 'Confirm deploy';
+    }
+    return;
+  }
+  submit.disabled = true;
+  try {
+    const accepted = await api(`/models/${form.dataset.modelId}/deploy`, {
+      method: 'POST', body: JSON.stringify(deployPayload()),
+    });
+    closeModal('deploy-modal');
+    form.reset();
+    alert(`${accepted.message} Watch it under Deployments.`, 'success');
+    navigate('deployments');
+  } finally {
+    resetDeployWizard();
+  }
 });
+
+document.getElementById('deploy-form').addEventListener('input', resetDeployWizard);
+document.getElementById('models-approval').onchange = () => renderModels().catch((e) => alert(e.message));
+document.getElementById('models-group').onchange = () => renderModels().catch((e) => alert(e.message));
 
 onModalSubmit('alias-form', 'alias-error', async (form) => {
   await api('/model-aliases', {

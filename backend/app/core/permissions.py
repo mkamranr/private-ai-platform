@@ -33,6 +33,9 @@ class Permission:
     MODEL_STOP: Final = "model.stop"
     MODEL_DELETE: Final = "model.delete"
     MODEL_INFERENCE: Final = "model.inference"
+    # Model governance (E4, plan §5.3). Separate from MODEL_REGISTER: whoever imports a
+    # model should not also be the one who signs it off for production use.
+    MODEL_APPROVE: Final = "model.approve"
     # Inference backends (E1, plan §5.2). Separate from MODEL_REGISTER: pointing the
     # platform at a new server, with its credential, is an infrastructure decision.
     BACKEND_VIEW: Final = "backend.view"
@@ -111,6 +114,7 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.MODEL_STOP: "Stop and restart model deployments",
     Permission.MODEL_DELETE: "Delete models and deployments",
     Permission.MODEL_INFERENCE: "Call inference endpoints through the gateway",
+    Permission.MODEL_APPROVE: "Approve, deprecate or block models",
     Permission.BACKEND_VIEW: "View inference backends and their health",
     Permission.BACKEND_MANAGE: "Register, test, modify and remove inference backends",
     Permission.AGENT_VIEW: "View agents and their run history",
@@ -208,6 +212,7 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.MODEL_STOP,
                 Permission.MODEL_DELETE,
                 Permission.MODEL_INFERENCE,
+                Permission.MODEL_APPROVE,
                 Permission.BACKEND_VIEW,
                 Permission.BACKEND_MANAGE,
                 Permission.ALERT_VIEW,

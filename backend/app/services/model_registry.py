@@ -17,6 +17,7 @@ container that starts and dies minutes later with a stack trace about a missing 
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import hashlib
 import uuid
 from dataclasses import dataclass, field
@@ -33,7 +34,13 @@ from app.core.logging import get_logger
 from app.core.url_policy import PUBLIC_AI_HOSTS
 from app.models.audit import AuditAction
 from app.models.auth import User
-from app.models.models_registry import Model, ModelFile, ModelStatus, ModelType
+from app.models.models_registry import (
+    Model,
+    ModelApprovalStatus,
+    ModelFile,
+    ModelStatus,
+    ModelType,
+)
 from app.repositories.models_registry import (
     ModelAliasRepository,
     ModelDeploymentRepository,
@@ -175,18 +182,34 @@ class ModelRegistryService:
         self,
         *,
         model_type: str | None = None,
+        approval_status: str | None = None,
+        family: str | None = None,
         limit: int = 100,
         offset: int = 0,
         where: Any = None,
     ) -> list[Model]:
         return list(
             await self._models.list_models(
-                model_type=model_type, limit=limit, offset=offset, where=where
+                model_type=model_type,
+                approval_status=approval_status,
+                family=family,
+                limit=limit,
+                offset=offset,
+                where=where,
             )
         )
 
-    async def count_models(self, *, model_type: str | None = None, where: Any = None) -> int:
-        return await self._models.count_matching(model_type=model_type, where=where)
+    async def count_models(
+        self,
+        *,
+        model_type: str | None = None,
+        approval_status: str | None = None,
+        family: str | None = None,
+        where: Any = None,
+    ) -> int:
+        return await self._models.count_matching(
+            model_type=model_type, approval_status=approval_status, family=family, where=where
+        )
 
     async def get_model(self, model_id: uuid.UUID) -> Model:
         model = await self._models.get_with_files(model_id)
@@ -224,6 +247,11 @@ class ModelRegistryService:
         description: str | None = None,
         endpoint_url: str | None = None,
         metadata: dict[str, Any] | None = None,
+        license: str | None = None,
+        source_reference: str | None = None,
+        publisher: str | None = None,
+        family: str | None = None,
+        tags: list[str] | None = None,
         actor: User | None = None,
     ) -> Model:
         if await self._models.get_by_name(name):
@@ -276,6 +304,14 @@ class ModelRegistryService:
             description=description,
             endpoint_url=endpoint_url,
             metadata_json=metadata or {},
+            license=license,
+            source_reference=source_reference,
+            publisher=publisher,
+            family=family,
+            tags=_clean_tags(tags),
+            # Every new model starts unreviewed, however it arrived. Approval is a person's
+            # decision, recorded with who made it, so no import path can grant it.
+            approval_status=ModelApprovalStatus.EXPERIMENTAL,
             # An external model needs no import step: REGISTERED means "catalogued, weights
             # not yet verified on disk", and there are no weights on this platform's disk
             # to verify — they live wherever the external runtime keeps them.
@@ -298,6 +334,79 @@ class ModelRegistryService:
             resource_id=str(model.id),
             metadata={"name": name, "type": model_type, "runtime": runtime},
         )
+        return model
+
+    # -- governance (E4, plan §5.3) ----------------------------------------
+    async def update_model(
+        self, model_id: uuid.UUID, changes: dict[str, Any], *, actor: User
+    ) -> Model:
+        """Edit catalogue metadata. ``changes`` holds only the fields the caller sent."""
+        model = await self.get_model(model_id)
+        allowed = {
+            "display_name",
+            "description",
+            "version",
+            "license",
+            "source_reference",
+            "publisher",
+            "family",
+            "tags",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValidationError(f"Cannot change {', '.join(sorted(unknown))} here.")
+        for field_name in ("display_name", "version"):
+            if field_name in changes and changes[field_name] is None:
+                raise ValidationError(
+                    f"{field_name} cannot be empty.", details={"field": field_name}
+                )
+        before = {key: getattr(model, key) for key in changes}
+        for key, value in changes.items():
+            setattr(model, key, _clean_tags(value) if key == "tags" else value)
+        await self._models.flush()
+        await self._audit.record(
+            AuditAction.MODEL_UPDATED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="model",
+            resource_id=str(model.id),
+            metadata={
+                "name": model.name,
+                "changed": {
+                    key: {"from": before[key], "to": getattr(model, key)}
+                    for key in changes
+                    if before[key] != getattr(model, key)
+                },
+            },
+        )
+        return model
+
+    async def set_approval(
+        self, model_id: uuid.UUID, status: str, *, note: str | None, actor: User
+    ) -> Model:
+        """Change a model's approval status. Recorded with who, when and why."""
+        if status not in set(ModelApprovalStatus):
+            raise ValidationError(
+                f"Unknown approval status {status!r}.",
+                details={"allowed": [str(s) for s in ModelApprovalStatus]},
+            )
+        model = await self.get_model(model_id)
+        previous = model.approval_status
+        model.approval_status = status
+        model.approval_note = note
+        model.approved_by = actor.id
+        model.approved_at = dt.datetime.now(dt.UTC)
+        await self._models.flush()
+        await self._audit.record(
+            AuditAction.MODEL_APPROVAL_CHANGED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="model",
+            resource_id=str(model.id),
+            message=note,
+            metadata={"name": model.name, "from": previous, "to": status},
+        )
+        log.info("model_approval_changed", model=model.name, previous=previous, status=status)
         return model
 
     async def import_ollama(self, *, endpoint: str | None = None, actor: User) -> list[dict]:
@@ -560,6 +669,11 @@ class ModelRegistryService:
                     min_gpu_count=spec.get("min_gpu_count", 1),
                     description=spec.get("description"),
                     metadata=spec.get("metadata") or {},
+                    license=spec.get("license"),
+                    source_reference=spec.get("source_reference"),
+                    publisher=spec.get("publisher"),
+                    family=spec.get("family"),
+                    tags=spec.get("tags"),
                     actor=actor,
                 )
             else:
@@ -570,6 +684,13 @@ class ModelRegistryService:
                     "required_gpu_memory_mib", model.required_gpu_memory_mib
                 )
                 model.description = spec.get("description", model.description)
+                # Provenance converges with the bundle; the approval status never does.
+                # Re-running a manifest must not undo someone's decision to block a model.
+                for key in ("license", "source_reference", "publisher", "family"):
+                    if key in spec:
+                        setattr(model, key, spec[key])
+                if "tags" in spec:
+                    model.tags = _clean_tags(spec["tags"])
 
             results.append(await self.import_from_disk(model.id, actor=actor))
 
@@ -744,6 +865,20 @@ class ModelRegistryService:
             resource_id=str(alias_id),
             message=f"Alias {alias!r} deleted",
         )
+
+
+def _clean_tags(tags: Any) -> list[str]:
+    """Trimmed, de-duplicated, order kept. Manifests are hand-written YAML."""
+    if not tags:
+        return []
+    if isinstance(tags, str):
+        tags = [tags]
+    seen: dict[str, None] = {}
+    for tag in tags:
+        text = str(tag).strip()[:64]
+        if text:
+            seen.setdefault(text, None)
+    return list(seen)[:32]
 
 
 def _sha256(path: Path) -> str:

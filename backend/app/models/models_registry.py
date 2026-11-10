@@ -52,6 +52,20 @@ class ModelStatus(enum.StrEnum):
     DISABLED = "DISABLED"
 
 
+class ModelApprovalStatus(enum.StrEnum):
+    """Governance status (E4, plan §5.3). Independent of `ModelStatus`, which says whether
+    the weights are present; this says whether the organisation allows the model."""
+
+    #: Cleared for production use.
+    APPROVED = "approved"
+    #: Usable, but not yet reviewed. What a newly registered model starts as.
+    EXPERIMENTAL = "experimental"
+    #: Still served where it is already deployed; no new deployments.
+    DEPRECATED = "deprecated"
+    #: Neither deployed nor served. Calls through an alias go to its fallback, if any.
+    BLOCKED = "blocked"
+
+
 class DeploymentState(enum.StrEnum):
     """The §M08 lifecycle.
 
@@ -97,6 +111,10 @@ class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         CheckConstraint(
             "status IN ('REGISTERED','AVAILABLE','UNAVAILABLE','DISABLED')", name="status_valid"
+        ),
+        CheckConstraint(
+            "approval_status IN ('approved','experimental','deprecated','blocked')",
+            name="approval_status_valid",
         ),
     )
 
@@ -172,6 +190,31 @@ class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     status_detail: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
+
+    # -- governance (E4) ---------------------------------------------------
+    #: Whether the organisation allows this model. New registrations start experimental;
+    #: everything catalogued before E4 was backfilled as approved, so upgrading blocks
+    #: nothing that was already in use.
+    approval_status: Mapped[str] = mapped_column(
+        String(16), default=ModelApprovalStatus.EXPERIMENTAL, nullable=False, index=True
+    )
+    approval_note: Mapped[str | None] = mapped_column(Text)
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    #: When the approval status last changed.
+    approved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Free text, an SPDX id where there is one ("apache-2.0", "llama3.1").
+    license: Mapped[str | None] = mapped_column(String(128))
+    #: Where the weights came from, e.g. "huggingface:Qwen/Qwen2.5-7B-Instruct@a09a35".
+    #: Provenance only — never fetched (Rule 4).
+    source_reference: Mapped[str | None] = mapped_column(String(512))
+    publisher: Mapped[str | None] = mapped_column(String(128))
+    #: Groups versions and quantised variants of the same model ("qwen2.5-7b-instruct").
+    #: Within a family, `version` and `quantization` tell the variants apart.
+    family: Mapped[str | None] = mapped_column(String(128), index=True)
+    tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+
     # Runtime arguments from the manifest, e.g. extra vLLM flags.
     metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
@@ -267,6 +310,10 @@ class ModelDeployment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     command: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     environment: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
+    #: The configuration revision currently applied (E4). Revision 1 is the original
+    #: request; every change and every rollback appends one — history is never edited.
+    current_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
     error_message: Mapped[str | None] = mapped_column(Text)
     # Captured on failure. A model that fails to load produces the only evidence of why
     # in its container logs, and the container is usually gone by the time anyone looks.
@@ -287,6 +334,43 @@ class ModelDeployment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return f"<ModelDeployment {self.model_id} {self.state}>"
+
+
+class DeploymentRevision(UUIDPrimaryKeyMixin, Base):
+    """One configuration of a deployment (E4, plan §5.4).
+
+    Append-only. A rollback does not rewind to an old row; it appends a new revision
+    copying the old configuration, so the history shows what actually ran when.
+    """
+
+    __tablename__ = "deployment_revisions"
+    __table_args__ = (
+        UniqueConstraint("deployment_id", "revision", name="deployment_revision"),
+        CheckConstraint("revision >= 1", name="revision_positive"),
+    )
+
+    deployment_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("model_deployments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: The effective runtime configuration: image, tensor parallelism, context length,
+    #: GPU memory fraction and GPUs. Never secrets — environment values are not stored.
+    config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    change_note: Mapped[str | None] = mapped_column(Text)
+    #: The revision this one restored, for a rollback.
+    rolled_back_from: Mapped[int | None] = mapped_column(Integer)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<DeploymentRevision {self.deployment_id} r{self.revision}>"
 
 
 class ModelAlias(UUIDPrimaryKeyMixin, TimestampMixin, Base):

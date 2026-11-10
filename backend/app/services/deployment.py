@@ -20,9 +20,10 @@ failure anywhere in creation releases the GPUs by rollback rather than stranding
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,15 +38,25 @@ from app.models.audit import AuditAction
 from app.models.auth import User
 from app.models.infrastructure import Node, NodeStatus
 from app.models.models_registry import (
+    DeploymentRevision,
     DeploymentState,
     Model,
+    ModelApprovalStatus,
     ModelDeployment,
     ModelStatus,
 )
 from app.repositories.infrastructure import NodeRepository
-from app.repositories.models_registry import ModelDeploymentRepository, ModelRepository
+from app.repositories.models_registry import (
+    DeploymentRevisionRepository,
+    ModelDeploymentRepository,
+    ModelRepository,
+)
 from app.repositories.operations import InferenceBackendRepository
-from app.schemas.models_registry import DeploymentDetail
+from app.schemas.models_registry import (
+    DeploymentDetail,
+    DeployValidationResponse,
+    PlacementPreview,
+)
 from app.services.audit import AuditService
 from app.services.compute_backend import CONTAINER_PORT
 from app.services.inference_backends import backend_api_key
@@ -77,6 +88,91 @@ class DeploymentRequestSpec:
     gpu_memory_utilization: float | None = None
 
 
+@dataclass(slots=True)
+class RevisionChange:
+    """What a new deployment revision changes (E4). None keeps the current value."""
+
+    image: str | None = None
+    tensor_parallel_size: int | None = None
+    max_model_len: int | None = None
+    gpu_memory_utilization: float | None = None
+    change_note: str | None = None
+
+
+#: Fields of a deployment that make up its runtime configuration. Revisions record and
+#: restore exactly these, and nothing secret: environment values are never copied in.
+_REVISION_FIELDS = ("image", "tensor_parallel_size", "max_model_len", "gpu_memory_utilization")
+
+#: States in which a deployment is between steps. A revision then would race the worker.
+_IN_FLIGHT = frozenset(
+    {
+        DeploymentState.REQUESTED,
+        DeploymentState.VALIDATING,
+        DeploymentState.SCHEDULING,
+        DeploymentState.CREATING,
+        DeploymentState.STARTING,
+        DeploymentState.STOPPING,
+    }
+)
+
+
+def new_log_lines(previous: list[str], current: list[str]) -> list[str]:
+    """The lines of ``current`` that ``previous`` had not already shown.
+
+    Each poll returns the last N lines, so consecutive polls overlap: the end of the old
+    window is the start of the new one. The longest such overlap is skipped. With no
+    overlap at all, more than N lines arrived between polls and all of them are new.
+    """
+    if not previous:
+        return current
+    for k in range(min(len(previous), len(current)), 0, -1):
+        if previous[-k:] == current[:k]:
+            return current[k:]
+    return current
+
+
+async def follow_logs(
+    backend: ComputeBackend,
+    handle: DeploymentHandle,
+    *,
+    tail: int = 200,
+    interval_seconds: float = 2.0,
+    max_seconds: float = 600.0,
+) -> AsyncIterator[list[str]]:
+    """Poll a container's logs and yield each batch of new lines (E4).
+
+    Polling rather than a follow stream: the node agent's log call returns a window,
+    and a bounded poll cannot hold a node-agent connection open indefinitely. Stops
+    after ``max_seconds``; the console reconnects if it is still open.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max_seconds
+    shown: list[str] = []
+    while True:
+        text = await backend.fetch_logs(handle, tail=tail)
+        current = text.splitlines()
+        fresh = new_log_lines(shown, current)
+        if fresh:
+            yield fresh
+        shown = current
+        if loop.time() + interval_seconds > deadline:
+            return
+        await asyncio.sleep(interval_seconds)
+
+
+def revision_config(deployment: ModelDeployment) -> dict[str, Any]:
+    """The configuration a revision records for ``deployment``."""
+    return {
+        "runtime": deployment.runtime,
+        "image": deployment.image,
+        "node_id": str(deployment.node_id) if deployment.node_id else None,
+        "gpu_indices": list(deployment.gpu_indices),
+        "tensor_parallel_size": deployment.tensor_parallel_size,
+        "max_model_len": deployment.max_model_len,
+        "gpu_memory_utilization": deployment.gpu_memory_utilization,
+    }
+
+
 class DeploymentService:
     """Creates deployments and advances their state machine."""
 
@@ -103,6 +199,7 @@ class DeploymentService:
         # the same as a clean platform.
         self.last_unscanned_nodes: list[str] = []
         self._scheduler = SimpleGpuScheduler(gpus)
+        self._revisions = DeploymentRevisionRepository(deployments.session)
 
     def _backend(self, node: Node) -> ComputeBackend:
         return self._backend_factory(node)
@@ -116,6 +213,37 @@ class DeploymentService:
                 details={"configured": sorted(images)},
             )
         return image
+
+    def _allowed_images(self, runtime: str) -> set[str]:
+        models = self._settings.models
+        allowed = set(models.runtime_image_allowlist.get(runtime, []))
+        if models.runtime_images.get(runtime):
+            allowed.add(models.runtime_images[runtime])
+        return allowed
+
+    # -- governance (E4) ---------------------------------------------------
+    @staticmethod
+    def _check_governance(model: Model) -> None:
+        """Refuse a *new* deployment of a blocked or deprecated model.
+
+        Existing deployments are left alone: deprecating a model must not take down what
+        is serving traffic. Blocking it stops the gateway routing to it instead (see
+        `GatewayService.resolve`), so a blocked model's containers can be stopped at a
+        time the operator chooses.
+        """
+        status = model.approval_status
+        note = f" Note: {model.approval_note}" if model.approval_note else ""
+        if status == ModelApprovalStatus.BLOCKED:
+            raise ConflictError(
+                f"{model.name!r} is blocked and cannot be deployed.{note}",
+                details={"approval_status": status},
+            )
+        if status == ModelApprovalStatus.DEPRECATED:
+            raise ConflictError(
+                f"{model.name!r} is deprecated: existing deployments keep running, but no "
+                f"new ones can be created.{note}",
+                details={"approval_status": status},
+            )
 
     # -- reads -------------------------------------------------------------
     async def list_deployments(
@@ -145,6 +273,7 @@ class DeploymentService:
             raise NotFoundError(f"No model with id {spec.model_id}.")
 
         runtime = spec.runtime or model.runtime or self._settings.models.default_runtime
+        self._check_governance(model)
 
         if runtime in EXTERNAL_RUNTIMES:
             return await self._attach_external(model, runtime, actor=actor)
@@ -190,9 +319,11 @@ class DeploymentService:
             max_model_len=spec.max_model_len or model.context_length,
             gpu_memory_utilization=spec.gpu_memory_utilization or DEFAULT_GPU_MEMORY_UTILIZATION,
             requested_by=actor.id,
+            current_revision=1,
         )
         self._deployments.add(deployment)
         await self._deployments.flush()
+        self._add_revision(deployment, 1, note="Initial deployment", actor=actor)
 
         await self._audit.record(
             AuditAction.MODEL_DEPLOYED,
@@ -287,9 +418,11 @@ class DeploymentService:
             max_model_len=model.context_length,
             gpu_memory_utilization=0.0,
             requested_by=actor.id,
+            current_revision=1,
         )
         self._deployments.add(deployment)
         await self._deployments.flush()
+        self._add_revision(deployment, 1, note="Attached to an external runtime", actor=actor)
 
         await self._audit.record(
             AuditAction.MODEL_DEPLOYED,
@@ -307,6 +440,26 @@ class DeploymentService:
             endpoint=endpoint,
         )
         return deployment
+
+    def _add_revision(
+        self,
+        deployment: ModelDeployment,
+        number: int,
+        *,
+        note: str | None,
+        actor: User,
+        rolled_back_from: int | None = None,
+    ) -> DeploymentRevision:
+        revision = DeploymentRevision(
+            deployment_id=deployment.id,
+            revision=number,
+            config=revision_config(deployment),
+            change_note=note,
+            rolled_back_from=rolled_back_from,
+            created_by=actor.id,
+        )
+        self._revisions.add(revision)
+        return revision
 
     async def _node_for(self, deployment: ModelDeployment) -> Node | None:
         """The node this deployment runs on, or None.
@@ -384,6 +537,284 @@ class DeploymentService:
         raise ConflictError(
             "No ONLINE node is available. Register a node before deploying a model."
         )
+
+    # -- deploy validation (E4) --------------------------------------------
+    async def plan_deployment(self, spec: DeploymentRequestSpec) -> DeployValidationResponse:
+        """Dry-run `request_deployment`: the same checks, but nothing is reserved.
+
+        Every problem is collected rather than the first one raised, so the deploy
+        wizard can show the whole picture in one step.
+        """
+        model = await self._models.get_with_files(spec.model_id)
+        if model is None:
+            raise NotFoundError(f"No model with id {spec.model_id}.")
+        runtime = spec.runtime or model.runtime or self._settings.models.default_runtime
+        external = runtime in EXTERNAL_RUNTIMES
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        try:
+            self._check_governance(model)
+        except ConflictError as exc:
+            errors.append(exc.message)
+        if model.approval_status == ModelApprovalStatus.EXPERIMENTAL:
+            warnings.append(
+                f"{model.name!r} is experimental: it has not been approved for production use."
+            )
+        if not model.license:
+            warnings.append("No license is recorded for this model.")
+
+        placement: PlacementPreview | None = None
+        estimates: dict[str, Any] = {}
+        if external:
+            if not (model.endpoint_url or "").strip():
+                errors.append(
+                    f"{model.name!r} uses the {runtime!r} runtime but has no endpoint_url."
+                )
+            warnings.append(
+                "External runtime: nothing is scheduled. The endpoint is probed when you "
+                "confirm, and the platform will not start, stop or restart it."
+            )
+            config: dict[str, Any] = {"runtime": runtime, "endpoint_url": model.endpoint_url}
+        else:
+            gpu_indices: list[int] = []
+            try:
+                self._validate_model(model, runtime)
+                node = await self._pick_node(spec)
+                chosen = await self._place(model, spec, node, runtime)
+            except (ValidationError, ConflictError, NotFoundError) as exc:
+                errors.append(exc.message)
+            else:
+                gpu_indices = list(chosen.gpu_indices)
+                target = node or await self._nodes.get(uuid.UUID(chosen.node_id))
+                placement = PlacementPreview(
+                    node_id=uuid.UUID(chosen.node_id),
+                    node_name=target.name if target else None,
+                    gpu_indices=gpu_indices,
+                    rationale=chosen.rationale,
+                )
+            tensor_parallel = spec.tensor_parallel_size or len(gpu_indices) or 1
+            if gpu_indices and tensor_parallel > len(gpu_indices):
+                errors.append(
+                    f"tensor_parallel_size {tensor_parallel} needs at least that many GPUs; "
+                    f"the placement has {len(gpu_indices)}."
+                )
+            max_len = spec.max_model_len or model.context_length
+            if (
+                spec.max_model_len
+                and model.context_length
+                and (spec.max_model_len > model.context_length)
+            ):
+                warnings.append(
+                    f"max_model_len {spec.max_model_len} is above the catalogued context "
+                    f"length ({model.context_length}); the runtime may refuse to start."
+                )
+            config = {
+                "runtime": runtime,
+                "image": self._settings.models.runtime_images.get(runtime),
+                "tensor_parallel_size": tensor_parallel,
+                "max_model_len": max_len,
+                "gpu_memory_utilization": (
+                    spec.gpu_memory_utilization or DEFAULT_GPU_MEMORY_UTILIZATION
+                ),
+            }
+            estimates = {
+                "source": "model catalogue entry, not measured",
+                "gpu_count": len(spec.gpu_ids) if spec.gpu_ids else model.min_gpu_count,
+                "required_gpu_memory_mib_per_gpu": model.required_gpu_memory_mib,
+                "context_length": model.context_length,
+            }
+
+        return DeployValidationResponse(
+            ok=not errors,
+            model=model.name,
+            runtime=runtime,
+            external=external,
+            approval_status=model.approval_status,
+            placement=placement,
+            config=config,
+            estimates=estimates,
+            warnings=warnings,
+            errors=errors,
+        )
+
+    # -- revisions (E4, plan §5.4) -----------------------------------------
+    async def list_revisions(self, deployment_id: uuid.UUID) -> list[DeploymentRevision]:
+        await self.get_deployment(deployment_id)
+        return list(await self._revisions.for_deployment(deployment_id))
+
+    async def revise_deployment(
+        self, deployment_id: uuid.UUID, change: RevisionChange, *, actor: User
+    ) -> tuple[ModelDeployment, DeploymentRevision]:
+        """Append a revision with ``change`` applied, and roll it out."""
+        deployment = await self.get_deployment(deployment_id)
+        target = {
+            "image": change.image,
+            "tensor_parallel_size": change.tensor_parallel_size,
+            "max_model_len": change.max_model_len,
+            "gpu_memory_utilization": change.gpu_memory_utilization,
+        }
+        target = {key: value for key, value in target.items() if value is not None}
+        if not target:
+            raise ValidationError("Nothing to change: give at least one setting.")
+        revision = await self._apply_revision(
+            deployment, target, note=change.change_note, actor=actor
+        )
+        await self._audit.record(
+            AuditAction.DEPLOYMENT_REVISED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="deployment",
+            resource_id=str(deployment.id),
+            metadata={"revision": revision.revision, "changes": target},
+        )
+        return deployment, revision
+
+    async def rollback_deployment(
+        self,
+        deployment_id: uuid.UUID,
+        to_revision: int,
+        *,
+        note: str | None,
+        actor: User,
+    ) -> tuple[ModelDeployment, DeploymentRevision]:
+        """Restore an earlier revision's configuration, as a new revision."""
+        deployment = await self.get_deployment(deployment_id)
+        old = await self._revisions.get_revision(deployment_id, to_revision)
+        if old is None:
+            raise NotFoundError(f"Deployment has no revision {to_revision}.")
+        if to_revision == deployment.current_revision:
+            raise ConflictError(f"Revision {to_revision} is already the one applied.")
+        if list(old.config.get("gpu_indices") or []) != list(deployment.gpu_indices):
+            raise ConflictError(
+                f"Revision {to_revision} ran on different GPUs. Rolling back keeps the "
+                "current GPUs, so create a new deployment for that configuration instead."
+            )
+        target = {key: old.config[key] for key in _REVISION_FIELDS if key in old.config}
+        revision = await self._apply_revision(
+            deployment,
+            target,
+            note=note or f"Rolled back to revision {to_revision}",
+            actor=actor,
+            rolled_back_from=to_revision,
+        )
+        await self._audit.record(
+            AuditAction.DEPLOYMENT_ROLLED_BACK,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="deployment",
+            resource_id=str(deployment.id),
+            metadata={"revision": revision.revision, "restored": to_revision},
+        )
+        return deployment, revision
+
+    async def _apply_revision(
+        self,
+        deployment: ModelDeployment,
+        target: dict[str, Any],
+        *,
+        note: str | None,
+        actor: User,
+        rolled_back_from: int | None = None,
+    ) -> DeploymentRevision:
+        """Validate ``target``, record it as the next revision and recreate the container.
+
+        The GPU reservation is kept across the change (or retaken on the same devices if
+        a failure or a stop released it), so nothing else can claim the GPUs while the new
+        container starts. The deployment then goes back through the worker from
+        SCHEDULING, exactly like a fresh deploy — including its health check.
+        """
+        if deployment.node_id is None:
+            raise ConflictError(
+                "This deployment is attached to an external runtime. The platform does not "
+                "run it, so it has no configuration to revise."
+            )
+        if deployment.state in _IN_FLIGHT:
+            raise ConflictError(
+                f"The deployment is {deployment.state}. Wait until it is RUNNING, FAILED or "
+                "STOPPED, then try again."
+            )
+        model = await self._models.get(deployment.model_id)
+        if model is not None and model.approval_status == ModelApprovalStatus.BLOCKED:
+            raise ConflictError(f"{model.name!r} is blocked; its deployments cannot be changed.")
+
+        image = target.get("image", deployment.image)
+        if image != deployment.image and image not in self._allowed_images(deployment.runtime):
+            raise ValidationError(
+                f"Image {image!r} is not allowed for the {deployment.runtime!r} runtime.",
+                details={
+                    "field": "image",
+                    "allowed": sorted(self._allowed_images(deployment.runtime)),
+                },
+            )
+        tensor_parallel = target.get("tensor_parallel_size", deployment.tensor_parallel_size)
+        if deployment.gpu_indices and tensor_parallel > len(deployment.gpu_indices):
+            raise ValidationError(
+                f"tensor_parallel_size {tensor_parallel} exceeds the {len(deployment.gpu_indices)} "
+                "GPU(s) this deployment holds. Changing the GPU count needs a new deployment.",
+                details={"field": "tensor_parallel_size"},
+            )
+
+        node = await self._node_for(deployment)
+        if node is None:
+            raise ConflictError("The node this deployment ran on no longer exists.")
+
+        # Take the old container down. stop_model also removes it, which frees the
+        # container name for the replacement.
+        if deployment.container_id:
+            await self._backend(node).stop_model(
+                DeploymentHandle(
+                    deployment_id=str(deployment.id),
+                    state=BackendState.STOPPING,
+                    backend_ref=deployment.container_id,
+                    internal_url=deployment.internal_url,
+                )
+            )
+        # A failed or stopped deployment gave its GPUs back. Take the same ones again;
+        # the reservation raises a clean 409 if something else holds them now.
+        if deployment.gpu_indices and deployment.reservation_id is None:
+            reserved = await self._scheduler.reserve(
+                PlacementRequest(
+                    model_id=str(deployment.model_id),
+                    gpu_count=len(deployment.gpu_indices),
+                    required_memory_mib_per_gpu=(model.required_gpu_memory_mib or 0)
+                    if model
+                    else 0,
+                    node_id=str(deployment.node_id),
+                    gpu_indices=tuple(deployment.gpu_indices),
+                ),
+                Placement(
+                    node_id=str(deployment.node_id),
+                    gpu_indices=tuple(deployment.gpu_indices),
+                    reservation_id="",
+                    rationale="kept for a new revision",
+                ),
+            )
+            deployment.reservation_id = uuid.UUID(reserved.reservation_id)
+
+        for key, value in target.items():
+            setattr(deployment, key, value)
+        number = await self._revisions.latest_number(deployment.id) + 1
+        deployment.current_revision = number
+        deployment.state = DeploymentState.SCHEDULING
+        deployment.state_detail = f"Applying revision {number}."
+        deployment.container_id = None
+        deployment.internal_url = None
+        deployment.error_message = None
+        deployment.healthy_at = None
+        deployment.stopped_at = None
+
+        revision = self._add_revision(
+            deployment, number, note=note, actor=actor, rolled_back_from=rolled_back_from
+        )
+        await self._deployments.flush()
+        log.info(
+            "deployment_revised",
+            deployment=str(deployment.id),
+            revision=number,
+            rolled_back_from=rolled_back_from,
+        )
+        return revision
 
     # -- state machine -----------------------------------------------------
     async def advance(self, deployment: ModelDeployment) -> DeploymentState:
@@ -684,6 +1115,27 @@ class DeploymentService:
         node = await self._node_for(deployment)
         detail.node_name = node.name if node else None
         return detail
+
+    async def log_source(
+        self, deployment_id: uuid.UUID
+    ) -> tuple[ComputeBackend, DeploymentHandle] | str:
+        """What a live log stream reads: a backend and container, or the stored text.
+
+        Resolved up front so the stream itself needs no database session: it outlives
+        the request's transaction.
+        """
+        deployment = await self.get_deployment(deployment_id)
+        node = await self._node_for(deployment)
+        if node is None or not deployment.container_id:
+            if deployment.node_id is None:
+                return "(external runtime: the platform does not run it and has no logs)"
+            return deployment.logs_excerpt or "(no logs available)"
+        handle = DeploymentHandle(
+            deployment_id=str(deployment.id),
+            state=BackendState.RUNNING,
+            backend_ref=deployment.container_id,
+        )
+        return self._backend(node), handle
 
     async def fetch_logs(self, deployment_id: uuid.UUID, *, tail: int = 200) -> str:
         """Live container logs, falling back to the captured excerpt.
