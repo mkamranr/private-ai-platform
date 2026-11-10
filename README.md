@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-wordmark-dark.svg">
+    <img alt="Private AI Platform — Your AI. Your infrastructure." src="docs/images/logo-wordmark-light.svg" width="520">
+  </picture>
+</p>
+
 # Private AI Platform
 
 A self-hosted AI control plane that runs with **no route to the Internet**: GPU

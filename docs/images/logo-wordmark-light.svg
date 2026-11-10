@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="160" viewBox="0 0 720 160" role="img" aria-labelledby="t">
+  <title id="t">Private AI Platform — Your AI. Your infrastructure.</title>
+  <g transform="translate(8 8) scale(0.5625)">
+    <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".06"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".3" cy=".2" r=".9">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".25"/>
+      <stop offset=".6" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Tile -->
+  <rect width="256" height="256" rx="58" fill="url(#bg)"/>
+  <rect width="256" height="256" rx="58" fill="url(#glow)"/>
+  <!-- Shield: the boundary everything runs inside -->
+  <path d="M128 38 60 64v54c0 41 28 79 68 94 40-15 68-53 68-94V64L128 38Z"
+        fill="url(#shield)" stroke="#ffffff" stroke-width="9" stroke-linejoin="round"/>
+  <!-- A small network of models and nodes, kept inside it -->
+  <g stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".9">
+    <path d="M128 88 92 148h72Z" fill="none"/>
+  </g>
+  <g fill="#ffffff">
+    <circle cx="128" cy="88" r="15"/>
+    <circle cx="92" cy="148" r="15"/>
+    <circle cx="164" cy="148" r="15"/>
+  </g>
+  <!-- Keyhole spark: private -->
+  <circle cx="128" cy="181" r="7" fill="#c7d2fe"/>
+
+  </g>
+  <text x="176" y="78" font-family="'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif"
+        font-size="52" font-weight="700" fill="#0f172a" letter-spacing="-0.5">Private AI Platform</text>
+  <text x="178" y="118" font-family="'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif"
+        font-size="24" font-weight="500" fill="#475569">Your AI. Your infrastructure.</text>
+</svg>
