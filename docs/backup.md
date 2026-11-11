@@ -39,6 +39,10 @@ Tested in the gate by corrupting a dump and confirming verification fails.
 
 ## Why it runs on the host
 
+The console's Backup & Restore page (E7) does not change this. It records an audited request,
+and the host's ops runner (`scripts/ops_runner.py`) runs the same `backup.py` commands. See
+[operations.md](operations.md).
+
 `pg_dump` lives in the postgres image, and Rule 4 forbids `apt-get` at build time — so the
 control plane cannot dump its own database. `scripts/backup.py` is stdlib-only and
 orchestrates `docker compose exec`, like `check_airgap.py`, so a recovery machine needs no
@@ -65,7 +69,8 @@ dump to a file inside the container first.
 
 ## Not built yet
 
-* No scheduling. This is a command an operator or cron runs, not a platform worker.
+* No scheduling. This is a command an operator, cron or a call to `POST /api/v1/ops/backups`
+  runs, not a platform worker.
 * No retention or pruning — `backups/` grows until someone removes something.
 * No incremental backups; every run is full.
 * Restore is all-or-nothing: there is no way to recover a single tenant or knowledge base.

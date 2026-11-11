@@ -39,7 +39,14 @@ GENERATORS: dict[str, callable] = {
     "MINIO__SECRET_KEY": lambda: secrets.token_urlsafe(24),
     "AUTH__BOOTSTRAP_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(18),
     "GRAFANA__ADMIN_PASSWORD": lambda: secrets.token_urlsafe(18),
+    # The host ops runner's credential (E7). The backend and scripts/ops_runner.py both
+    # read it from this file.
+    "OPS__RUNNER_TOKEN": lambda: secrets.token_hex(32),
 }
+
+#: Settings added after the first release. An install from an older template has no line
+#: for them at all, so they are appended rather than only filled in.
+APPEND_IF_MISSING = ("OPS__RUNNER_TOKEN",)
 
 #: A value counts as unset if it still looks like the template's.
 PLACEHOLDER_MARKERS = ("change-me", "CHANGE ME", "change_me")
@@ -68,6 +75,7 @@ def main(argv: list[str]) -> int:
     lines = path.read_text().splitlines(keepends=True)
     filled: list[str] = []
     kept: list[str] = []
+    seen: set[str] = set()
 
     for index, line in enumerate(lines):
         stripped = line.strip()
@@ -76,11 +84,19 @@ def main(argv: list[str]) -> int:
         name, _, value = stripped.partition("=")
         if name not in GENERATORS:
             continue
+        seen.add(name)
         if not args.force and not is_placeholder(value):
             kept.append(name)
             continue
         lines[index] = f"{name}={GENERATORS[name]()}\n"
         filled.append(name)
+
+    for name in APPEND_IF_MISSING:
+        if name not in seen:
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines.append(f"{name}={GENERATORS[name]()}\n")
+            filled.append(name)
 
     if filled:
         # Written 0600 before the content lands in it: this file holds every credential the

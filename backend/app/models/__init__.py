@@ -82,6 +82,13 @@ from app.models.operations import (
     InferenceBackend,
     QuotaScope,
 )
+from app.models.ops import (
+    TERMINAL_JOB_STATUSES,
+    JobKind,
+    JobStatus,
+    OpsJob,
+    OpsRunner,
+)
 from app.models.system import SystemSetting
 from app.models.teams import Team, TeamMembership, TeamRole
 from app.models.voice import (
@@ -103,6 +110,7 @@ __all__ = [
     "ACTIVE_STATES",
     "OPEN_ALERT_STATES",
     "QUOTA_WILDCARD",
+    "TERMINAL_JOB_STATUSES",
     "TERMINAL_STATES",
     "TERMINAL_VOICE_STATES",
     "Agent",
@@ -141,6 +149,8 @@ __all__ = [
     "GpuMetric",
     "GpuProcess",
     "InferenceBackend",
+    "JobKind",
+    "JobStatus",
     "KnowledgeBase",
     "McpServer",
     "MemoryEntry",
@@ -156,6 +166,8 @@ __all__ = [
     "NodeEnrollment",
     "NodeRole",
     "NodeStatus",
+    "OpsJob",
+    "OpsRunner",
     "Permission",
     "QuotaScope",
     "RagEvalCase",

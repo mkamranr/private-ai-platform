@@ -4,6 +4,14 @@
     python3 scripts/build_bundle.py            # images + wheels + manifest
     python3 scripts/build_bundle.py --models   # include model weights (very large)
     python3 scripts/build_bundle.py --dry-run  # print what would be done
+    python3 scripts/build_bundle.py --sign-key ~/aip-signing/bundle-signing.key
+    python3 scripts/build_bundle.py --sbom-only --output sbom/   # SBOM from the repo alone
+
+Every bundle carries ``sbom.cdx.json`` (CycloneDX 1.5) and ``licenses.txt``, and the
+manifest records their checksums. With ``--sign-key`` the manifest is signed as well
+(``manifest.sig``, see ``scripts/bundle_signing.py``). Because the manifest lists the
+checksum of everything else, that one signature covers the whole bundle. A site that has
+installed the matching public key refuses any bundle without it.
 
 **This is a connected build-machine step, and the only one.** It is the single place the
 project is allowed to reach the network — every other script, image and runtime path is
@@ -49,6 +57,10 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import bundle_signing  # noqa: E402 - sibling stdlib module, see sys.path above
+import sbom as sbom_tool  # noqa: E402
 DEFAULT_OUTPUT = REPO_ROOT / "bundle"
 MANIFEST_NAME = "manifest.json"
 #: 2 added ``image_id``/``local_tag`` per image, which the installer now requires. A
@@ -480,8 +492,28 @@ def main() -> int:
         action="store_true",
         help="Include Prometheus, Loki, Tempo, Grafana, Alloy and Langfuse (~2.5 GB).",
     )
+    parser.add_argument(
+        "--sign-key",
+        type=Path,
+        help="EC private key to sign manifest.json with (scripts/bundle_signing.py keygen).",
+    )
+    parser.add_argument(
+        "--sbom-only",
+        action="store_true",
+        help="Write sbom.cdx.json and licenses.txt for the repository into --output and stop.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args()
+    platform_version = os.environ.get("PLATFORM_VERSION", "0.1.0")
+
+    if options.sbom_only:
+        options.output.mkdir(parents=True, exist_ok=True)
+        document = sbom_tool.build_sbom(platform_version=platform_version)
+        for path in sbom_tool.write(options.output, document):
+            print(path)
+        return 0
+    if options.sign_key is not None and not options.sign_key.exists():
+        raise SystemExit(f"--sign-key {options.sign_key} does not exist.")
 
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     target = options.output / stamp
@@ -517,10 +549,38 @@ def main() -> int:
         print("\nModels")
         models = copy_models(target, dry_run=options.dry_run)
 
+    print("\nSBOM")
+    sbom_entry: dict = {}
+    if not options.dry_run:
+        document = sbom_tool.build_sbom(
+            platform_version=platform_version,
+            created_at=stamp,
+            images={
+                service: {
+                    "image": entry["image"].split("@", 1)[0],
+                    "digest": entry["digest"] if "@sha256:" in entry["digest"] else None,
+                    "tag": entry["local_tag"].rsplit(":", 1)[-1],
+                    "sha256": entry.get("sha256"),
+                }
+                for service, entry in images.items()
+            },
+            wheel_dirs=[target / "wheels" / name for name, _lock in WHEEL_SOURCES],
+        )
+        sbom_path, licenses_path = sbom_tool.write(target, document)
+        sbom_entry = {
+            "path": sbom_path.name,
+            "sha256": digest_of(sbom_path),
+            "components": len(document["components"]),
+            "licenses": {"path": licenses_path.name, "sha256": digest_of(licenses_path)},
+        }
+        print(f"  {sbom_entry['components']} component(s)")
+    else:
+        print("  (dry run)")
+
     manifest = {
         "format_version": FORMAT_VERSION,
         "created_at": stamp,
-        "platform_version": os.environ.get("PLATFORM_VERSION", "0.1.0"),
+        "platform_version": platform_version,
         "target_python": TARGET_PYTHON,
         "target_platform": TARGET_PLATFORM,
         "images": images,
@@ -529,13 +589,25 @@ def main() -> int:
         "installers": installers,
         "models": models,
         "excluded": NEVER_BUNDLE,
+        "sbom": sbom_entry,
     }
 
     if options.dry_run:
         print("\n(dry run — nothing written)")
         return 0
 
+    if options.sign_key is not None:
+        manifest = bundle_signing.stamp_manifest(manifest, options.sign_key)
     (target / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    if options.sign_key is not None:
+        signature = bundle_signing.sign_bundle(target, options.sign_key)
+        fingerprint = manifest["signing"]["key_fingerprint"]
+        print(f"Signed:   {signature.relative_to(REPO_ROOT)} ({fingerprint})")
+    else:
+        print(
+            "Unsigned: pass --sign-key to sign. Sites with a trust key installed refuse "
+            "unsigned bundles."
+        )
     total = sum(p.stat().st_size for p in target.rglob("*") if p.is_file())
     print(f"\nDone. {len(images)} image(s), {total // 1_048_576} MiB total.")
     print(f"Manifest: {(target / MANIFEST_NAME).relative_to(REPO_ROOT)}")

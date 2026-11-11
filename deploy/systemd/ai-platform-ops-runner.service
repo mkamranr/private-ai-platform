@@ -1,0 +1,42 @@
+# Host ops runner for the admin console's Backup & Restore and Offline Updates pages (E7).
+#
+#   sudo useradd --system --home /opt/ai-platform --shell /usr/sbin/nologin aip-ops
+#   sudo usermod -aG docker aip-ops        # Docker access: see "Privilege" below
+#   sudo chown -R aip-ops: /opt/ai-platform/backups
+#   sudo install -m 644 deploy/systemd/ai-platform-ops-runner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now ai-platform-ops-runner
+#   journalctl -u ai-platform-ops-runner -f
+#
+# Privilege. The runner does what an operator does by hand: docker compose exec pg_dump,
+# docker compose down/up, docker load. Membership of the docker group is root-equivalent,
+# so run it under a dedicated account that nobody logs in as, and treat .env (which holds
+# OPS__RUNNER_TOKEN) with the same care as the rest of the platform's secrets.
+# docs/architecture/threat-model.md (#12) records this as residual risk.
+
+[Unit]
+Description=Private AI Platform ops runner
+After=docker.service network-online.target
+Wants=docker.service
+
+[Service]
+Type=simple
+User=aip-ops
+Group=aip-ops
+WorkingDirectory=/opt/ai-platform
+ExecStart=/usr/bin/python3 /opt/ai-platform/scripts/ops_runner.py --root /opt/ai-platform
+Restart=always
+RestartSec=10
+# A restore or upgrade must not be killed half way through by a stop or a restart.
+# The runner saves the job state, and on its next start it reports the job as interrupted.
+KillMode=process
+TimeoutStopSec=1800
+
+# Hardening that does not get in the way of docker compose.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/ai-platform
+
+[Install]
+WantedBy=multi-user.target

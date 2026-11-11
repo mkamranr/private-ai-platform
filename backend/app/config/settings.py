@@ -629,6 +629,30 @@ class WorkersSettings(BaseModel):
     backend_health_interval_seconds: int = Field(default=60, ge=10, le=3600)
 
 
+class OpsSettings(BaseModel):
+    """The host-side operations runner (E7, plan §5.16).
+
+    Backups, restores and upgrades need ``pg_dump`` and Docker on the host, which the
+    control plane deliberately does not have. The API records an audited job; the runner
+    (``scripts/ops_runner.py``, on the host) claims it, runs it and reports back. It
+    authenticates with this token, which ``scripts/gen_secrets.py`` writes to ``.env``
+    where the runner reads it too. Unset: the runner endpoints answer 503 and operations
+    are disabled.
+    """
+
+    runner_token: SecretStr | None = None
+    #: A runner not heard from for this long is shown as offline, and new jobs say so.
+    runner_stale_seconds: int = Field(default=120, ge=30, le=3600)
+    #: Lines of job output kept per job; older lines are dropped from the front.
+    max_log_lines: int = Field(default=2000, ge=100, le=20000)
+    #: Loki, for the recent platform logs in a support bundle. Loki runs only in the
+    #: ``monitoring`` profile; when it is absent the bundle says so instead of failing.
+    loki_url: str | None = "http://loki:3100"
+    #: How far back a support bundle's logs reach, and how many lines it keeps.
+    support_log_hours: int = Field(default=6, ge=1, le=72)
+    support_log_lines: int = Field(default=5000, ge=100, le=50000)
+
+
 class TracingSettings(BaseModel):
     """Distributed tracing to Tempo over OTLP (M19, Phase 7).
 
@@ -778,6 +802,7 @@ class Settings(BaseSettings):
     airgap: AirgapSettings = Field(default_factory=AirgapSettings)
     health: HealthSettings = Field(default_factory=HealthSettings)
     workers: WorkersSettings = Field(default_factory=WorkersSettings)
+    ops: OpsSettings = Field(default_factory=OpsSettings)
 
     @classmethod
     def settings_customise_sources(

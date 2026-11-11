@@ -42,4 +42,10 @@ venv/
 .vscode/
 *.swp
 backups/
+# E7: offline bundles waiting to be applied, the ops runner's job state, SBOM output.
+/updates/
+/.ops-runner/
+/sbom/
+# A site's bundle trust anchor. Installed per host by install.sh --trust-key, never shipped.
+/.trust/
 

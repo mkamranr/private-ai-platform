@@ -65,6 +65,9 @@ Output is `bundle/<UTC-stamp>/`, roughly 1.9 GB without model weights:
 ```
 bundle/20260810T095714Z/
 ├── manifest.json      what is inside, and the sha256 of every part
+├── manifest.sig       ECDSA P-256 signature over manifest.json (SIGN_KEY=…)
+├── sbom.cdx.json      CycloneDX 1.5: wheels with hashes, images by digest, vendored JS
+├── licenses.txt
 ├── install.sh         ── the bundle installs itself; no separate media
 ├── upgrade.sh
 ├── rollback.sh
@@ -83,6 +86,21 @@ silent pull is how an unreviewed image reaches an air-gapped site.
 asks and exists only so SSO is testable without a Keycloak. On a production network it is
 not a test double, it is an authentication bypass. The manifest records the exclusion and
 its reason.
+
+### Signing and the SBOM
+
+```bash
+make signing-key OUT=~/aip-signing                       # once, on the build machine
+make bundle SIGN_KEY=~/aip-signing/bundle-signing.key    # every release
+make sbom                                                # SBOM only, into sbom/
+```
+
+The manifest lists the sha256 of everything else, the SBOM included, so one signature covers
+the bundle. A target that has been given the public key (`install.sh --trust-key` or
+`upgrade.sh --trust-key`, kept at `<target>/.trust/`, outside the tree a bundle replaces)
+refuses unsigned or wrongly signed bundles. There is no override flag. A target without a
+trust key accepts them with a warning. Hand the public key and its fingerprint over through
+a channel other than the bundle. Details: [operations.md](operations.md#bundle-signing-and-the-sbom).
 
 Model weights are opt-in (`MODELS=1`) because they dominate the size and change on a
 different cadence from the platform. Without them the platform registers manifests
@@ -189,9 +207,15 @@ credential, and no backup contains it ([backup.md](backup.md)).
 ## Upgrading, and going back
 
 ```bash
-./upgrade.sh /media/usb/20260901T101500Z /opt/ai-platform
+/opt/ai-platform/offline/upgrade.sh /media/usb/20260901T101500Z /opt/ai-platform
 cd /opt/ai-platform && docker compose exec backend alembic upgrade head
 ```
+
+Prefer the **installed** `upgrade.sh` to the one inside the new bundle: it is the copy that
+checks the new bundle's signature, rather than one the bundle brought with it. Or copy the
+bundle into `/opt/ai-platform/updates/` and use the console's Offline Updates page, which
+verifies, runs a preflight, then runs the installed script through the host's ops runner
+([operations.md](operations.md)).
 
 `upgrade.sh` takes a backup **while the old platform is still running**, snapshots the
 current tree into `.rollback/<stamp>/`, and only then stops, loads, swaps and starts. An

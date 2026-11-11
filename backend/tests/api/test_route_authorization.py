@@ -40,6 +40,10 @@ PUBLIC: set[tuple[str, str]] = {
     ("GET", "/api/v1/auth/oidc/callback"),
     # E6: the workflow webhook. Its token is the credential; a bad one is 401 all the same.
     ("POST", "/api/v1/workflow-hooks/{workflow_id}"),
+    # The host ops runner authenticates with X-Ops-Runner-Token, not a user (E7).
+    ("POST", "/api/v1/ops/runner/heartbeat"),
+    ("POST", "/api/v1/ops/runner/claim"),
+    ("POST", "/api/v1/ops/runner/jobs/{job_id}/report"),
 }
 
 #: A node enrolling presents a one-time enrolment token, not a user token. These answer

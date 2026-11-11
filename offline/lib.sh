@@ -51,6 +51,67 @@ bundle_preflight() {  # bundle_preflight <bundle>
      Rebuild it with a matching scripts/build_bundle.py."
 }
 
+TRUST_KEY_NAME="bundle-signing.pub"
+
+trust_key_path() {  # trust_key_path <target>
+  printf '%s/.trust/%s' "$1" "$TRUST_KEY_NAME"
+}
+
+install_trust_key() {  # install_trust_key <public-key-file> <target>
+  # Outside the tree on purpose: upgrade.sh copies a bundle's tree over the target, and a
+  # trust anchor a bundle could overwrite would let any bundle vouch for itself.
+  local key="$1" target="$2" dest
+  [[ -f "$key" ]] || die "No such public key: $key"
+  command -v openssl >/dev/null || die "openssl is required to use a trust key."
+  openssl pkey -pubin -in "$key" -noout 2>/dev/null || die "$key is not a public key."
+  dest=$(trust_key_path "$target")
+  mkdir -p "$(dirname "$dest")"
+  install -m 644 "$key" "$dest"
+  ok "trust key installed: $dest ($(key_fingerprint "$dest"))"
+}
+
+key_fingerprint() {  # key_fingerprint <public-key-file>
+  printf 'sha256:%s' "$(openssl pkey -pubin -in "$1" -outform DER 2>/dev/null \
+    | openssl dgst -sha256 -r | cut -d' ' -f1)"
+}
+
+verify_signature() {  # verify_signature <bundle> <target> [--allow-unsigned]
+  # Uses THIS host's openssl and THIS host's trust key — never code or keys from inside the
+  # bundle being judged. Checksums (verify_bundle) prove the bundle is intact; this proves
+  # who built it. The manifest lists every archive's checksum, so verifying the manifest's
+  # signature covers the whole bundle.
+  #
+  #   trust key installed + valid signature   -> ok
+  #   trust key installed + anything else     -> refuse (no override: that is the point)
+  #   no trust key + signed or unsigned       -> warn, continue (sites that never opted in)
+  local bundle="$1" target="$2" allow_unsigned="${3:-}" key
+  key=$(trust_key_path "$target")
+  if [[ ! -f "$key" ]]; then
+    if [[ -f "$bundle/manifest.sig" ]]; then
+      warn "bundle is signed, but no trust key is installed — the signer cannot be checked"
+    else
+      warn "bundle is unsigned and no trust key is installed — origin not verified"
+    fi
+    warn "install one with --trust-key <bundle-signing.pub> to require signed bundles"
+    return 0
+  fi
+  command -v openssl >/dev/null || die "A trust key is installed but openssl is missing."
+  if [[ ! -f "$bundle/manifest.sig" ]]; then
+    [[ "$allow_unsigned" == "--allow-unsigned" ]] && die \
+      "--allow-unsigned is refused while a trust key is installed ($key).
+     Remove the key deliberately if this site no longer requires signed bundles."
+    die "This bundle is not signed, and this site requires signed bundles ($key)."
+  fi
+  if openssl dgst -sha256 -verify "$key" -signature "$bundle/manifest.sig" \
+       "$bundle/manifest.json" >/dev/null 2>&1; then
+    ok "signature valid ($(key_fingerprint "$key"))"
+  else
+    die "The bundle's signature does not verify against $key.
+     The manifest was changed after signing, or it was signed by a different key.
+     Nothing was changed."
+  fi
+}
+
 verify_bundle() {  # verify_bundle <bundle> [service...]
   # Run BEFORE anything is loaded or copied. A half-installed platform from a truncated
   # archive is far harder to diagnose than a refusal, and on an air-gapped host there is
@@ -84,6 +145,16 @@ for service, entry in manifest.get("images", {}).items():
         problems.append(f"{service}: {entry.get('archive')} is missing")
     elif digest(archive) != entry.get("sha256"):
         problems.append(f"{service}: checksum mismatch — the archive changed since it was built")
+
+sbom = manifest.get("sbom") or {}
+if not wanted:
+    for entry in (sbom, sbom.get("licenses") or {}):
+        if entry.get("path"):
+            path = bundle / entry["path"]
+            if not path.exists():
+                problems.append(f"{entry['path']} is missing")
+            elif digest(path) != entry.get("sha256"):
+                problems.append(f"{entry['path']}: checksum mismatch")
 
 for name, entry in manifest.get("models", {}).items():
     if wanted:

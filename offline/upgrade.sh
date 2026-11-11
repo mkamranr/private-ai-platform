@@ -3,6 +3,12 @@
 #
 #   ./upgrade.sh /media/usb/20260901T101500Z /opt/ai-platform
 #   ./upgrade.sh <bundle> <target> --skip-backup     # only when a backup was just taken
+#   ./upgrade.sh <bundle> <target> --trust-key bundle-signing.pub   # start requiring signatures
+#
+# Prefer the INSTALLED copy (<target>/offline/upgrade.sh) to the one inside a new bundle:
+# the installed script is code this site already trusts, and it checks the new bundle's
+# signature before running anything from it. The admin console's Offline Updates page
+# (scripts/ops_runner.py) always does this.
 #
 # Runs on the air-gapped target, with no network, like install.sh.
 #
@@ -21,9 +27,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 BUNDLE="${1:-}"
 TARGET="${2:-/opt/ai-platform}"
 SKIP_BACKUP=""
-if [[ "${3:-}" == "--skip-backup" ]]; then SKIP_BACKUP=1; fi
+TRUST_KEY=""
+shift $(( $# < 2 ? $# : 2 ))
+while (( $# )); do
+  case "$1" in
+    --skip-backup) SKIP_BACKUP=1; shift ;;
+    --trust-key) TRUST_KEY="${2:-}"; shift 2 ;;
+    *) die "Unknown option: $1" ;;
+  esac
+done
 
-[[ -n "$BUNDLE" ]] || die "Usage: ./upgrade.sh <bundle-dir> [target-dir] [--skip-backup]"
+[[ -n "$BUNDLE" ]] || die \
+  "Usage: ./upgrade.sh <bundle-dir> [target-dir] [--skip-backup] [--trust-key <pub>]"
 require_docker
 bundle_preflight "$BUNDLE"
 
@@ -46,6 +61,10 @@ fi
 
 # ---------------------------------------------------------------------------
 say "1/6  Verifying the new bundle"
+if [[ -n "$TRUST_KEY" ]]; then
+  install_trust_key "$TRUST_KEY" "$TARGET"
+fi
+verify_signature "$BUNDLE" "$TARGET"
 verify_bundle "$BUNDLE"
 ok "every archive matches the manifest"
 
@@ -71,7 +90,7 @@ mkdir -p "$SNAPSHOT/tree"
 # holds keys an operator may have edited since the install, and rolling either of those
 # back would turn a reversible upgrade into data loss.
 find "$TARGET" -maxdepth 1 -mindepth 1 \
-  ! -name data ! -name .rollback ! -name backups ! -name .env \
+  ! -name data ! -name .rollback ! -name backups ! -name .env ! -name .trust \
   -exec cp -R {} "$SNAPSHOT/tree/" \;
 # Shaped like a small bundle — manifest.json beside a tree — so rollback.sh can reuse the
 # same naming and override code paths the installer uses.

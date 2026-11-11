@@ -42,7 +42,11 @@ make bundle                                  # build machine — the one network
 ./install.sh . /opt/ai-platform              # target, from inside the bundle
 ```
 
-Full procedure, including upgrade and rollback: [airgap.md](airgap.md).
+Give the installer the build site's public signing key on the first install
+(`--trust-key bundle-signing.pub`). From then on it refuses unsigned or tampered bundles.
+
+Full procedure, including upgrade and rollback: [airgap.md](airgap.md). Backups, upgrades and
+diagnostics from the console: [operations.md](operations.md).
 
 ## Adding a GPU node
 

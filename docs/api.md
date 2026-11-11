@@ -406,17 +406,13 @@ retrievable — the platform stores a hash, so it genuinely cannot show the key 
 | GET | `/audit-logs` | `audit.view` |
 | GET | `/settings` | `settings.view` |
 | PUT | `/settings/{key}` | `settings.manage` |
-| GET | `/backups` | `backup.manage` |
-| POST | `/backups` | `backup.manage` |
-| POST | `/backups/{id}/verify` | `backup.manage` |
-| POST | `/backups/{id}/restore` | `backup.manage` |
 
 `/audit-logs` filters on `user_id, action, resource_type, resource_id, result,
 since, until`. There is no write, update or delete endpoint — the audit log is
 append-only.
 
-`backup.manage` is granted to `SUPER_ADMIN` only: restore overwrites the system of
-record.
+Backups were not served by the API until E7. They are now under `/ops/backups`:
+see Operations and diagnostics, Expansion E7, below.
 
 ---
 
@@ -669,3 +665,34 @@ Under `/api/v1`, authenticated with the platform JWT unless noted. See
 
 Changes to existing routes, backwards-compatible: `PUT /scope` accepts
 `resource_type: "workflow"`.
+
+---
+
+## Operations and diagnostics — Expansion E7
+
+Under `/api/v1`. Operations are **jobs** that the host's ops runner executes. A request
+returns **202** with the queued job. A duplicate, or a request beside a restore, upgrade or
+rollback, gets 409. See [operations.md](operations.md).
+
+| method | path | permission |
+|---|---|---|
+| GET | `/ops/runner` | `diagnostics.view`. Runners, `online`, active job, queue length |
+| GET | `/ops/jobs` | `diagnostics.view`. `?kind=&status=&limit=&offset=` |
+| GET | `/ops/jobs/{id}` | `diagnostics.view`. With the output lines |
+| POST | `/ops/jobs/{id}/cancel` | `backup.manage`. Queued jobs, or running ones whose runner is offline |
+| GET / POST | `/ops/backups` | `backup.manage`. POST body: `reason` |
+| POST | `/ops/backups/{name}/verify` | `backup.manage` |
+| POST | `/ops/backups/{name}/restore` | `backup.restore`. `confirm` (the name), `reason`; refused for a backup under another encryption key |
+| GET | `/ops/bundles` | `system.upgrade` |
+| POST | `/ops/bundles/{name}/verify` | `system.upgrade` |
+| GET | `/ops/bundles/{name}/preflight` | `system.upgrade`. `ok`, `checks[]` (pass/warn/fail) |
+| POST | `/ops/upgrades` | `system.upgrade`. `bundle`, `confirm`, `reason`, `migrate`; 409 while preflight fails |
+| GET / POST | `/ops/rollbacks` | `system.upgrade`. POST: `point`, `confirm`, `reason` |
+| GET | `/diagnostics/health` | `diagnostics.view` |
+| GET | `/diagnostics/inventory` | `diagnostics.view`. Component versions, schema revision vs head |
+| GET | `/diagnostics/config` | `diagnostics.view`. Effective settings, redacted |
+| POST | `/diagnostics/bundle` | `diagnostics.view`. `?logs=true`; `application/zip`; audited |
+| POST | `/ops/runner/heartbeat`, `/ops/runner/claim`, `/ops/runner/jobs/{id}/report` | **No JWT**: header `X-Ops-Runner-Token`. 503 while `OPS__RUNNER_TOKEN` is unset or a placeholder |
+
+Audit actions: `OPS_JOB_REQUESTED`, `OPS_JOB_CANCELLED`, `OPS_JOB_FINISHED`,
+`DIAGNOSTICS_EXPORTED`.

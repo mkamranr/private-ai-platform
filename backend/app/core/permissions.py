@@ -101,6 +101,11 @@ class Permission:
     SETTINGS_MANAGE: Final = "settings.manage"
     AUDIT_VIEW: Final = "audit.view"
     BACKUP_MANAGE: Final = "backup.manage"
+    # Operations (E7, plan §5.16): restore and upgrade replace the platform's data or
+    # code, so each is its own permission, held by SUPER_ADMIN only.
+    BACKUP_RESTORE: Final = "backup.restore"
+    SYSTEM_UPGRADE: Final = "system.upgrade"
+    DIAGNOSTICS_VIEW: Final = "diagnostics.view"
 
     # --- observability (M19) ---
     MONITORING_VIEW: Final = "monitoring.view"
@@ -161,7 +166,12 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.SETTINGS_VIEW: "View platform settings",
     Permission.SETTINGS_MANAGE: "Modify platform settings",
     Permission.AUDIT_VIEW: "View audit logs",
-    Permission.BACKUP_MANAGE: "Create, verify and restore backups",
+    Permission.BACKUP_MANAGE: "List, create and verify backups",
+    Permission.BACKUP_RESTORE: "Restore a backup over the platform's data",
+    Permission.SYSTEM_UPGRADE: "Verify offline bundles, upgrade and roll back the platform",
+    Permission.DIAGNOSTICS_VIEW: (
+        "View health, version inventory and redacted configuration; export a support bundle"
+    ),
     Permission.MONITORING_VIEW: "View metrics and dashboards",
     Permission.TRACE_VIEW: "View LLM and agent execution traces",
     Permission.ALERT_VIEW: "View platform alerts",
@@ -213,8 +223,9 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
         _ALL_PERMISSIONS,
     ),
     Role.ADMIN: (
-        "Platform administration, excluding backup/restore",
-        _ALL_PERMISSIONS - {Permission.BACKUP_MANAGE},
+        "Platform administration, excluding backup, restore and upgrade",
+        _ALL_PERMISSIONS
+        - {Permission.BACKUP_MANAGE, Permission.BACKUP_RESTORE, Permission.SYSTEM_UPGRADE},
     ),
     Role.AI_ADMIN: (
         "Manages models, deployments and knowledge bases",
@@ -260,6 +271,7 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.BACKEND_VIEW,
                 Permission.ALERT_VIEW,
                 Permission.ALERT_MANAGE,
+                Permission.DIAGNOSTICS_VIEW,
             }
         ),
     ),
@@ -332,6 +344,7 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.ALERT_VIEW,
                 Permission.QUOTA_VIEW,
                 Permission.TEAM_VIEW,
+                Permission.DIAGNOSTICS_VIEW,
                 # Read-only across every team: an audit that can only see some teams
                 # is not an audit. The role holds no write permission to misuse it with.
                 Permission.SCOPE_ALL,

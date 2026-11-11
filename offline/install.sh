@@ -3,6 +3,12 @@
 #
 #   ./install.sh . /opt/ai-platform          # from inside the bundle directory
 #   ./install.sh /media/usb/20260809T195257Z /opt/ai-platform
+#   ./install.sh . /opt/ai-platform --trust-key /media/keys/bundle-signing.pub
+#
+# --trust-key installs the build site's public key under <target>/.trust/. From then on
+# this bundle and every later one must carry a valid signature (offline/lib.sh
+# verify_signature). Get the key and its fingerprint from the build site through a channel
+# other than the bundle itself, or it proves nothing.
 #
 # Runs on the air-gapped target. It must complete with **no network access at all** —
 # that is not an aspiration, it is the acceptance test: `make gate-phase8` runs this
@@ -17,8 +23,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 BUNDLE="${1:-}"
 TARGET="${2:-/opt/ai-platform}"
+TRUST_KEY=""
+shift $(( $# < 2 ? $# : 2 ))
+while (( $# )); do
+  case "$1" in
+    --trust-key) TRUST_KEY="${2:-}"; shift 2 ;;
+    *) die "Unknown option: $1" ;;
+  esac
+done
 
-[[ -n "$BUNDLE" ]] || die "Usage: ./install.sh <bundle-dir> [target-dir]"
+[[ -n "$BUNDLE" ]] || die "Usage: ./install.sh <bundle-dir> [target-dir] [--trust-key <pub>]"
 # Docker and python3 first: bundle_preflight reads the manifest with python3, and a
 # missing interpreter should say so rather than fail inside a heredoc.
 require_docker
@@ -32,6 +46,10 @@ printf '%s\n' "═════════════════════�
 
 # ---------------------------------------------------------------------------
 say "1/5  Verifying the bundle before anything is written"
+if [[ -n "$TRUST_KEY" ]]; then
+  install_trust_key "$TRUST_KEY" "$TARGET"
+fi
+verify_signature "$BUNDLE" "$TARGET"
 verify_bundle "$BUNDLE"
 ok "every archive and model file matches the manifest"
 
@@ -80,6 +98,7 @@ for key, value in (
     ("DATABASE__PASSWORD", secrets.token_urlsafe(24)),
     ("MINIO__SECRET_KEY", secrets.token_urlsafe(24)),
     ("NODE_AGENT_AUTH_TOKEN", secrets.token_urlsafe(32)),
+    ("OPS__RUNNER_TOKEN", secrets.token_hex(32)),
     ("AUTH__BOOTSTRAP_ADMIN_PASSWORD", secrets.token_urlsafe(18)),
     # The monitoring profile's credentials (M19). Generated whether or not the site
     # starts that profile: Compose reads the whole file, so a placeholder left in

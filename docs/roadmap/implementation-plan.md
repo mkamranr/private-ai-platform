@@ -92,8 +92,13 @@ dashboard real signals.
 
 ## E7: Operations UI and release hardening (P0 for air-gapped production)
 
-- Audited API over `scripts/backup.py` and the offline upgrade scripts; version inventory; diagnostics bundle with secrets redacted.
-- Signed bundle manifest and SBOM in `scripts/build_bundle.py`; threat-model document (`docs/architecture/threat-model.md`).
+- [x] Migration `7b4d0f3a8c29`: `ops_jobs` (one table for backup, verify, restore, bundle verify, upgrade and rollback, replacing the plan's `backup_jobs`/`upgrade_jobs`) and `ops_runners`. Permissions `backup.restore`, `system.upgrade`, `diagnostics.view`.
+- [x] Audited job API over `scripts/backup.py` and the offline scripts, executed by a stdlib host runner (`scripts/ops_runner.py`, token-authenticated, systemd unit in `deploy/`). The control plane still has no Docker socket. One job at a time; typed confirmation and a reason for restore, upgrade and rollback; reports survive a restore that wipes `ops_jobs`.
+- [x] Upgrade preflight (runner, idle, format, signature, verified, version, disk, recent backup); the upgrade is refused while a check fails.
+- [x] Version inventory, redacted effective configuration and a support bundle (health, inventory, config, alerts, ops history, optional Loki logs). Redaction in `core/redact.py`.
+- [x] Bundles: ECDSA P-256 signed manifest (`scripts/bundle_signing.py`), CycloneDX 1.5 SBOM and licence list (`scripts/sbom.py`); `install.sh`/`upgrade.sh --trust-key`; trust key outside the tree.
+- [x] Admin: Backup & Restore, Offline Updates and Diagnostics pages. Docs: [operations.md](../operations.md), [threat-model.md](../architecture/threat-model.md).
+- [ ] No scheduled backups or retention, partial restore, runner-token rate limiting or bundle upload through the console. See operations.md.
 
 ## Phase acceptance (applies to each)
 

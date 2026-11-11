@@ -80,6 +80,7 @@ from app.repositories.operations import (
     GatewayQuotaRepository,
     InferenceBackendRepository,
 )
+from app.repositories.ops import OpsJobRepository, OpsRunnerRepository
 from app.repositories.teams import ScopeLookupRepository, TeamRepository
 from app.repositories.user import PermissionRepository, RoleRepository, UserRepository
 from app.repositories.voice import (
@@ -110,6 +111,7 @@ from app.services.auth_providers import LdapAuthProvider, LocalAuthProvider
 from app.services.dashboard import DashboardService
 from app.services.definitions import DefinitionImporter
 from app.services.deployment import DeploymentService
+from app.services.diagnostics import DiagnosticsService
 from app.services.docker_service import DockerService, build_runtime_factory
 from app.services.federation import FederationService
 from app.services.gateway import GatewayContext, GatewayService
@@ -124,6 +126,7 @@ from app.services.memory import MemoryService
 from app.services.model_registry import ModelRegistryService
 from app.services.monitoring import MonitoringService, TraceService
 from app.services.node_enrollment import NodeEnrollmentService
+from app.services.ops import OpsService
 from app.services.quotas import QuotaService
 from app.services.rag_eval import RagEvalService
 from app.services.retrieval import RetrievalService
@@ -1222,3 +1225,35 @@ async def get_gateway_context(
 
 
 GatewayContextDep = Annotated[GatewayContext, Depends(get_gateway_context)]
+
+
+# ---------------------------------------------------------------------------
+# Operations and diagnostics (E7)
+# ---------------------------------------------------------------------------
+def get_ops_service(session: SessionDep, settings: SettingsDep, audit: AuditDep) -> OpsService:
+    return OpsService(settings, OpsJobRepository(session), OpsRunnerRepository(session), audit)
+
+
+OpsServiceDep = Annotated[OpsService, Depends(get_ops_service)]
+
+
+def get_diagnostics_service(
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    audit: AuditDep,
+    health: HealthServiceDep,
+    ops: OpsServiceDep,
+) -> DiagnosticsService:
+    return DiagnosticsService(
+        settings,
+        session,
+        health,
+        request.app.state.redis,
+        request.app.state.qdrant,
+        ops,
+        audit,
+    )
+
+
+DiagnosticsServiceDep = Annotated[DiagnosticsService, Depends(get_diagnostics_service)]

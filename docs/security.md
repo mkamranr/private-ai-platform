@@ -524,6 +524,11 @@ password. A *fingerprint* goes in the manifest instead, and **restore refuses** 
 platform holding a different key — because restoring with the wrong one does not fail
 loudly, it produces credentials that decrypt to garbage discovered days later.
 
+The console (E7) adds no new route to the data: restoring needs `backup.restore`, the
+backup's name typed back and a reason. The host runner refuses a backup it has not listed
+itself, and both the API and `backup.py` refuse one taken under another key. Threats
+and mitigations for the whole operations path: [architecture/threat-model.md](architecture/threat-model.md).
+
 Qdrant snapshots are taken but not auto-restored: vectors are re-derivable from the chunk
 text in PostgreSQL, so they are an optimisation rather than the source of truth.
 

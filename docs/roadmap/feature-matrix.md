@@ -14,7 +14,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 6 | vLLM / Ollama adapters | P0 | Existing | `services/llm_provider.py`; `ollama` is an external runtime | Declared-capability contract per adapter |
 | 7 | Basic RBAC | P0 | Existing (E3) | `core/permissions.py`, `models/auth.py`, `services/seed.py` | Mapped to the plan's 8 roles in E3 (`KNOWLEDGE_ADMIN` added); see `docs/teams.md` |
 | 8 | Audit trail | P0 | Existing | `models/audit.py`, `services/audit.py` | Export, correlation-ID filter in UI |
-| 9 | Offline installation | P0 | Existing | `offline/`, `scripts/build_bundle.py`, `make gate-phase8` | Signed manifest, SBOM |
+| 9 | Offline installation | P0 | Existing (E7) | `offline/`, `scripts/build_bundle.py`, `scripts/bundle_signing.py`, `scripts/sbom.py`, Offline Updates page | Key rotation and revocation |
 | 10 | Deployment lifecycle | P1 | Existing (E4) | `services/deployment.py`, `workers/deployments.py`, `services/scheduler.py` | Zero-downtime (blue/green) revisions need replicas |
 | 11 | GPU monitoring | P1 | Existing | `node-agent/`, `models/infrastructure.py` | Thresholds feeding alerts |
 | 12 | RAG knowledge bases | P1 | Existing (E5) | `services/knowledge.py`, `retrieval.py`, `workers/ingestion.py` | Per-document ACL, whole-base re-embed |
@@ -23,7 +23,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 15 | Agent builder | P1 | Existing | `services/agent_registry.py`, `agent_runtime.py`, `agents/*.yaml` | Global kill switch |
 | 16 | Human approval | P1 | Existing (E6) | `agent_runs` approval state, `workflow_approvals`, Approvals page (agent and workflow steps) | none |
 | 17 | Usage quotas | P1 | Existing (E2, E3) | `gateway_quotas`, `services/gateway_policy.py`, Usage & Quotas page | Soft warnings at a budget threshold |
-| 18 | Backup / restore | P1 | Partial | `scripts/backup.py`, `docs/backup.md` | Audited API and UI |
+| 18 | Backup / restore | P1 | Existing (E7) | `scripts/backup.py`, `services/ops.py`, `scripts/ops_runner.py`, Backup & Restore page | Scheduling, retention, partial restore |
 | 19 | Workflow visual builder | P2 | Existing (E6) | `services/workflow_engine.py`, `services/workflows.py`, `workers/workflows.py`, Workflows page | Drag-and-drop canvas, typed node schemas, parallel branches |
 | 20 | OIDC / LDAP / AD | P2 | Existing | `services/auth_providers.py`, `fixtures/oidc` | none |
 | 21 | Multi-host management | P2 | Existing | node enrollment, `services/node_enrollment.py` | none |
@@ -32,8 +32,8 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 24 | Teams / tenant isolation | (5.12) | Existing (E3) | `models/teams.py`, `core/scope.py`, `services/teams.py`, Teams page | Memory/conversations still scoped by tenant and end user, not team |
 | 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | GPU-threshold alerts, notification channels |
 | 26 | Settings page | (§6) | Partial | `models/system.py` | UI |
-| 27 | Diagnostics bundle | (5.16) | Planned | none | Redacted support bundle |
+| 27 | Diagnostics bundle | (5.16) | Existing (E7) | `services/diagnostics.py`, `core/redact.py`, Diagnostics page | none |
 | 28 | Speech, OCR, voice | (beyond plan) | Existing | `services/voice.py`, `media_provider.py` | none |
 
-**Summary:** of the 23 features in plan §14, 13 are Existing, 8 Partial and 2 Planned.
+**Summary:** of the 23 features in plan §14, 20 are Existing, 2 Partial (dashboard, chargeback) and 1 Planned (connector catalogue).
 Every P0 item is Existing or Partial.

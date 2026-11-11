@@ -844,3 +844,56 @@ body.app-active main {
 }
 .wf-step-body { padding: 0 .7rem .7rem; }
 .wf-json { max-height: 16rem; white-space: pre-wrap; word-break: break-word; }
+
+/* -------------------------------------------------------------------------- */
+/* Operations: Backup & Restore, Offline Updates, Diagnostics (E7)             */
+/* -------------------------------------------------------------------------- */
+.ops-banner {
+  display: flex; align-items: center; gap: .9rem; padding: .85rem 1.1rem;
+  border-radius: var(--radius); border: 1px solid transparent; flex-wrap: wrap;
+}
+.ops-banner > svg { width: 1.6rem; height: 1.6rem; flex: none; }
+.ops-banner.tone-ok   { background: #e9f9f0; border-color: #bfeccf; color: #14532d; }
+.ops-banner.tone-warn { background: #fff6e6; border-color: #fbdca4; color: #7c3d0a; }
+.ops-banner.tone-crit { background: #fdeeee; border-color: #f6c5c5; color: #7f1d1d; }
+.ops-banner.tone-idle { background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
+.ops-banner code { color: inherit; background: rgba(0, 0, 0, .06); padding: 0 .3rem; border-radius: .3rem; }
+[data-bs-theme="dark"] .ops-banner.tone-ok   { background: #0f2a20; border-color: #1d4a35; color: #a7f3c6; }
+[data-bs-theme="dark"] .ops-banner.tone-warn { background: #2e220f; border-color: #5a4115; color: #fcd99a; }
+[data-bs-theme="dark"] .ops-banner.tone-crit { background: #2e1414; border-color: #5c2222; color: #fecaca; }
+[data-bs-theme="dark"] .ops-banner code { background: rgba(255, 255, 255, .08); }
+
+.ops-log {
+  background: #0d1330; color: #d6dcff; border-radius: var(--radius-sm);
+  padding: .85rem 1rem; font-size: .78rem; line-height: 1.5; max-height: 26rem;
+  overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0;
+}
+.ops-config { max-height: 32rem; }
+
+.ops-facts { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; font-size: .875rem; }
+.ops-facts dt { color: var(--bs-secondary-color); font-weight: 500; }
+.ops-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+.check-list { list-style: none; padding: 0; margin: 0 0 1rem; display: grid; gap: .5rem; }
+.check-list li {
+  display: flex; gap: .75rem; align-items: flex-start; padding: .6rem .8rem;
+  border-radius: var(--radius-sm); background: var(--bs-tertiary-bg); border: 1px solid var(--bs-border-color);
+}
+.check-list li > svg { width: 1.25rem; height: 1.25rem; flex: none; margin-top: .1rem; }
+.check-list .check-pass > svg { color: var(--ok); }
+.check-list .check-warn > svg { color: var(--warn); }
+.check-list .check-fail > svg { color: var(--crit); }
+.check-list .check-fail { border-color: rgba(220, 38, 38, .35); }
+
+.dep-tile {
+  border: 1px solid var(--bs-border-color); border-radius: var(--radius-sm);
+  padding: .75rem .9rem; background: var(--surface-raised); height: 100%;
+}
+
+.ops-card-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
+.ops-card-head > svg { width: 1.25rem; height: 1.25rem; color: var(--bs-primary); flex: none; }
+#page-updates .btn > svg, #page-diagnostics .btn > svg,
+#ops-confirm-modal .alert > svg, #page-backups p > svg {
+  width: 1rem; height: 1rem; vertical-align: -.15em; margin-right: .2rem;
+}
+.kpi-note { overflow-wrap: anywhere; }

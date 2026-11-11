@@ -117,6 +117,11 @@ class AuditAction(enum.StrEnum):
     WORKFLOW_RUN_CANCELLED = "WORKFLOW_RUN_CANCELLED"
     WORKFLOW_APPROVAL_GRANTED = "WORKFLOW_APPROVAL_GRANTED"
     WORKFLOW_APPROVAL_DENIED = "WORKFLOW_APPROVAL_DENIED"
+    # Operations (E7)
+    OPS_JOB_REQUESTED = "OPS_JOB_REQUESTED"
+    OPS_JOB_CANCELLED = "OPS_JOB_CANCELLED"
+    OPS_JOB_FINISHED = "OPS_JOB_FINISHED"
+    DIAGNOSTICS_EXPORTED = "DIAGNOSTICS_EXPORTED"
     # Recorded because a memory holds what an agent believes about a person, and §M24 means
     # someone will eventually ask what it remembered and who cleared it.
     MEMORY_DELETED = "MEMORY_DELETED"

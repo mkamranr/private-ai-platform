@@ -226,7 +226,16 @@ bundle: ## Build the offline install bundle (BUILD MACHINE — the one step that
 	$(COMPOSE) --profile core --profile development --profile agents \
 		build backend node-agent mock-vllm ldap-mcp
 	@python3 scripts/build_bundle.py $(if $(MODELS),--models,) $(if $(CHAT),--with-chat,) \
-		$(if $(MONITORING),--with-monitoring,)
+		$(if $(MONITORING),--with-monitoring,) $(if $(SIGN_KEY),--sign-key "$(SIGN_KEY)",)
+
+.PHONY: sbom
+sbom: ## Write sbom.cdx.json and licenses.txt for this checkout into sbom/ (no Docker needed)
+	@python3 scripts/build_bundle.py --sbom-only --output sbom
+
+.PHONY: signing-key
+signing-key: ## Create a bundle signing key pair: make signing-key OUT=~/aip-signing (BUILD SITE)
+	@test -n "$(OUT)" || (echo "Usage: make signing-key OUT=<dir outside the repo>" && exit 2)
+	@python3 scripts/bundle_signing.py keygen --out "$(OUT)"
 
 .PHONY: bundle-dry
 bundle-dry: ## Show what the bundle would contain, without writing it
@@ -297,6 +306,13 @@ backup-verify: ## Prove a backup is restorable: make backup-verify B=backups/202
 backup-restore: .env ## REPLACE this platform's data: make backup-restore B=backups/<stamp>
 	@test -n "$(B)" || (echo "Usage: make backup-restore B=backups/<stamp>" && exit 2)
 	@python3 scripts/backup.py restore "$(B)"
+
+.PHONY: ops-runner ops-inventory
+ops-runner: .env ## Run the host ops runner (backups/upgrades from the admin console, E7)
+	@python3 scripts/ops_runner.py
+
+ops-inventory: ## Print what the ops runner would report about this host
+	@python3 scripts/ops_runner.py --inventory
 
 .PHONY: reconcile
 reconcile: .env ## Find orphaned model containers (add REMOVE=1 to remove them)
