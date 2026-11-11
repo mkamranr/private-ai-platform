@@ -26,6 +26,7 @@ from app.api.v1 import (
     teams,
     users,
     voice,
+    workflows,
 )
 
 api_router = APIRouter()
@@ -63,6 +64,8 @@ api_router.include_router(alerts.router)
 api_router.include_router(quotas.router)
 # E3: teams, membership and resource scope.
 api_router.include_router(teams.router)
+# E6: workflows, their runs and approvals, and the webhook trigger.
+api_router.include_router(workflows.router)
 
 # The OpenAI-compatible gateway is deliberately NOT here. It mounts at `/v1` in
 # app.main, because the SDK derives its paths from base_url and `GET {base}/models`

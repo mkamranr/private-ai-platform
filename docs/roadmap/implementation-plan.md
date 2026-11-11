@@ -81,7 +81,14 @@ dashboard real signals.
 
 ## E6: Workflows (P2)
 
-- Persisted deterministic engine on Postgres + APScheduler; nodes per plan §5.10; shared approval inbox with agent runs; visual editor last.
+- [x] Migration `6a3c9e2f7b18`: `workflows` (team-scoped, draft, schedule, hashed webhook token), `workflow_versions`, `workflow_runs` (frozen definition, state, frozen permissions), `workflow_steps`, `workflow_approvals`. Permissions `workflow.view/edit/execute/approve`, synced by the seed.
+- [x] Persisted deterministic engine on Postgres: the plan's nodes (start, LLM, retrieval, tool, HTTP, condition, transform, approval, delay, end), templates, retries with backoff, per-step timeouts, `error` failure branches, a 200-step cap. Steps run one at a time in topological order.
+- [x] Lifecycle draft / publish (versioned) / pause / archive; triggers manual, API, test (draft), cron schedule (UTC) and webhook (token shown once, stored hashed, same 401 for every failure).
+- [x] Worker inside the API process: fires due schedules and resumes queued and delayed runs (`FOR UPDATE SKIP LOCKED`). Cron times from APScheduler's `CronTrigger`; no APScheduler job store. Documented as a deviation.
+- [x] Approvals: approval nodes and HIGH/CRITICAL tools pause the run; a decision resumes it inline; no self-approval unless the node allows it; audited. Workflow steps appear on the existing Approvals page beside agent tool calls (separate API, shared inbox in the console).
+- [x] Runs carry the starter's permissions (the publisher's for schedule and webhook runs); tool permissions are checked against them. Team scope for workflows, runs and approvals; definitions' knowledge base and model references checked on save and publish; `PUT /scope` accepts `workflow`.
+- [x] Admin: Workflows page with templates, builder (node list with typed forms, connection table, JSON view, auto-laid-out graph, validate), test and published runs, run trace with a coloured graph, triggers and versions. Doc: [docs/workflows.md](../workflows.md).
+- [ ] No drag-and-drop canvas, typed per-node schemas, parallel branches, sub-workflows, loops or webhook body signatures. See workflows.md.
 
 ## E7: Operations UI and release hardening (P0 for air-gapped production)
 

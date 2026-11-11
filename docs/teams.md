@@ -21,6 +21,7 @@ These resources carry an optional `team_id`:
 | API clients | a key belongs to its client's team |
 | agents | runs belong to their agent's team |
 | knowledge bases | documents belong to their base's team |
+| workflows (E6) | runs and approvals belong to their workflow's team |
 
 - **`team_id` empty: shared.** Anyone who holds the resource's permission can see it.
 - **`team_id` = T: owned by team T.** Only members of T can see it, plus callers whose
@@ -34,7 +35,7 @@ can see.
 
 ## Creating into a team
 
-Create requests for the five resources above accept an optional `team_id`:
+Create requests for the six resources above accept an optional `team_id`:
 
 - Omit it to create a shared resource, as before.
 - To set a team, you must be a member of that team, unless you hold `scope.all`.
@@ -43,7 +44,8 @@ Create requests for the five resources above accept an optional `team_id`:
 References are checked against the creator's scope too. An alias cannot point at a
 model you cannot see, and an agent cannot name a model alias or knowledge base you
 cannot see. An agent runs with the platform's reach, so this check is what stops an
-agent from becoming a way around team scope.
+agent from becoming a way around team scope. Workflow definitions get the same check,
+on save and on publish, for the knowledge bases and model names their steps use.
 
 ## Moving a resource between teams
 
@@ -56,7 +58,7 @@ To move a resource you need all of these:
 
 - the permission that changes that kind of resource: `model.register` (model),
   `model.deploy` (alias), `apikey.manage` (API client), `agent.edit` (agent),
-  `knowledge.manage` (knowledge base);
+  `knowledge.manage` (knowledge base), `workflow.edit` (workflow);
 - sight of the resource;
 - membership of both the team it leaves and the team it joins, unless you hold
   `scope.all`.

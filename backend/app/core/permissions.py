@@ -63,6 +63,15 @@ class Permission:
     MCP_VIEW: Final = "mcp.view"
     MCP_MANAGE: Final = "mcp.manage"
 
+    # --- workflows (E6) ---
+    WORKFLOW_VIEW: Final = "workflow.view"
+    #: Create, edit, publish, pause, archive and delete; manage triggers.
+    WORKFLOW_EDIT: Final = "workflow.edit"
+    WORKFLOW_EXECUTE: Final = "workflow.execute"
+    #: Separate, like tool.approve: deciding a paused run is not the same privilege as
+    #: starting one.
+    WORKFLOW_APPROVE: Final = "workflow.approve"
+
     # --- knowledge (M15, M16) ---
     KNOWLEDGE_VIEW: Final = "knowledge.view"
     KNOWLEDGE_MANAGE: Final = "knowledge.manage"
@@ -130,6 +139,10 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.TOOL_APPROVE: "Approve high-risk tool executions",
     Permission.MCP_VIEW: "View MCP servers and their discovered tools",
     Permission.MCP_MANAGE: "Register and configure MCP servers",
+    Permission.WORKFLOW_VIEW: "View workflows and their run history",
+    Permission.WORKFLOW_EDIT: "Create, edit, publish and retire workflows and their triggers",
+    Permission.WORKFLOW_EXECUTE: "Start workflow runs",
+    Permission.WORKFLOW_APPROVE: "Approve or reject paused workflow steps",
     Permission.KNOWLEDGE_VIEW: "View knowledge bases",
     Permission.KNOWLEDGE_MANAGE: "Create and delete knowledge bases",
     Permission.DOCUMENT_UPLOAD: "Upload documents for ingestion",
@@ -184,6 +197,7 @@ _VIEWER: Final = frozenset(
         Permission.SKILL_VIEW,
         Permission.TOOL_VIEW,
         Permission.KNOWLEDGE_VIEW,
+        Permission.WORKFLOW_VIEW,
     }
 )
 
@@ -266,6 +280,10 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.TOOL_APPROVE,
                 Permission.MCP_VIEW,
                 Permission.MCP_MANAGE,
+                Permission.WORKFLOW_VIEW,
+                Permission.WORKFLOW_EDIT,
+                Permission.WORKFLOW_EXECUTE,
+                Permission.WORKFLOW_APPROVE,
                 Permission.KNOWLEDGE_VIEW,
                 Permission.MODEL_VIEW,
                 Permission.MODEL_INFERENCE,
@@ -279,6 +297,7 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
             {
                 Permission.MODEL_INFERENCE,
                 Permission.AGENT_EXECUTE,
+                Permission.WORKFLOW_EXECUTE,
                 Permission.APIKEY_VIEW,
                 Permission.APIKEY_MANAGE,
                 Permission.USAGE_VIEW,
@@ -289,11 +308,12 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
         | _VIEWER,
     ),
     Role.USER: (
-        "Chat and agent usage",
+        "Chat, agent and workflow usage",
         frozenset(
             {
                 Permission.MODEL_INFERENCE,
                 Permission.AGENT_EXECUTE,
+                Permission.WORKFLOW_EXECUTE,
             }
         )
         | _VIEWER,

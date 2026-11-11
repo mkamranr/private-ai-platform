@@ -15,6 +15,7 @@ from app.models.auth import User
 from app.models.knowledge import Document, KnowledgeBase
 from app.models.models_registry import ApiClient, ApiKey, Model, ModelAlias, ModelDeployment
 from app.models.teams import Team, TeamMembership
+from app.models.workflows import Workflow, WorkflowApproval, WorkflowRun
 from app.repositories.base import BaseRepository
 
 #: Every table whose rows a team can own, with the label used in messages.
@@ -24,6 +25,7 @@ OWNED_TABLES: tuple[tuple[str, type], ...] = (
     ("api_clients", ApiClient),
     ("agents", Agent),
     ("knowledge_bases", KnowledgeBase),
+    ("workflows", Workflow),
 )
 
 
@@ -148,6 +150,29 @@ class ScopeLookupRepository:
             .join(Agent, Agent.id == AgentRun.agent_id)
             .where(AgentRun.id.in_(ids))
         )
+        return dict((await self.session.execute(stmt)).tuples().all())
+
+    # -- workflows (E6) ------------------------------------------------------
+    async def workflow(self, ident: uuid.UUID) -> tuple[bool, uuid.UUID | None]:
+        return await self._one(select(Workflow.team_id).where(Workflow.id == ident))
+
+    async def workflow_run(self, ident: uuid.UUID) -> tuple[bool, uuid.UUID | None]:
+        return await self._one(
+            select(Workflow.team_id)
+            .join(WorkflowRun, WorkflowRun.workflow_id == Workflow.id)
+            .where(WorkflowRun.id == ident)
+        )
+
+    async def workflow_approval(self, ident: uuid.UUID) -> tuple[bool, uuid.UUID | None]:
+        return await self._one(
+            select(Workflow.team_id)
+            .join(WorkflowRun, WorkflowRun.workflow_id == Workflow.id)
+            .join(WorkflowApproval, WorkflowApproval.run_id == WorkflowRun.id)
+            .where(WorkflowApproval.id == ident)
+        )
+
+    async def workflow_teams(self, ids: set[uuid.UUID]) -> dict[uuid.UUID, uuid.UUID | None]:
+        stmt = select(Workflow.id, Workflow.team_id).where(Workflow.id.in_(ids))
         return dict((await self.session.execute(stmt)).tuples().all())
 
     async def by_public_name(self, name: str) -> list[tuple[bool, uuid.UUID | None]]:

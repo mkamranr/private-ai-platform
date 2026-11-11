@@ -87,6 +87,13 @@ from app.repositories.voice import (
     VoiceMessageRepository,
     VoiceSessionRepository,
 )
+from app.repositories.workflows import (
+    WorkflowApprovalRepository,
+    WorkflowRepository,
+    WorkflowRunRepository,
+    WorkflowStepRepository,
+    WorkflowVersionRepository,
+)
 from app.services.agent_registry import (
     AgentRegistryService,
     McpRegistryService,
@@ -126,6 +133,8 @@ from app.services.user import UserService
 from app.services.vector_store import QdrantVectorStore
 from app.services.voice import VoiceSessionService
 from app.services.voice_config import VoiceConfigStore
+from app.services.workflow_engine import WorkflowEngine
+from app.services.workflows import WorkflowService
 from app.workers.deployments import _compute_backend_factory
 
 # auto_error=False so a missing header raises our own TokenError, keeping the
@@ -857,6 +866,65 @@ def build_agent_run_service(session: AsyncSession, app_state: Any) -> AgentRunSe
         runtime,
         audit,
     )
+
+
+def build_workflow_service(session: AsyncSession, app_state: Any) -> WorkflowService:
+    """The workflow stack (E6), assembled without FastAPI.
+
+    One construction path for requests and the workflow worker, so a scheduled run and a
+    manual one reach models, knowledge and tools the same way.
+    """
+    settings = get_settings()
+    audit = AuditService(AuditRepository(session), session_factory=app_state.database.sessionmaker)
+    gateway = GatewayService(
+        settings,
+        ModelRepository(session),
+        ModelAliasRepository(session),
+        ModelDeploymentRepository(session),
+        ApiKeyRepository(session),
+        UsageRepository(session),
+        app_state.redis.client,
+        app_state.database.sessionmaker,
+    )
+    knowledge = KnowledgeService(
+        settings,
+        KnowledgeBaseRepository(session),
+        DocumentRepository(session),
+        DocumentChunkRepository(session),
+        EmbeddingModelRepository(session),
+        QdrantVectorStore(app_state.qdrant.client),
+        audit,
+        _embed_through(gateway),
+        app_state.minio,
+        ResolvingOcrEngine(gateway.ocr_engine_for_model),
+        rerank=_rerank_through(gateway),
+    )
+    engine = WorkflowEngine(
+        settings,
+        WorkflowStepRepository(session),
+        WorkflowApprovalRepository(session),
+        provider_factory=gateway.provider_for_model,
+        knowledge=knowledge,
+        tools=ToolRepository(session),
+        tool_executors=app_state.tool_executors,
+    )
+    return WorkflowService(
+        settings,
+        WorkflowRepository(session),
+        WorkflowVersionRepository(session),
+        WorkflowRunRepository(session),
+        WorkflowApprovalRepository(session),
+        UserRepository(session),
+        audit,
+        engine,
+    )
+
+
+def get_workflow_service(request: Request, session: SessionDep) -> WorkflowService:
+    return build_workflow_service(session, request.app.state)
+
+
+WorkflowServiceDep = Annotated[WorkflowService, Depends(get_workflow_service)]
 
 
 def _embed_through(gateway: GatewayService) -> Any:

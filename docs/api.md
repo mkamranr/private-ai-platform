@@ -642,3 +642,30 @@ Changes to existing routes, all backwards-compatible:
   base configures a reranker.
 - `DELETE /documents/{id}` on a current version deletes every version of the document.
 
+## Workflows — Expansion E6
+
+Under `/api/v1`, authenticated with the platform JWT unless noted. See
+[workflows.md](workflows.md).
+
+| method | path | permission |
+|---|---|---|
+| GET | `/workflows` | `workflow.view`. `?status=` |
+| POST | `/workflows` | `workflow.edit`. `name`, `display_name`, `description`, `template` (`blank`/`rag_answer`/`approval_http`) or `draft`, `team_id`. **201** |
+| GET | `/workflows/node-types` | `workflow.view` |
+| GET / PATCH / DELETE | `/workflows/{id}` | `workflow.view` / `workflow.edit` / `workflow.edit`. PATCH: `display_name`, `description`, `draft`, `schedule_cron` (empty string removes it), `schedule_input`. DELETE is 409 while runs are in progress |
+| POST | `/workflows/{id}/validate` | `workflow.view`. `definition` (omit for the saved draft); returns `valid`, `problems`, `order` |
+| POST | `/workflows/{id}/publish` | `workflow.edit`. `note`; 422 with `details.problems` when the draft is invalid |
+| POST | `/workflows/{id}/status` | `workflow.edit`. `PUBLISHED`, `PAUSED` or `ARCHIVED` |
+| GET | `/workflows/{id}/versions` | `workflow.view`. Newest first |
+| POST / DELETE | `/workflows/{id}/webhook` | `workflow.edit`. POST returns the token once |
+| POST | `/workflows/{id}/runs` | `workflow.execute` (`test` also needs `workflow.edit`). `input`, `trigger` (`manual`/`api`), `test`, `wait` (default true). **201** |
+| GET | `/workflows/{id}/runs` | `workflow.view`. `?status=&limit=` |
+| GET | `/workflow-runs` | `workflow.view`. Recent runs across workflows in scope |
+| GET | `/workflow-runs/{id}` | `workflow.view`. With the frozen definition, steps and approvals |
+| POST | `/workflow-runs/{id}/cancel` | `workflow.execute` |
+| GET | `/workflow-approvals/pending` | `workflow.approve` |
+| POST | `/workflow-approvals/{id}/decide` | `workflow.approve`. `approved`, `reason`; continues the run and returns it |
+| POST | `/workflow-hooks/{id}` | **No JWT**: header `X-Workflow-Token`. JSON body is the input. **202** with the queued run; 401 for any bad token |
+
+Changes to existing routes, backwards-compatible: `PUT /scope` accepts
+`resource_type: "workflow"`.

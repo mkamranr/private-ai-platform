@@ -29,6 +29,7 @@ from app.models.auth import User
 from app.models.knowledge import KnowledgeBase
 from app.models.models_registry import ApiClient, Model, ModelAlias
 from app.models.teams import Team, TeamMembership, TeamRole
+from app.models.workflows import Workflow
 from app.repositories.teams import ScopeLookupRepository, TeamRepository
 from app.repositories.user import UserRepository
 from app.services.audit import AuditService
@@ -46,6 +47,7 @@ ASSIGNABLE: dict[str, tuple[type, str, str]] = {
     "api_client": (ApiClient, Permission.APIKEY_MANAGE, "API client"),
     "agent": (Agent, Permission.AGENT_EDIT, "agent"),
     "knowledge_base": (KnowledgeBase, Permission.KNOWLEDGE_MANAGE, "knowledge base"),
+    "workflow": (Workflow, Permission.WORKFLOW_EDIT, "workflow"),
 }
 
 
@@ -363,6 +365,22 @@ class ScopeGuard:
             return set(run_ids)
         teams = await self._lookups.run_teams(run_ids)
         return {rid for rid in run_ids if self.scope.can_see(teams.get(rid))}
+
+    # -- workflows (E6): a run and an approval are in scope when their workflow is.
+    async def workflow(self, ident: uuid.UUID) -> None:
+        await self._check(await self._lookups.workflow(ident), "workflow", ident)
+
+    async def workflow_run(self, ident: uuid.UUID) -> None:
+        await self._check(await self._lookups.workflow_run(ident), "workflow run", ident)
+
+    async def workflow_approval(self, ident: uuid.UUID) -> None:
+        await self._check(await self._lookups.workflow_approval(ident), "approval", ident)
+
+    async def visible_workflows(self, workflow_ids: set[uuid.UUID]) -> set[uuid.UUID]:
+        if self.scope.all_teams or not workflow_ids:
+            return set(workflow_ids)
+        teams = await self._lookups.workflow_teams(workflow_ids)
+        return {wid for wid in workflow_ids if self.scope.can_see(teams.get(wid))}
 
     async def model_name(self, name: str) -> None:
         """An alias or model *name* (what agents and knowledge bases refer to) must be

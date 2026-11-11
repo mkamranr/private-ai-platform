@@ -91,6 +91,13 @@ from app.models.voice import (
     VoiceSession,
     VoiceSessionState,
 )
+from app.models.workflows import (
+    Workflow,
+    WorkflowApproval,
+    WorkflowRun,
+    WorkflowStep,
+    WorkflowVersion,
+)
 
 __all__ = [
     "ACTIVE_STATES",
@@ -169,6 +176,11 @@ __all__ = [
     "VoiceMessage",
     "VoiceSession",
     "VoiceSessionState",
+    "Workflow",
+    "WorkflowApproval",
+    "WorkflowRun",
+    "WorkflowStep",
+    "WorkflowVersion",
     "role_permissions",
     "user_roles",
 ]

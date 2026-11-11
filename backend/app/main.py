@@ -44,6 +44,7 @@ from app.services.tool_executors import build_executors
 from app.workers.deployments import DeploymentWorker
 from app.workers.ingestion import IngestionWorker
 from app.workers.scheduler import InfrastructureWorker
+from app.workers.workflows import WorkflowWorker
 
 log = get_logger(__name__)
 
@@ -136,10 +137,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ingestion_worker = ingestion_worker
     ingestion_task: asyncio.Task[None] | None = None
 
+    # Fires workflow schedules and advances queued and delayed runs (E6). Built from the
+    # same assembly a request uses, so a scheduled run reaches models and tools the same
+    # way a manual one does.
+    from app.api.deps import build_workflow_service
+
+    workflow_worker = WorkflowWorker(
+        database.sessionmaker, lambda session: build_workflow_service(session, app.state)
+    )
+    app.state.workflow_worker = workflow_worker
+    workflow_task: asyncio.Task[None] | None = None
+
     if settings.workers.enabled:
         worker.start()
         deployment_task = asyncio.create_task(deployment_worker.run_forever())
         ingestion_task = asyncio.create_task(ingestion_worker.run_forever())
+        workflow_task = asyncio.create_task(workflow_worker.run_forever())
     else:
         log.info("workers_disabled", reason="WORKERS__ENABLED is false")
 
@@ -157,7 +170,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         worker.shutdown()
-        for task in (deployment_task, ingestion_task):
+        for task in (deployment_task, ingestion_task, workflow_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

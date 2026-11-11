@@ -56,6 +56,10 @@
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 5.2c2.6-.9 5.1-.9 7.6.6 2.5-1.5 5-1.5 7.6-.6v12.4c-2.6-.9-5.1-.9-7.6.6-2.5-1.5-5-1.5-7.6-.6V5.2Z"/><path d="M12 5.8v12.4"/></symbol>
     <symbol id="i-playground" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.4" cy="10.4" r="6"/><path d="m15 15 5.4 5.4"/><path d="M7.8 11.6 9.6 9.2l1.8 1.8 1.8-2.6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.4V12l3 2"/></symbol>
+    <symbol id="i-workflows" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="4" width="6.4" height="5.2" rx="1.4"/><rect x="14.8" y="4" width="6.4" height="5.2" rx="1.4"/><rect x="8.8" y="14.8" width="6.4" height="5.2" rx="1.4"/><path d="M9.2 6.6h5.6M18 9.2v2.4a1.6 1.6 0 0 1-1.6 1.6H12v1.6"/></symbol>
     <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.2" y="4.2" width="15.6" height="15.6" rx="2.4"/><rect x="8.6" y="8.6" width="6.8" height="6.8" rx="1.2"/><path d="M9.4 1.8v2.4M14.6 1.8v2.4M9.4 19.8v2.4M14.6 19.8v2.4M1.8 9.4h2.4M1.8 14.6h2.4M19.8 9.4h2.4M19.8 14.6h2.4"/></symbol>
     <symbol id="i-voice" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -203,6 +207,7 @@
       <div class="nav-section mt-4">Agents</div>
       <a class="nav-item" data-page="agents" href="#agents"><svg class="nav-icon" aria-hidden="true"><use href="#i-agents"/></svg>Agents</a>
       <a class="nav-item" data-page="skills" href="#skills"><svg class="nav-icon" aria-hidden="true"><use href="#i-skills"/></svg>Skills</a>
+      <a class="nav-item" data-page="workflows" href="#workflows"><svg class="nav-icon" aria-hidden="true"><use href="#i-workflows"/></svg>Workflows</a>
       <a class="nav-item" data-page="tools" href="#tools"><svg class="nav-icon" aria-hidden="true"><use href="#i-tools"/></svg>Tools &amp; MCP</a>
       <a class="nav-item" data-page="approvals" href="#approvals"><svg class="nav-icon" aria-hidden="true"><use href="#i-approvals"/></svg>
         Approvals <span id="approval-badge" class="badge text-bg-warning d-none">0</span>
@@ -440,7 +445,27 @@
       <!-- Approvals -->
       <section id="page-approvals" class="page d-none">
         <h4 class="mb-3">Pending approvals</h4>
-        <div id="approvals-body"></div>
+        <h6 class="mb-2 text-secondary">Agent tool calls</h6>
+        <div id="approvals-body" class="mb-4"></div>
+        <h6 class="mb-2 text-secondary">Workflow steps</h6>
+        <div id="wf-approvals-body"></div>
+      </section>
+
+      <!-- Workflows (E6). The list polls; the builder is rendered on selection only, so
+           unsaved edits are never replaced by a refresh. -->
+      <section id="page-workflows" class="page d-none">
+        <div class="page-header">
+          <div>
+            <h4 class="mb-0">Workflows</h4>
+            <p class="page-subtitle">Chain models, knowledge, tools, HTTP calls and human
+              approvals into a graph that runs on demand, on a schedule or from a webhook.
+              Every run keeps a step-by-step trace.</p>
+          </div>
+          <button class="btn btn-sm btn-primary ms-auto" id="wf-create-btn" data-bs-toggle="modal"
+                  data-bs-target="#wf-modal">Create workflow</button>
+        </div>
+        <div id="wf-body" class="mb-4"></div>
+        <div id="wf-detail"></div>
       </section>
 
       <!-- Endpoints and keys -->
@@ -1981,6 +2006,98 @@
   </div>
 </div>
 
+<!-- Workflow: create (E6) --------------------------------------------------->
+<div class="modal fade" id="wf-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="wf-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Create workflow</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">A workflow starts as a draft you can save in any
+            state. Publishing validates it and freezes a version; runs always use a
+            published version, except test runs of the draft.</p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="wf-name">Name</label>
+              <input class="form-control mono" id="wf-name" placeholder="refund-review" required
+                     pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]" minlength="3" maxlength="64">
+              <div class="form-text small">Lowercase and hyphens. Used in the API and logs.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="wf-display">Display name</label>
+              <input class="form-control" id="wf-display" placeholder="Refund review" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="wf-desc">Description</label>
+              <input class="form-control" id="wf-desc" placeholder="What it does and who relies on it.">
+            </div>
+            <div class="col-12">
+              <div class="form-label small text-secondary">Start from</div>
+              <div class="wf-templates" id="wf-templates">
+                <label class="wf-template"><input type="radio" name="wf-template" value="blank" checked>
+                  <span><strong>Blank</strong><small>Start, then End, echoing the input.</small></span></label>
+                <label class="wf-template"><input type="radio" name="wf-template" value="rag_answer">
+                  <span><strong>Answer from knowledge</strong><small>Search a knowledge base, then
+                  ask a model to answer from the passages.</small></span></label>
+                <label class="wf-template"><input type="radio" name="wf-template" value="approval_http">
+                  <span><strong>Approve, then call</strong><small>A person reviews the request
+                  before an internal service is called.</small></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="mb-3 team-field mt-3">
+            <label class="form-label small text-secondary" for="wf-team">Team</label>
+            <select class="form-select team-picker" id="wf-team"></select>
+            <div class="form-text small">Shared: visible to everyone with the permission.
+              A team: visible only to its members.</div>
+          </div>
+          <div id="wf-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Workflow: edit one node -------------------------------------------------->
+<div class="modal fade" id="wf-node-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="wf-node-form">
+        <div class="modal-header">
+          <h5 class="modal-title" id="wf-node-title">Node</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="wf-node-body"></div>
+        <div class="modal-footer">
+          <div id="wf-node-error" class="text-danger small me-auto d-none"></div>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Apply</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Workflow: one run -------------------------------------------------------->
+<div class="modal fade" id="wf-run-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="wf-run-title">Run</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="wf-run-body"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Deployment logs modal ---------------------------------------------------->
 <div class="modal fade" id="logs-modal" tabindex="-1">
   <div class="modal-dialog modal-xl">
@@ -2002,5 +2119,6 @@
 <script src="/vendor/bootstrap.bundle.min.js"></script>
 <script src="/vendor/chart.umd.min.js"></script>
 <script src="/js/admin.js"></script>
+<script src="/js/workflows.js"></script>
 </body>
 </html>
