@@ -25,6 +25,7 @@ from app.models.agents import (
 )
 from app.models.audit import AuditAction, AuditLog, AuditResult
 from app.models.auth import Permission, Role, User, role_permissions, user_roles
+from app.models.chargeback import DEFAULT_RATE_MODEL, CostRate
 from app.models.infrastructure import (
     Container,
     ContainerState,
@@ -108,6 +109,7 @@ from app.models.workflows import (
 
 __all__ = [
     "ACTIVE_STATES",
+    "DEFAULT_RATE_MODEL",
     "OPEN_ALERT_STATES",
     "QUOTA_WILDCARD",
     "TERMINAL_JOB_STATUSES",
@@ -134,6 +136,7 @@ __all__ = [
     "ContainerState",
     "Conversation",
     "ConversationMessage",
+    "CostRate",
     "DeploymentRevision",
     "DeploymentState",
     "Document",

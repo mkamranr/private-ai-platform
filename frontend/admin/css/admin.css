@@ -910,3 +910,6 @@ body.app-active main {
 #page-settings td { vertical-align: top; }
 #page-settings td code { font-size: .8rem; }
 #page-dashboard .card-title-sm { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
+
+/* Chargeback (E9): amounts line up with the token columns. */
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }

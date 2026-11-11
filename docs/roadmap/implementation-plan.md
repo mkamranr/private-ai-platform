@@ -110,6 +110,16 @@ dashboard real signals.
 - [x] Fixed: the E7 redaction allowlist named token-lifetime fields that do not exist, so the real ones were over-redacted in Diagnostics.
 - [ ] No TTFT or throughput (the gateway does not record TTFT); no range beyond 7 days; no per-team preferences.
 
+## E9: Chargeback (closes plan §14 "Advanced chargeback")
+
+- [x] `cost_rates` table (migration `8c5e1a4b9d30`): a dated price schedule per model, `*` for the default, per million prompt and completion tokens and optionally per GPU-hour. Rates are never edited; a price change is a new rate. `cost.view` / `cost.manage` permissions; audited (`COST_RATE_CREATED`, `COST_RATE_DELETED`).
+- [x] Reports by team, API key, platform user, end user (trusted and self-reported kept apart) or model, for whole UTC days up to 366. Each call is priced at the rate in force when it was made, chosen in SQL; a model's own rate beats the default.
+- [x] GPU cost from `gpu_allocations`: hours per model, cut at rate changes, shared out by token share; hours nobody used reported as idle capacity. Shares use every team's tokens, so a scoped report carries only its fair part.
+- [x] Unpriced is not free: no applicable rate gives `null` cost and an `unpriced` count; partial streams are flagged. Every report and export says it is an estimate.
+- [x] CSV export (POST, audited, every row, formula-safe cells).
+- [x] Chargeback page: grouping and period pickers, totals, unpriced warning, cost table, idle capacity, rates with status, add/remove rate. `chargeback.currency` runtime setting. Doc: [docs/chargeback.md](../chargeback.md).
+- [ ] No currency budgets, cost alerts or conversion; no cost for ingestion, tool calls or voice.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

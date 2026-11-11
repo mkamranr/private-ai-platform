@@ -706,3 +706,18 @@ rollback, gets 409. See [operations.md](operations.md).
 
 Audit actions: `OPS_JOB_REQUESTED`, `OPS_JOB_CANCELLED`, `OPS_JOB_FINISHED`,
 `DIAGNOSTICS_EXPORTED`.
+
+## Chargeback — Expansion E9
+
+Under `/api/v1/chargeback`. Amounts are decimal strings in the `chargeback.currency`
+currency; `null` means not priced, never 0. See [chargeback.md](chargeback.md).
+
+| method | path | permission |
+|---|---|---|
+| GET | `/chargeback/rates` | `cost.view`. Every rate with `status` (`in_force`, `scheduled`, `superseded`) and `superseded_at` |
+| POST | `/chargeback/rates` | `cost.manage`. `model` (name or `*`), `prompt_per_million`, `completion_per_million`, `gpu_hour?`, `effective_from?`, `note?`; 422 for an unknown model, 409 for a duplicate start |
+| DELETE | `/chargeback/rates/{id}` | `cost.manage`. Body `reason?`; 204 |
+| GET | `/chargeback/report` | `cost.view`. `?group_by=team\|api_key\|user\|end_user\|model&start=&end=` (UTC days, inclusive, max 366). Rows follow team scope; `idle` only with `scope.all` |
+| POST | `/chargeback/export` | `cost.view`. Same parameters; `text/csv`, every row; audited |
+
+Audit actions: `COST_RATE_CREATED`, `COST_RATE_DELETED`, `CHARGEBACK_EXPORTED`.

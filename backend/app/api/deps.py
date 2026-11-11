@@ -45,6 +45,7 @@ from app.repositories.agents import (
     ToolRepository,
 )
 from app.repositories.audit import AuditRepository
+from app.repositories.chargeback import ChargebackRepository, CostRateRepository
 from app.repositories.dashboard import DashboardRepository
 from app.repositories.infrastructure import (
     ContainerRepository,
@@ -109,6 +110,7 @@ from app.services.api_keys import ApiKeyService
 from app.services.audit import AuditService
 from app.services.auth import AuthService
 from app.services.auth_providers import LdapAuthProvider, LocalAuthProvider
+from app.services.chargeback import ChargebackService
 from app.services.dashboard import DashboardService
 from app.services.definitions import DefinitionImporter
 from app.services.deployment import DeploymentService
@@ -1287,3 +1289,20 @@ def get_runtime_settings_service(
 
 
 RuntimeSettingsServiceDep = Annotated[RuntimeSettingsService, Depends(get_runtime_settings_service)]
+
+
+# ---------------------------------------------------------------------------
+# Chargeback (E9)
+# ---------------------------------------------------------------------------
+def get_chargeback_service(
+    session: SessionDep, settings: EffectiveSettingsDep, audit: AuditDep
+) -> ChargebackService:
+    return ChargebackService(
+        CostRateRepository(session),
+        ChargebackRepository(session),
+        audit,
+        currency=settings.chargeback.currency,
+    )
+
+
+ChargebackServiceDep = Annotated[ChargebackService, Depends(get_chargeback_service)]

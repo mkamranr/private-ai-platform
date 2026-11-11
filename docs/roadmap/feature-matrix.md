@@ -27,7 +27,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 19 | Workflow visual builder | P2 | Existing (E6) | `services/workflow_engine.py`, `services/workflows.py`, `workers/workflows.py`, Workflows page | Drag-and-drop canvas, typed node schemas, parallel branches |
 | 20 | OIDC / LDAP / AD | P2 | Existing | `services/auth_providers.py`, `fixtures/oidc` | none |
 | 21 | Multi-host management | P2 | Existing | node enrollment, `services/node_enrollment.py` | none |
-| 22 | Advanced chargeback | P2 | Partial | per-user attribution (`services/identity.py`) | Rates, reports |
+| 22 | Advanced chargeback | P2 | Existing (E9) | `services/chargeback.py`, `api/v1/chargeback.py`, Chargeback page | Currency budgets and cost alerts; non-gateway costs (ingestion, tools, voice) |
 | 23 | Large connector catalogue | P2 | Planned | `mcp/manifests/` (3) | More connectors |
 | 24 | Teams / tenant isolation | (5.12) | Existing (E3) | `models/teams.py`, `core/scope.py`, `services/teams.py`, Teams page | Memory/conversations still scoped by tenant and end user, not team |
 | 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | GPU-threshold alerts, notification channels |
@@ -35,5 +35,5 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 27 | Diagnostics bundle | (5.16) | Existing (E7) | `services/diagnostics.py`, `core/redact.py`, Diagnostics page | none |
 | 28 | Speech, OCR, voice | (beyond plan) | Existing | `services/voice.py`, `media_provider.py` | none |
 
-**Summary:** of the 23 features in plan §14, 21 are Existing, 1 Partial (chargeback) and 1 Planned (connector catalogue).
-Every P0 item is Existing or Partial.
+**Summary:** of the 23 features in plan §14, 22 are Existing and 1 Planned (connector catalogue).
+Every P0 item is Existing.

@@ -32,6 +32,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `gateway.concurrency_lease_seconds` | Gateway resilience | per-model concurrency slots | next gateway request |
 | `ops.runner_stale_seconds`, `ops.max_log_lines` | Operations | ops runner status and reports | immediately |
 | `ops.support_log_hours`, `ops.support_log_lines` | Operations | support bundle | next bundle |
+| `chargeback.currency` | Chargeback | every cost report (E9, [chargeback.md](chargeback.md)) | next report |
 
 **Deliberately not editable:**
 

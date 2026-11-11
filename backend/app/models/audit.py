@@ -125,6 +125,10 @@ class AuditAction(enum.StrEnum):
     # Runtime settings (E8)
     SETTING_UPDATED = "SETTING_UPDATED"
     SETTING_RESET = "SETTING_RESET"
+    # Chargeback (E9)
+    COST_RATE_CREATED = "COST_RATE_CREATED"
+    COST_RATE_DELETED = "COST_RATE_DELETED"
+    CHARGEBACK_EXPORTED = "CHARGEBACK_EXPORTED"
     # Recorded because a memory holds what an agent believes about a person, and §M24 means
     # someone will eventually ask what it remembered and who cleared it.
     MEMORY_DELETED = "MEMORY_DELETED"

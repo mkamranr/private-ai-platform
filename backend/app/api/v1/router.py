@@ -15,6 +15,7 @@ from app.api.v1 import (
     audit,
     auth,
     backends,
+    chargeback,
     dashboard,
     diagnostics,
     health,
@@ -72,6 +73,7 @@ api_router.include_router(workflows.router)
 api_router.include_router(ops.router)
 api_router.include_router(diagnostics.router)
 api_router.include_router(settings.router)
+api_router.include_router(chargeback.router)
 
 # The OpenAI-compatible gateway is deliberately NOT here. It mounts at `/v1` in
 # app.main, because the SDK derives its paths from base_url and `GET {base}/models`

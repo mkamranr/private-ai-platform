@@ -166,6 +166,7 @@ all**, then migrates, seeds, signs in, upgrades and rolls back.
 | [security.md](docs/security.md) · [database.md](docs/database.md) · [backup.md](docs/backup.md) | Security model, schema, backup and restore |
 | [operations.md](docs/operations.md) · [threat-model.md](docs/architecture/threat-model.md) | Backups, offline updates and diagnostics from the console; signing, SBOM |
 | [settings.md](docs/settings.md) | Runtime settings and the dashboard |
+| [chargeback.md](docs/chargeback.md) | Cost rates, cost reports and CSV export |
 | [observability.md](docs/observability.md) · [api.md](docs/api.md) | Metrics, logs, traces; the HTTP surface |
 | [troubleshooting.md](docs/troubleshooting.md) | Failures that have actually happened |
 

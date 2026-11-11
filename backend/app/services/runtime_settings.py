@@ -59,6 +59,7 @@ CATEGORIES: tuple[tuple[str, str], ...] = (
     ("gateway", "Gateway resilience"),
     ("operations", "Operations"),
     ("integrations", "Integrations"),
+    ("chargeback", "Chargeback"),
 )
 
 
@@ -182,6 +183,14 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Support bundle: maximum log lines",
         "Upper bound on log lines in one support bundle.",
         "Next support bundle",
+    ),
+    RuntimeSetting(
+        "chargeback.currency",
+        "chargeback",
+        "Currency",
+        "Three-letter code (ISO 4217) that cost rates and chargeback reports are shown "
+        "in. A label only: changing it converts nothing. Read by every cost report.",
+        "Next cost report",
     ),
 )
 BY_KEY = {s.key: s for s in RUNTIME_SETTINGS}

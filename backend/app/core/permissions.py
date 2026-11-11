@@ -85,6 +85,10 @@ class Permission:
     # Gateway quotas and budgets (E2, plan §5.14).
     QUOTA_VIEW: Final = "quota.view"
     QUOTA_MANAGE: Final = "quota.manage"
+    # Chargeback (E9, plan §14). Separate from usage.view: a cost report is a financial
+    # view of usage, and setting the rates it uses is a finance decision.
+    COST_VIEW: Final = "cost.view"
+    COST_MANAGE: Final = "cost.manage"
 
     # --- teams and scope (E3, plan §5.12) ---
     TEAM_VIEW: Final = "team.view"
@@ -157,6 +161,8 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.USAGE_VIEW: "View API usage records",
     Permission.QUOTA_VIEW: "View gateway quotas and budgets",
     Permission.QUOTA_MANAGE: "Create, change and remove gateway quotas and budgets",
+    Permission.COST_VIEW: "View chargeback cost reports and cost rates",
+    Permission.COST_MANAGE: "Add and remove the cost rates chargeback reports use",
     Permission.TEAM_VIEW: "View every team and its members",
     Permission.TEAM_MANAGE: "Create, rename and delete teams and manage their members",
     Permission.SCOPE_ALL: "See and act on resources of every team, not only your own",
@@ -245,6 +251,8 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.QUOTA_VIEW,
                 Permission.QUOTA_MANAGE,
                 Permission.USAGE_VIEW,
+                Permission.COST_VIEW,
+                Permission.COST_MANAGE,
                 Permission.KNOWLEDGE_VIEW,
                 Permission.KNOWLEDGE_MANAGE,
                 Permission.DOCUMENT_UPLOAD,
@@ -343,6 +351,7 @@ ROLE_DEFINITIONS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 Permission.BACKEND_VIEW,
                 Permission.ALERT_VIEW,
                 Permission.QUOTA_VIEW,
+                Permission.COST_VIEW,
                 Permission.TEAM_VIEW,
                 Permission.DIAGNOSTICS_VIEW,
                 # Read-only across every team: an audit that can only see some teams

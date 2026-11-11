@@ -653,6 +653,16 @@ class OpsSettings(BaseModel):
     support_log_lines: int = Field(default=5000, ge=100, le=50000)
 
 
+class ChargebackSettings(BaseModel):
+    """Chargeback reports (E9, plan §14).
+
+    Rates live in the ``cost_rates`` table; this is only the label their amounts carry.
+    Changing it relabels every rate and report and converts nothing.
+    """
+
+    currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+
+
 class TracingSettings(BaseModel):
     """Distributed tracing to Tempo over OTLP (M19, Phase 7).
 
@@ -803,6 +813,7 @@ class Settings(BaseSettings):
     health: HealthSettings = Field(default_factory=HealthSettings)
     workers: WorkersSettings = Field(default_factory=WorkersSettings)
     ops: OpsSettings = Field(default_factory=OpsSettings)
+    chargeback: ChargebackSettings = Field(default_factory=ChargebackSettings)
 
     @classmethod
     def settings_customise_sources(
