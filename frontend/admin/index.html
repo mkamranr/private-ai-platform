@@ -102,6 +102,8 @@
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></symbol>
     <symbol id="i-cost" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9.2c-.5-1-1.6-1.6-3-1.6-1.8 0-3 .9-3 2.2 0 3 6 1.6 6 4.5 0 1.3-1.3 2.2-3 2.2-1.5 0-2.6-.6-3.1-1.7M12 6v1.6M12 16.4V18"/></symbol>
+    <symbol id="i-connectors" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></symbol>
   </defs>
 </svg>
 
@@ -228,6 +230,7 @@
       <a class="nav-item" data-page="skills" href="#skills"><svg class="nav-icon" aria-hidden="true"><use href="#i-skills"/></svg>Skills</a>
       <a class="nav-item" data-page="workflows" href="#workflows"><svg class="nav-icon" aria-hidden="true"><use href="#i-workflows"/></svg>Workflows</a>
       <a class="nav-item" data-page="tools" href="#tools"><svg class="nav-icon" aria-hidden="true"><use href="#i-tools"/></svg>Tools &amp; MCP</a>
+      <a class="nav-item" data-page="connectors" href="#connectors"><svg class="nav-icon" aria-hidden="true"><use href="#i-connectors"/></svg>Connector Catalogue</a>
       <a class="nav-item" data-page="approvals" href="#approvals"><svg class="nav-icon" aria-hidden="true"><use href="#i-approvals"/></svg>
         Approvals <span id="approval-badge" class="badge text-bg-warning d-none">0</span>
       </a>
@@ -405,6 +408,26 @@
           </div>
         </div>
         <div id="usage-page-body"></div>
+      </section>
+
+      <!-- Connector catalogue (E10) -->
+      <section id="page-connectors" class="page d-none">
+        <div class="page-header">
+          <div>
+            <h4 class="mb-0">Connector Catalogue</h4>
+            <p class="page-subtitle">MCP connectors that ship in the offline bundle. Installing one
+              registers it and discovers its tools, which arrive disabled at HIGH risk until you
+              review them on <a href="#tools">Tools &amp; MCP</a>.</p>
+          </div>
+          <div class="page-actions">
+            <select id="conn-category" class="form-select form-select-sm" style="width:auto" aria-label="Category">
+              <option value="">All categories</option>
+            </select>
+            <input id="conn-filter" class="form-control form-control-sm" style="width:14rem"
+                   placeholder="Filter connectors" aria-label="Filter connectors" autocomplete="off">
+          </div>
+        </div>
+        <div id="connectors-body"></div>
       </section>
 
       <!-- Chargeback (E9) -->
@@ -2379,5 +2402,6 @@
 <script src="/js/operations.js"></script>
 <script src="/js/settings.js"></script>
 <script src="/js/chargeback.js"></script>
+<script src="/js/connectors.js"></script>
 </body>
 </html>

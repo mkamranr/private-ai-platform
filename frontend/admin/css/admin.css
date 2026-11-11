@@ -913,3 +913,9 @@ body.app-active main {
 
 /* Chargeback (E9): amounts line up with the token columns. */
 .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Connector catalogue (E10). */
+.chip-warn { background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); }
+.conn-tools { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }
+.conn-config summary { cursor: pointer; color: var(--bs-secondary-color); }
+.conn-config li { margin-top: .25rem; }

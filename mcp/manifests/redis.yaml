@@ -1,0 +1,89 @@
+# Redis's own MCP server, for a Redis an application team runs on the internal network.
+# NEVER point it at the platform's Valkey: that holds sessions, rate-limit counters and
+# queues, and most of these tools write.
+#
+# Prefer a Redis ACL user limited to reads (`+@read -@write`): the server's write tools
+# then fail at Redis, whatever an agent is persuaded to try.
+name: redis
+display_name: Redis
+description: >
+  Read and write strings, hashes, lists, sets, sorted sets, streams and JSON documents,
+  and run vector search, in a Redis on the internal network. Most tools write.
+category: data
+network: internal
+writes: true
+source: https://github.com/redis/mcp-redis (MIT)
+pip: "redis-mcp-server==0.5.1"
+command: redis-mcp-server
+environment:
+  REDIS_HOST: "${MCP_REDIS_HOST:-}"
+  REDIS_PORT: "${MCP_REDIS_PORT:-6379}"
+  REDIS_DB: "${MCP_REDIS_DB:-0}"
+  REDIS_USERNAME: "${MCP_REDIS_USERNAME:-}"
+  REDIS_PWD: "${MCP_REDIS_PASSWORD:-}"
+  REDIS_SSL: "${MCP_REDIS_SSL:-false}"
+config:
+  MCP_REDIS_HOST: Host name of the Redis to use (not the platform's Valkey)
+  MCP_REDIS_PORT: Port, default 6379
+  MCP_REDIS_DB: Database number, default 0
+  MCP_REDIS_USERNAME: ACL user name; prefer a read-only user
+  MCP_REDIS_PASSWORD: Password for that user
+  MCP_REDIS_SSL: true to connect over TLS
+secrets:
+  - MCP_REDIS_PASSWORD
+required:
+  - MCP_REDIS_HOST
+suggested_risk:
+  dbsize: LOW
+  type: LOW
+  get: LOW
+  hget: LOW
+  hgetall: LOW
+  hexists: LOW
+  llen: LOW
+  lrange: LOW
+  smembers: LOW
+  zrange: LOW
+  json_get: LOW
+  xrange: LOW
+  scan_keys: LOW
+  scan_all_keys: MEDIUM
+  get_indexes: LOW
+  get_index_info: LOW
+  get_indexed_keys_number: LOW
+  get_vector_from_hash: LOW
+  vector_search_hash: LOW
+  hybrid_search: LOW
+  search_redis_documents: LOW
+  info: MEDIUM
+  client_list: MEDIUM
+  subscribe: MEDIUM
+  psubscribe: MEDIUM
+  unsubscribe: MEDIUM
+  read_messages: MEDIUM
+  xreadgroup: MEDIUM
+  xack: MEDIUM
+  set: HIGH
+  hset: HIGH
+  lpush: HIGH
+  rpush: HIGH
+  sadd: HIGH
+  zadd: HIGH
+  json_set: HIGH
+  expire: HIGH
+  rename: HIGH
+  xadd: HIGH
+  publish: HIGH
+  set_vector_in_hash: HIGH
+  create_vector_index_hash: HIGH
+  xgroup_create: HIGH
+  delete: CRITICAL
+  hdel: CRITICAL
+  json_del: CRITICAL
+  lpop: CRITICAL
+  rpop: CRITICAL
+  lrem: CRITICAL
+  srem: CRITICAL
+  zrem: CRITICAL
+  xdel: CRITICAL
+  xgroup_destroy: CRITICAL

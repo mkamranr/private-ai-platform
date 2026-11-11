@@ -1,0 +1,31 @@
+# Read-only PromQL against Prometheus on the internal network, by default the platform's
+# own (the `monitoring` profile). Lets an agent answer "is GPU memory climbing on node 2?"
+# from the metrics the platform already collects.
+name: prometheus
+display_name: Prometheus
+description: >
+  Run PromQL instant and range queries, list metrics and their metadata, and see scrape
+  targets. Read-only. By default it reads the platform's own Prometheus.
+category: observability
+network: internal
+writes: false
+source: https://github.com/pab1it0/prometheus-mcp-server (MIT)
+pip: "prometheus-mcp-server==1.6.2"
+command: prometheus-mcp-server
+environment:
+  PROMETHEUS_URL: "${MCP_PROMETHEUS_URL:-http://prometheus:9090}"
+  PROMETHEUS_TOKEN: "${MCP_PROMETHEUS_TOKEN:-}"
+  PROMETHEUS_MCP_SERVER_TRANSPORT: "stdio"
+  PROMETHEUS_DISABLE_LINKS: "true"
+config:
+  MCP_PROMETHEUS_URL: Prometheus base URL, reachable from the container
+  MCP_PROMETHEUS_TOKEN: Bearer token, when Prometheus requires one
+secrets:
+  - MCP_PROMETHEUS_TOKEN
+suggested_risk:
+  health_check: LOW
+  execute_query: LOW
+  execute_range_query: LOW
+  list_metrics: LOW
+  get_metric_metadata: LOW
+  get_targets: LOW

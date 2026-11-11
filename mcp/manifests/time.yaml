@@ -1,0 +1,16 @@
+# The official time server. Fully offline: it answers from the IANA time zone database
+# shipped with Python, so it needs no network and no volume.
+name: time
+display_name: Time and Time Zones
+description: >
+  Tells an agent the current time in any IANA time zone and converts a time between zones.
+  Models do not know what time it is, and guess badly across daylight-saving changes.
+category: utilities
+network: none
+writes: false
+source: https://github.com/modelcontextprotocol/servers (MIT)
+pip: "mcp-server-time==2026.10.19"
+command: mcp-server-time --local-timezone UTC
+suggested_risk:
+  get_current_time: LOW
+  convert_time: LOW

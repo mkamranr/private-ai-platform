@@ -49,6 +49,7 @@ from app.repositories.agents import (
     ToolRepository,
 )
 from app.schemas.agents import AgentVersionRead
+from app.services import connector_manifest
 from app.services.audit import AuditService
 from app.services.tool_executors import McpError, call_mcp
 from app.services.tool_pipeline import _definition
@@ -332,41 +333,67 @@ class McpRegistryService:
 
         results: list[DiscoveryResult] = []
         for filename, spec in manifests:
-            name = str(spec.get("name") or "").strip()
-            if not name:
+            manifest = connector_manifest.parse(filename, spec)
+            if not manifest.name:
                 log.warning("mcp_manifest_without_name", file=filename)
                 continue
-
-            # The endpoint is derived, not declared. `make mcp-vendor` names the compose
-            # service `mcp-<name>`, and letting a manifest set an arbitrary endpoint would
-            # reintroduce exactly the hand-maintained, drift-prone field this replaces.
-            endpoint = f"http://mcp-{name}:8000/"
-
-            server = await self._servers.get_by_name(name)
-            if server is None:
-                server = McpServer(
-                    name=name,
-                    description=str(spec.get("description") or spec.get("display_name") or ""),
-                    transport="HTTP",
-                    endpoint=endpoint,
+            # The same rules as `make mcp-vendor` and the catalogue (E10): a manifest that
+            # would not have been vendored is not registered either.
+            if not manifest.valid:
+                log.warning("mcp_manifest_invalid", file=filename, problems=manifest.problems)
+                results.append(
+                    DiscoveryResult(
+                        manifest.name,
+                        0,
+                        0,
+                        0,
+                        detail="Not imported: " + "; ".join(manifest.problems),
+                    )
                 )
-                self._servers.add(server)
-                await self._servers.flush()
-                await self._audit.record(
-                    AuditAction.MCP_SERVER_REGISTERED,
-                    user_id=actor.id,
-                    username=actor.username,
-                    resource_type="mcp_server",
-                    resource_id=str(server.id),
-                    metadata={"name": name, "endpoint": endpoint, "source": filename},
-                )
-            else:
-                server.endpoint = endpoint
-                server.description = str(spec.get("description") or server.description or "")
-
+                continue
+            server = await self.register_from_manifest(manifest, actor=actor)
             results.append(await self.discover(server.id, actor=actor))
 
         return results
+
+    async def register_from_manifest(
+        self, manifest: connector_manifest.ConnectorManifest, *, actor: User
+    ) -> McpServer:
+        """Register (or refresh) one server from its manifest. Converges: an existing server
+        is updated in place, so re-running after a bundle upgrade is safe.
+
+        The endpoint is derived, not declared. `make mcp-vendor` names the compose service
+        `mcp-<name>`, and letting a manifest set an arbitrary endpoint would reintroduce
+        exactly the hand-maintained, drift-prone field this replaces.
+        """
+        server = await self._servers.get_by_name(manifest.name)
+        description = manifest.description or manifest.display_name
+        if server is None:
+            server = McpServer(
+                name=manifest.name,
+                description=description,
+                transport="HTTP",
+                endpoint=manifest.endpoint,
+            )
+            self._servers.add(server)
+            await self._servers.flush()
+            await self._audit.record(
+                AuditAction.MCP_SERVER_REGISTERED,
+                user_id=actor.id,
+                username=actor.username,
+                resource_type="mcp_server",
+                resource_id=str(server.id),
+                metadata={
+                    "name": manifest.name,
+                    "endpoint": manifest.endpoint,
+                    "source": manifest.filename,
+                    "package": manifest.package,
+                },
+            )
+        else:
+            server.endpoint = manifest.endpoint
+            server.description = description or server.description
+        return server
 
     async def check_health(self, server_id: uuid.UUID) -> McpServer:
         """Probe by asking for its tool list.

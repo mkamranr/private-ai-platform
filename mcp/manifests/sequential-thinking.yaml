@@ -15,3 +15,9 @@ description: >
 npm: "@modelcontextprotocol/server-sequential-thinking@2026.7.4"
 command: >
   node /vendor/lib/node_modules/@modelcontextprotocol/server-sequential-thinking/dist/index.js
+category: utilities
+network: none
+writes: false
+source: https://github.com/modelcontextprotocol/servers (MIT)
+suggested_risk:
+  sequentialthinking: LOW

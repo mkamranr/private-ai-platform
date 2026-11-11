@@ -111,6 +111,7 @@ from app.services.audit import AuditService
 from app.services.auth import AuthService
 from app.services.auth_providers import LdapAuthProvider, LocalAuthProvider
 from app.services.chargeback import ChargebackService
+from app.services.connector_catalogue import ConnectorCatalogueService
 from app.services.dashboard import DashboardService
 from app.services.definitions import DefinitionImporter
 from app.services.deployment import DeploymentService
@@ -1306,3 +1307,17 @@ def get_chargeback_service(
 
 
 ChargebackServiceDep = Annotated[ChargebackService, Depends(get_chargeback_service)]
+
+
+# ---------------------------------------------------------------------------
+# Connector catalogue (E10)
+# ---------------------------------------------------------------------------
+def get_connector_catalogue(
+    session: SessionDep, settings: SettingsDep, audit: AuditDep, registry: McpRegistryDep
+) -> ConnectorCatalogueService:
+    return ConnectorCatalogueService(
+        settings, registry, McpServerRepository(session), ToolRepository(session), audit
+    )
+
+
+ConnectorCatalogueDep = Annotated[ConnectorCatalogueService, Depends(get_connector_catalogue)]

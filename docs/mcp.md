@@ -44,18 +44,91 @@ Or **Tools & MCP → Import manifests** in the admin UI.
 
 ### What ships in `mcp/manifests/`
 
-| | what it adds | state |
-|---|---|---|
-| `filesystem` | Read, list and search files beneath a shared directory | none |
-| `memory` | A knowledge graph an agent can add to and query later | a JSON file on a volume |
-| `sequential-thinking` | A scratchpad for working a problem in explicit steps, revising or branching a thought | none |
+| Connector | Package (pinned) | Network | Writes | What it adds |
+|---|---|---|---|---|
+| `filesystem` | `@modelcontextprotocol/server-filesystem@2025.8.21` | none | no (read-only mount) | Read, list and search files beneath a shared directory |
+| `memory` | `@modelcontextprotocol/server-memory@2025.8.4` | none | yes | A knowledge graph an agent can add to and query later; a JSON file on a volume |
+| `sequential-thinking` | `@modelcontextprotocol/server-sequential-thinking@2026.7.4` | none | no | A scratchpad for working a problem in explicit steps |
+| `time` (E10) | `mcp-server-time==2026.10.19` | none | no | The current time in any IANA zone, and conversion between zones |
+| `sqlite` (E10) | `mcp-server-sqlite==2025.4.25` | none | yes | Query a SQLite database on its own volume; write and create-table tools |
+| `prometheus` (E10) | `prometheus-mcp-server==1.6.2` | internal | no | PromQL queries, metric metadata and scrape targets, by default against the platform's own Prometheus |
+| `redis` (E10) | `redis-mcp-server==0.5.1` | internal | yes | Strings, hashes, lists, sets, streams, JSON and vector search in a Redis on the site network |
 
-These are the official reference servers that work **without a network at runtime**. The
-fourth, `fetch`, is deliberately absent: it exists to retrieve web pages, which is the one
-thing an air-gapped host cannot do (Rule 4).
+Every version was checked against the public registry when it was added, and none was
+published in the fortnight before. The tool names in each manifest's `suggested_risk` come
+from the published package.
 
-All three are opt-in. A manifest sitting in this directory does nothing until it has been
-vendored and started.
+**Deliberately absent:**
+
+| Server | Why not |
+|---|---|
+| `fetch` | Exists to retrieve web pages, the one thing an air-gapped host cannot do (Rule 4) |
+| `git` (`mcp-server-git`) | Needs the `git` binary. The bridge image is not built to provide it and may not install it (no OS packages in Dockerfiles) |
+| `everything` | A protocol test server that needs Node 24 or later; nothing for an agent to use |
+| `postgres` (`@modelcontextprotocol/server-postgres`) | Archived upstream, and its read-only guard can be bypassed with a multi-statement query |
+| Anything with `network: external` (Slack, GitHub.com, web search) | Cannot work air-gapped, and would be a path out of the site if it could |
+
+All of them are opt-in. A manifest in this directory does nothing until it has been vendored
+and started.
+
+## Connector catalogue (E10)
+
+**Agents → Connector Catalogue** (and `GET /api/v1/mcp/catalogue`) lists every manifest
+with its category, network needs, whether it writes, its pinned package, the `.env`
+variables it reads and its state:
+
+| State | Meaning |
+|---|---|
+| Not installed | No MCP server registered under this name |
+| Installed | Registered, and answered `tools/list` at the last check |
+| Not answering | Registered, but did not answer. The control plane cannot see containers (§M04), so this also means "image not vendored" or "not started" |
+| Manifest problem | The manifest breaks a rule below. Shown with the reasons; cannot be installed |
+
+**Install** registers one connector's server and discovers its tools, the same as
+**Import manifests** but one connector at a time. Running it again re-discovers. Installing
+**grants nothing**: every discovered tool arrives disabled at HIGH risk.
+
+**Apply suggested risk** sets each tool's risk to the level its manifest suggests:
+
+- It only touches tools still exactly as discovery left them (disabled, HIGH). A tool an
+  operator has enabled, or whose risk they changed, is left alone.
+- It never enables anything. The page keeps counting those tools as *awaiting review*,
+  because a label is not a review.
+- It is audited as `CONNECTOR_RISK_APPLIED`, with every change listed.
+
+Enabling a tool and granting it to an agent stay on the Tools and Agents pages.
+
+### Catalogue rules
+
+`make mcp-vendor`, **Import manifests** and **Install** all apply the same rules.
+`backend/app/services/connector_manifest.py` and `scripts/vendor_mcp_servers.py` implement
+them, and a test runs both over every shipped manifest and over a set of bad ones, so they
+cannot drift apart.
+
+| Field | Rule |
+|---|---|
+| `npm` / `pip` | Pinned to an exact version |
+| `category` | `files`, `data`, `knowledge`, `observability`, `utilities` or `developer` |
+| `network` | `none` or `internal`. `external` is refused |
+| `writes` | `true` or `false` |
+| `config` | `.env` variable (`MCP_...`) → description. Every `${VAR}` in `environment` must be listed |
+| `secrets`, `required` | Names from `config` |
+| `environment` | A key that looks secret (`PASS`, `PWD`, `TOKEN`, `SECRET`, `KEY`) must read `${MCP_...}`; a literal value is refused, because manifests ship in the offline bundle |
+| `suggested_risk` | Tool name → `LOW`, `MEDIUM`, `HIGH` or `CRITICAL` |
+
+A manifest that breaks a rule is not vendored, not imported and not installable. The
+catalogue still shows it, with the reasons.
+
+### Configuring a connector
+
+Connector settings are environment variables of the connector's own container. Put them in
+`.env`; `.env.example` lists the ones the shipped connectors read. The compose file
+`make mcp-vendor` writes passes them through, and `make mcp` starts the containers with
+them. Changing one takes a restart of that container, not of the platform.
+
+**Redis.** Never point it at the platform's own Valkey, which holds sessions, rate limits
+and queues. Use a Redis ACL user limited to reads (`+@read -@write`), so the write tools fail
+at Redis whatever an agent is persuaded to try.
 
 ### A manifest
 

@@ -38,6 +38,19 @@ NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
 NPM_PINNED = re.compile(r"^@?[^@\s]+(/[^@\s]+)?@\d[^\s]*$")
 PIP_PINNED = re.compile(r"^[A-Za-z0-9._-]+==\S+$")
 
+# Catalogue rules (E10). The control plane applies the same ones
+# (backend/app/services/connector_catalogue.py), and a test checks the two agree on every
+# shipped manifest, so the console never offers a connector this script would refuse.
+CATEGORIES = ("files", "data", "knowledge", "observability", "utilities", "developer")
+#: "none": needs nothing beyond its own process and volumes. "internal": talks to a service
+#: on the site's network. There is no "external": a connector that needs the internet
+#: cannot work air-gapped, and would be a data path out of the site if it could (Rule 4).
+NETWORK = ("none", "internal")
+RISK_LEVELS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::?-[^}]*)?\}")
+CONFIG_NAME = re.compile(r"^MCP_[A-Z0-9_]+$")
+SECRET_HINT = re.compile(r"PASS|PWD|TOKEN|SECRET|KEY|CREDENTIAL", re.IGNORECASE)
+
 
 def load_manifests(only: str | None = None) -> List[Dict[str, Any]]:
     """Parse the manifests. Deliberately a tiny YAML subset, not PyYAML.
@@ -127,6 +140,57 @@ def validate(manifest: Dict[str, Any]) -> List[str]:
         problems.append(f"pip package {pip!r} is not pinned (use package==1.2.3)")
     if not manifest.get("command"):
         problems.append("needs a 'command' to run the server")
+    problems += validate_catalogue(manifest)
+    return problems
+
+
+def validate_catalogue(manifest: Dict[str, Any]) -> List[str]:
+    """The E10 catalogue fields. Kept in step with the control plane's checks."""
+    problems: List[str] = []
+    if manifest.get("category") not in CATEGORIES:
+        problems.append(f"category must be one of {', '.join(CATEGORIES)}")
+    network = manifest.get("network")
+    if network == "external":
+        problems.append("network 'external' is not allowed: connectors run air-gapped")
+    elif network not in NETWORK:
+        problems.append("network must be 'none' or 'internal'")
+    if str(manifest.get("writes", "")).lower() not in ("true", "false"):
+        problems.append("writes must be true or false")
+
+    config = manifest.get("config") or {}
+    if not isinstance(config, dict):
+        problems.append("config must map .env variable names to descriptions")
+        config = {}
+    for name in config:
+        if not CONFIG_NAME.match(name):
+            problems.append(f"config {name!r} must be an MCP_ variable in capitals")
+    for field in ("secrets", "required"):
+        listed = manifest.get(field) or []
+        if not isinstance(listed, list):
+            problems.append(f"{field} must be a list")
+            continue
+        for name in listed:
+            if name not in config:
+                problems.append(f"{field} names {name!r}, which config does not describe")
+
+    environment = manifest.get("environment") or {}
+    if isinstance(environment, dict):
+        for key, value in environment.items():
+            value = str(value)
+            for ref in ENV_REF.findall(value):
+                if ref not in config:
+                    problems.append(f"environment {key} reads ${{{ref}}}, which config does not describe")
+            # A secret must come from .env, never sit in a manifest that ships in the bundle.
+            if SECRET_HINT.search(key) and value and not ENV_REF.fullmatch(value):
+                problems.append(f"environment {key} looks secret; read it from .env with ${{MCP_...}}")
+
+    risks = manifest.get("suggested_risk") or {}
+    if not isinstance(risks, dict):
+        problems.append("suggested_risk must map tool names to a risk level")
+    else:
+        for tool, level in risks.items():
+            if level not in RISK_LEVELS:
+                problems.append(f"suggested_risk {tool}: {level!r} is not {'/'.join(RISK_LEVELS)}")
     return problems
 
 

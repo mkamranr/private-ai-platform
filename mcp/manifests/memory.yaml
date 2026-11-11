@@ -14,3 +14,17 @@ environment:
   MEMORY_FILE_PATH: /data/mcp-memory/graph.json
 volumes:
   - "${PLATFORM_DATA_ROOT:-./data}/mcp-memory:/data/mcp-memory"
+category: knowledge
+network: none
+writes: true
+source: https://github.com/modelcontextprotocol/servers (MIT)
+suggested_risk:
+  read_graph: LOW
+  search_nodes: LOW
+  open_nodes: LOW
+  create_entities: MEDIUM
+  create_relations: MEDIUM
+  add_observations: MEDIUM
+  delete_entities: HIGH
+  delete_observations: HIGH
+  delete_relations: HIGH

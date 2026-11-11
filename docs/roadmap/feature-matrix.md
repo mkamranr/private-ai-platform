@@ -28,12 +28,12 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 20 | OIDC / LDAP / AD | P2 | Existing | `services/auth_providers.py`, `fixtures/oidc` | none |
 | 21 | Multi-host management | P2 | Existing | node enrollment, `services/node_enrollment.py` | none |
 | 22 | Advanced chargeback | P2 | Existing (E9) | `services/chargeback.py`, `api/v1/chargeback.py`, Chargeback page | Currency budgets and cost alerts; non-gateway costs (ingestion, tools, voice) |
-| 23 | Large connector catalogue | P2 | Planned | `mcp/manifests/` (3) | More connectors |
+| 23 | Large connector catalogue | P2 | Existing (E10) | `mcp/manifests/` (7), `services/connector_catalogue.py`, `services/connector_manifest.py`, Connector Catalogue page | First-party connectors (read-only SQL, HTTP/OpenAPI with a destination allow-list) |
 | 24 | Teams / tenant isolation | (5.12) | Existing (E3) | `models/teams.py`, `core/scope.py`, `services/teams.py`, Teams page | Memory/conversations still scoped by tenant and end user, not team |
 | 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | GPU-threshold alerts, notification channels |
 | 26 | Settings page | (§6) | Existing (E8) | `services/runtime_settings.py`, `api/v1/settings.py`, Settings page | More runtime settings as consumers move to per-request reads |
 | 27 | Diagnostics bundle | (5.16) | Existing (E7) | `services/diagnostics.py`, `core/redact.py`, Diagnostics page | none |
 | 28 | Speech, OCR, voice | (beyond plan) | Existing | `services/voice.py`, `media_provider.py` | none |
 
-**Summary:** of the 23 features in plan §14, 22 are Existing and 1 Planned (connector catalogue).
+**Summary:** of the 23 features in plan §14, all 23 are Existing.
 Every P0 item is Existing.

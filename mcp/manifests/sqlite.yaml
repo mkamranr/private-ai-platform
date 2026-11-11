@@ -1,0 +1,23 @@
+# The reference SQLite server, for a small local database an agent may read and, once an
+# administrator allows it, write. The database lives on a volume of its own; never point it
+# at a file another service owns.
+name: sqlite
+display_name: SQLite
+description: >
+  Query a SQLite database on a dedicated volume, list and describe its tables, and keep a
+  memo of findings. Includes tools that write and create tables, which arrive disabled.
+category: data
+network: none
+writes: true
+source: https://github.com/modelcontextprotocol/servers-archived (MIT)
+pip: "mcp-server-sqlite==2025.4.25"
+command: mcp-server-sqlite --db-path /data/sqlite/agents.db
+volumes:
+  - "${PLATFORM_DATA_ROOT:-./data}/mcp-sqlite:/data/sqlite"
+suggested_risk:
+  list_tables: LOW
+  describe_table: LOW
+  read_query: MEDIUM
+  append_insight: MEDIUM
+  create_table: HIGH
+  write_query: CRITICAL

@@ -14,3 +14,25 @@ command: >
   /data/shared
 volumes:
   - "${PLATFORM_DATA_ROOT:-./data}/shared:/data/shared:ro"
+category: files
+network: none
+writes: false
+source: https://github.com/modelcontextprotocol/servers (MIT)
+# Hints for the reviewer; applied only when an administrator chooses to, and never enables
+# a tool. The write tools are CRITICAL even though the mount is read-only: if someone later
+# mounts it writable, the suggestion should already be the cautious one.
+suggested_risk:
+  read_file: LOW
+  read_text_file: LOW
+  read_media_file: LOW
+  read_multiple_files: LOW
+  list_directory: LOW
+  list_directory_with_sizes: LOW
+  directory_tree: LOW
+  search_files: LOW
+  get_file_info: LOW
+  list_allowed_directories: LOW
+  create_directory: HIGH
+  write_file: CRITICAL
+  edit_file: CRITICAL
+  move_file: CRITICAL

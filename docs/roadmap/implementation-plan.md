@@ -120,6 +120,15 @@ dashboard real signals.
 - [x] Chargeback page: grouping and period pickers, totals, unpriced warning, cost table, idle capacity, rates with status, add/remove rate. `chargeback.currency` runtime setting. Doc: [docs/chargeback.md](../chargeback.md).
 - [ ] No currency budgets, cost alerts or conversion; no cost for ingestion, tool calls or voice.
 
+## E10: Connector catalogue (closes plan §14 "Large connector catalogue")
+
+- [x] Manifest catalogue fields: `category`, `network` (`none`/`internal`; `external` refused), `writes`, `source`, `config` (`MCP_` variables from `.env`), `secrets`, `required`, `suggested_risk`. Secrets are refused as literals in a manifest.
+- [x] One rule set in two places, `services/connector_manifest.py` and `scripts/vendor_mcp_servers.py`, with a parity test over every shipped manifest and every bad case. Import manifests now skips a manifest with problems.
+- [x] Four new connectors, versions checked against PyPI and at least two weeks old, tool names taken from the published wheels: `time`, `sqlite`, `prometheus`, `redis`. The three reference manifests gained the catalogue fields. Seven in all.
+- [x] `GET /mcp/catalogue`, per-connector install (register and discover, grants nothing), and apply suggested risk (only tools nobody reviewed, never enables, audited `CONNECTOR_RISK_APPLIED`).
+- [x] Connector Catalogue page: state, network, writes, pinned package, configuration variables, problems, tool counts with "awaiting review", install and apply suggested risk.
+- [ ] No first-party connectors (read-only SQL, HTTP/OpenAPI with an allow-list); no container state in the catalogue (the control plane has no Docker socket).
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

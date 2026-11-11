@@ -721,3 +721,17 @@ currency; `null` means not priced, never 0. See [chargeback.md](chargeback.md).
 | POST | `/chargeback/export` | `cost.view`. Same parameters; `text/csv`, every row; audited |
 
 Audit actions: `COST_RATE_CREATED`, `COST_RATE_DELETED`, `CHARGEBACK_EXPORTED`.
+
+## Connector catalogue — Expansion E10
+
+Under `/api/v1/mcp/catalogue`. See [mcp.md](mcp.md#connector-catalogue-e10).
+
+| method | path | permission |
+|---|---|---|
+| GET | `/mcp/catalogue` | `mcp.view`. Every manifest with `category`, `network`, `writes`, `package`, `config[]`, `suggested_risk`, `problems[]`, `state` (`available`, `registered`, `installed`, `unreachable`, `invalid`), `server`, `tools` (`total`, `enabled`, `disabled`, `suggestions_pending`) |
+| GET | `/mcp/catalogue/{name}` | `mcp.view` |
+| POST | `/mcp/catalogue/{name}/install` | `mcp.manage`. Register and discover; tools arrive disabled at HIGH. 422 for a manifest with problems |
+| POST | `/mcp/catalogue/{name}/apply-suggested-risk` | `mcp.manage`. Only tools still disabled at the discovery risk; enables nothing; 422 when not installed |
+
+`POST /mcp/servers/import-manifests` now skips a manifest with problems and reports why.
+Audit action: `CONNECTOR_RISK_APPLIED`.
