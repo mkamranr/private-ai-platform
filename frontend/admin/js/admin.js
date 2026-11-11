@@ -157,10 +157,19 @@ const empty = (text) =>
  * as stopped. */
 let usageChart = null;
 
-async function renderDashboard() {
-  const hours = Number(document.getElementById('dash-window').value) || 24;
-  const data = await api(`/dashboard?window_hours=${hours}`);
+/* Section names as the unavailable notice shows them. */
+const DASH_SECTION_LABEL = {
+  fleet: 'Nodes', gpus: 'GPUs', models: 'Models', backends: 'Inference backends',
+  gateway: 'Gateway traffic', alerts: 'Alerts', knowledge: 'Knowledge', agents: 'Agent runs',
+  workflows: 'Workflow runs', activity: 'Recent activity',
+};
 
+/** "source · as of 3m ago", under a card: where a figure came from and how old it is. */
+const sourceNote = (source, at) => (source || at)
+  ? `<div class="src-note">${esc(source || '')}${source && at ? ' · ' : ''}${at ? `as of ${esc(ago(at))}` : ''}</div>`
+  : '';
+
+function dashKpis(data) {
   const cards = [];
   if (data.models) {
     cards.push({
@@ -170,35 +179,146 @@ async function renderDashboard() {
     });
   }
   if (data.gateway) {
+    const g = data.gateway;
     cards.push({
-      label: 'Gateway requests', value: data.gateway.requests.toLocaleString(),
-      note: `${(data.gateway.prompt_tokens + data.gateway.completion_tokens).toLocaleString()} tokens`,
+      label: 'Gateway requests', value: fmtInt(g.requests),
+      note: g.requests
+        ? `${g.requests_per_minute.toLocaleString()} / min · ${fmtInt(g.prompt_tokens + g.completion_tokens)} tokens`
+        : 'no traffic in this window',
       tone: 'green', iconId: 'i-pulse',
     });
     cards.push({
-      label: 'Avg. latency',
-      value: data.gateway.requests ? `${data.gateway.avg_latency_ms.toFixed(0)} ms` : '—',
-      note: data.gateway.requests ? 'end to end, this window' : 'no traffic in this window',
-      tone: 'amber', iconId: 'i-deployments',
+      label: 'Errors', value: g.error_rate_percent === null ? '—' : `${g.error_rate_percent}%`,
+      note: g.requests
+        ? `${fmtInt(g.errors)} failed · avg ${g.avg_latency_ms.toFixed(0)} ms` + (g.fallbacks ? ` · ${fmtInt(g.fallbacks)} fallbacks` : '')
+        : 'no traffic in this window',
+      tone: g.errors ? 'red' : 'amber', iconId: 'i-deployments',
     });
   }
   if (data.gpus) {
-    const used = data.gpus.memory_total_mib
-      ? Math.round((data.gpus.memory_used_mib / data.gpus.memory_total_mib) * 100) : 0;
+    const g = data.gpus;
+    // Utilisation nobody measured is unknown, not 0%.
+    const known = g.reporting > 0 && g.avg_utilization_percent !== null;
+    const memory = known && g.memory_total_mib
+      ? ` · ${Math.round((g.memory_used_mib / g.memory_total_mib) * 100)}% memory` : '';
     cards.push({
       label: 'GPU utilization',
-      value: data.gpus.total ? `${data.gpus.avg_utilization_percent.toFixed(0)}%` : '—',
-      note: data.gpus.total ? `${data.gpus.free} of ${data.gpus.total} free · ${used}% memory` : 'no GPUs reporting',
-      tone: 'violet', iconId: 'i-gpus',
+      value: !g.total ? '—' : known ? `${g.avg_utilization_percent.toFixed(0)}%` : 'Unavailable',
+      note: !g.total ? 'no GPUs registered'
+        : known ? `${g.free} of ${g.total} free${memory}` : 'no GPU has reported a sample',
+      tone: 'violet', iconId: 'i-gpus', valueClass: known || !g.total ? '' : 'text-secondary',
     });
   }
-  if (data.fleet && cards.length < 4) {
+  if (data.alerts) {
+    const a = data.alerts;
+    cards.push({
+      label: 'Open alerts', value: fmtInt(a.open),
+      note: a.open ? `${a.critical} critical · ${a.warning} warning · ${a.acknowledged} acknowledged` : 'nothing needs attention',
+      tone: a.critical ? 'red' : a.open ? 'amber' : 'green', iconId: 'i-alerts',
+    });
+  }
+  if (data.backends) {
+    const b = data.backends;
+    const active = b.total - b.disabled;
+    cards.push({
+      label: 'Inference backends', value: active ? `${b.healthy} / ${active}` : '—',
+      note: !b.total ? 'none registered'
+        : [b.unhealthy && `${b.unhealthy} unhealthy`, b.unknown && `${b.unknown} not yet checked`,
+          b.disabled && `${b.disabled} disabled`].filter(Boolean).join(' · ') || 'all healthy',
+      tone: b.unhealthy ? 'red' : 'green', iconId: 'i-backends',
+    });
+  }
+  if (data.knowledge) {
+    const k = data.knowledge;
+    cards.push({
+      label: 'Documents indexed', value: fmtInt(k.indexed),
+      note: `${fmtInt(k.bases)} bases · ${k.in_progress} in progress` + (k.failed ? ` · ${k.failed} failed` : ''),
+      tone: k.failed_in_window ? 'red' : 'blue', iconId: 'i-knowledge',
+    });
+  }
+  if (data.agents || data.workflows) {
+    const runs = (data.agents?.runs || 0) + (data.workflows?.runs || 0);
+    const failed = (data.agents?.failed || 0) + (data.workflows?.failed || 0);
+    cards.push({
+      label: 'Agent & workflow runs', value: fmtInt(runs),
+      note: runs ? `${failed} failed` + (data.agents?.tool_calls_failed ? ` · ${data.agents.tool_calls_failed} failed tool calls` : '') : 'none in this window',
+      tone: failed ? 'red' : 'blue', iconId: 'i-workflows',
+    });
+  }
+  if (data.fleet && cards.length < 8) {
     cards.push({
       label: 'Nodes online', value: `${data.fleet.online} / ${data.fleet.total}`,
-      note: data.fleet.offline ? `${data.fleet.offline} offline` : 'full fleet reporting',
+      note: data.fleet.offline ? `${data.fleet.offline} offline` : data.fleet.total ? 'full fleet reporting' : 'no nodes enrolled',
       tone: data.fleet.offline ? 'red' : 'green', iconId: 'i-nodes',
     });
   }
+  return cards;
+}
+
+function dependenciesCard(dep) {
+  if (!dep) return '';
+  const tone = { ok: 'HEALTHY', unavailable: 'CRITICAL', timeout: 'WARNING', not_configured: 'IDLE' };
+  const rows = dep.items.map((d) => `<tr>
+      <td class="fw-medium">${esc(d.name)}${d.required ? '' : ' <span class="small text-secondary">optional</span>'}</td>
+      <td>${pill(tone[d.state] || 'IDLE', titleCase(d.state))}</td>
+      <td class="text-end small text-secondary">${d.latency_ms === null ? '—' : `${d.latency_ms.toFixed(0)} ms`}</td>
+    </tr>`).join('');
+  return `<div class="stat-card h-100">
+      <div class="card-title-sm">Service dependencies
+        ${dep.ready ? pill('HEALTHY', 'Ready') : pill('CRITICAL', 'Not ready')}</div>
+      <table class="table table-sm align-middle mb-0"><tbody>${rows}</tbody></table>
+      ${sourceNote('live probes', dep.checked_at)}
+    </div>`;
+}
+
+function alertsCard(alerts) {
+  if (!alerts) return '';
+  return `<div class="stat-card h-100">
+      <div class="card-title-sm">Open alerts <a class="small ms-auto" href="#alerts">View all</a></div>
+      ${alerts.latest.length ? `
+        <table class="table table-sm align-middle mb-0"><tbody>${alerts.latest.map((a) => `
+          <tr>
+            <td style="width:6.5rem">${pill(a.severity)}</td>
+            <td class="small">${esc(a.title)}${a.occurrences > 1 ? ` <span class="text-secondary">×${a.occurrences}</span>` : ''}</td>
+            <td class="text-end small text-secondary text-nowrap">${esc(ago(a.last_seen_at))}</td>
+          </tr>`).join('')}
+        </tbody></table>` : '<div class="small text-secondary">No open alerts.</div>'}
+    </div>`;
+}
+
+function runsCard(agents, workflows) {
+  if (!agents && !workflows) return '';
+  const row = (label, r, extra) => `<tr>
+      <td class="fw-medium">${label}</td>
+      <td class="text-end">${fmtInt(r.runs)}</td>
+      <td class="text-end">${r.failed ? `<span class="text-danger">${fmtInt(r.failed)}</span>` : '0'}</td>
+      <td class="text-end">${fmtInt(r.active)}</td>
+      <td class="text-end">${r.waiting_for_approval ? `<a href="#approvals">${fmtInt(r.waiting_for_approval)}</a>` : '0'}</td>
+      <td class="text-end small text-secondary">${extra}</td>
+    </tr>`;
+  return `<div class="stat-card h-100">
+      <div class="card-title-sm">Runs in this window</div>
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th></th><th class="text-end">Runs</th><th class="text-end">Failed</th>
+          <th class="text-end">Active</th><th class="text-end">Awaiting approval</th><th></th></tr></thead>
+        <tbody>
+          ${agents ? row('Agents', agents, agents.tool_calls
+            ? `${fmtInt(agents.tool_calls)} tool calls, ${fmtInt(agents.tool_calls_failed)} failed` : 'no tool calls') : ''}
+          ${workflows ? row('Workflows', workflows, '') : ''}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+let dashAuto = true;
+
+async function renderDashboard({ force = false } = {}) {
+  // Auto-refresh off: the poll leaves the page as it is; Refresh and the range still work.
+  if (!force && !dashAuto && document.getElementById('dashboard-body').children.length) return;
+  const hours = Number(document.getElementById('dash-window').value) || 24;
+  const data = await api(`/dashboard?window_hours=${hours}`);
+
+  const cards = dashKpis(data);
 
   // The hero's status reflects open alerts, so "System healthy" is a claim the platform
   // can back, not decoration. Without alert.view it falls back to the fleet.
@@ -209,7 +329,9 @@ async function renderDashboard() {
       ? `<span class="pill pill-crit">${alertSummary.CRITICAL} critical alert(s)</span>`
       : alertSummary.total
         ? `<span class="pill pill-warn">${alertSummary.total} open alert(s)</span>`
-        : '<span class="pill pill-ok">System healthy</span>';
+        : data.dependencies && !data.dependencies.ready
+          ? '<span class="pill pill-warn">A required dependency is down</span>'
+          : '<span class="pill pill-ok">System healthy</span>';
   } else if (data.fleet) {
     heroStatus = data.fleet.offline
       ? `<span class="pill pill-warn">${data.fleet.offline} node(s) offline</span>`
@@ -234,12 +356,30 @@ async function renderDashboard() {
          describe real hardware.
        </div>` : '';
 
+  // A section whose source failed is named, never drawn as zero.
+  const missing = Object.entries(data.unavailable || {});
+  const unavailableNotice = missing.length
+    ? `<div class="alert alert-warning py-2 small"><strong>Unavailable:</strong>
+         ${missing.map(([name, why]) => `${esc(DASH_SECTION_LABEL[name] || name)} (${esc(why)})`).join('; ')}.
+         Other figures are current.</div>` : '';
+
+  const first = cards.slice(0, 4);
+  const second = cards.slice(4);
+  const statusCards = [dependenciesCard(data.dependencies), alertsCard(data.alerts)].filter(Boolean);
+  const runs = runsCard(data.agents, data.workflows);
+
   document.getElementById('dashboard-body').innerHTML = `
     ${hero}
     ${syntheticWarning}
-    <div class="row g-3 mb-4">
-      ${cards.map(kpiTile).join('')}
-    </div>
+    ${unavailableNotice}
+    <div class="row g-3 mb-3">${first.map(kpiTile).join('')}</div>
+    ${second.length ? `<div class="row g-3 mb-2">${second.map(kpiTile).join('')}</div>` : ''}
+    <div class="src-line mb-4">${[
+      data.gpus && `GPUs: ${data.gpus.source}${data.gpus.collected_at ? `, sampled ${ago(data.gpus.collected_at)}` : ', no samples yet'}`,
+      data.fleet && `Nodes: last heartbeat ${data.fleet.collected_at ? ago(data.fleet.collected_at) : 'never'}`,
+      data.backends && `Backends: checked ${data.backends.collected_at ? ago(data.backends.collected_at) : 'never'}`,
+      `Window: last ${hours >= 24 ? `${hours / 24} day(s)` : `${hours} hour(s)`}, generated ${new Date(data.generated_at).toLocaleTimeString()}`,
+    ].filter(Boolean).map(esc).join(' · ')}</div>
 
     ${data.gateway ? `
       <div class="row g-3">
@@ -253,6 +393,7 @@ async function renderDashboard() {
                 range above.
               </div>
             </div>
+            ${sourceNote(data.gateway.source, data.generated_at)}
           </div>
         </div>
         <div class="col-lg-5">
@@ -272,6 +413,13 @@ async function renderDashboard() {
           </div>
         </div>
       </div>` : ''}
+
+    ${statusCards.length ? `
+      <div class="row g-3 mt-0">
+        ${statusCards.map((c) => `<div class="col-lg-${statusCards.length === 1 ? 12 : 6}">${c}</div>`).join('')}
+      </div>` : ''}
+
+    ${runs ? `<div class="mt-3">${runs}</div>` : ''}
 
     ${data.activity ? `
       <div class="stat-card mt-3">
@@ -4355,6 +4503,11 @@ document.getElementById('register-form').onsubmit = async (event) => {
 
 document.getElementById('managed-only').onchange = renderContainers;
 document.getElementById('dash-window').onchange = () => refresh({ force: true });
+document.getElementById('dash-refresh').onclick = () => refresh({ force: true });
+document.getElementById('dash-auto').onchange = (event) => {
+  dashAuto = event.target.checked;
+  if (dashAuto) refresh({ force: true });
+};
 
 document.getElementById('agent-modal').addEventListener('show.bs.modal', async () => {
   // Populated on open rather than kept in sync: an operator creating an agent needs the

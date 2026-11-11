@@ -57,6 +57,7 @@ from app.services.alerts import AlertService
 from app.services.audit import AuditService
 from app.services.inference_backends import InferenceBackendService
 from app.services.infrastructure import GpuService, NodeService
+from app.services.runtime_settings import RUNTIME
 
 log = get_logger(__name__)
 
@@ -100,9 +101,9 @@ class InfrastructureWorker:
             self._cipher,
         )
 
-    def _gpu_service(self, session: AsyncSession) -> GpuService:
+    def _gpu_service(self, session: AsyncSession, settings: Settings | None = None) -> GpuService:
         return GpuService(
-            self._settings,
+            settings or self._settings,
             GpuRepository(session),
             GpuMetricRepository(session),
             GpuProcessRepository(session),
@@ -153,7 +154,9 @@ class InfrastructureWorker:
     async def purge_metrics(self) -> None:
         try:
             async with self._session_factory() as session:
-                deleted = await self._gpu_service(session).purge_old_metrics()
+                # The retention window is a runtime setting (E8): read it per run.
+                settings = await RUNTIME.effective(session, self._settings)
+                deleted = await self._gpu_service(session, settings).purge_old_metrics()
                 await session.commit()
             if deleted:
                 log.info("metric_retention_completed", deleted=deleted)

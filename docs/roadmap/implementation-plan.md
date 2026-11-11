@@ -100,6 +100,16 @@ dashboard real signals.
 - [x] Admin: Backup & Restore, Offline Updates and Diagnostics pages. Docs: [operations.md](../operations.md), [threat-model.md](../architecture/threat-model.md).
 - [ ] No scheduled backups or retention, partial restore, runner-token rate limiting or bundle upload through the console. See operations.md.
 
+## E8: Dashboard and settings (closes plan §5.1 and the §6 Settings page)
+
+- [x] Dashboard sections for service dependencies, inference backends, open alerts, knowledge and ingestion failures, agent runs and failed tool calls, and workflow runs; gateway errors, error rate, requests per minute and fallbacks. Each is gated by its own permission. Knowledge, agent and workflow counts follow team scope.
+- [x] Unavailable, not zero: each section in its own savepoint, failures listed in `unavailable`; GPU utilisation `null` with no samples; error rate `null` with no traffic. Source and collection time on fleet, GPU and backend figures.
+- [x] Console: 1h/6h/24h/7d range, Refresh, Auto-refresh switch, two KPI rows, dependency, alert and run cards, a provenance line.
+- [x] Runtime settings registry (`services/runtime_settings.py`): 10 settings that are read per request or per run, validated by the same pydantic models as the environment, stored in the existing `system_settings` table (no migration), cached per process for at most 10 s, audited (`SETTING_UPDATED`, `SETTING_RESET`). `GET/PUT/DELETE /settings`.
+- [x] Settings page: runtime settings with their effective, deployment and default values, and a curated, redacted, read-only list of deployment settings by category. Doc: [docs/settings.md](../settings.md).
+- [x] Fixed: the E7 redaction allowlist named token-lifetime fields that do not exist, so the real ones were over-redacted in Diagnostics.
+- [ ] No TTFT or throughput (the gateway does not record TTFT); no range beyond 7 days; no per-team preferences.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

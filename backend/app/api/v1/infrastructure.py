@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import (
     DockerServiceDep,
+    EffectiveSettingsDep,
     EnrollmentContextDep,
     GpuServiceDep,
     NodeEnrollmentServiceDep,
@@ -637,7 +638,7 @@ def _install_command(server_url: str, node_name: str, token: str, *, staged: boo
 async def create_node_enrollment(
     payload: NodeEnrollmentCreateRequest,
     service: NodeEnrollmentServiceDep,
-    settings: SettingsDep,
+    settings: EffectiveSettingsDep,
     response: Response,
     actor: Annotated[User, require_permission(Perm.INFRASTRUCTURE_MANAGE)],
 ) -> NodeEnrollmentCreatedResponse:

@@ -179,6 +179,8 @@ class GpuRepository(BaseRepository[Gpu]):
                     func.coalesce(func.avg(latest.c.utilization_percent), 0.0).label("util"),
                     func.coalesce(func.sum(latest.c.memory_used_mib), 0).label("used"),
                     func.coalesce(func.sum(latest.c.memory_total_mib), 0).label("capacity"),
+                    func.count(latest.c.gpu_id).label("reporting"),
+                    func.max(latest.c.recorded_at).label("collected_at"),
                 ).select_from(Gpu.__table__.outerjoin(latest, latest.c.gpu_id == Gpu.id))
             )
         ).one()
@@ -199,6 +201,9 @@ class GpuRepository(BaseRepository[Gpu]):
             "avg_utilization_percent": round(float(row.util or 0.0), 1),
             "memory_used_mib": int(row.used or 0),
             "memory_total_mib": int(row.capacity or 0),
+            # GPUs with at least one sample. Zero means utilisation is unknown, not 0%.
+            "reporting": int(row.reporting or 0),
+            "collected_at": row.collected_at,
         }
 
     async def latest_metrics(self, gpu_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, GpuMetric]:

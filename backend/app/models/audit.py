@@ -122,6 +122,9 @@ class AuditAction(enum.StrEnum):
     OPS_JOB_CANCELLED = "OPS_JOB_CANCELLED"
     OPS_JOB_FINISHED = "OPS_JOB_FINISHED"
     DIAGNOSTICS_EXPORTED = "DIAGNOSTICS_EXPORTED"
+    # Runtime settings (E8)
+    SETTING_UPDATED = "SETTING_UPDATED"
+    SETTING_RESET = "SETTING_RESET"
     # Recorded because a memory holds what an agent believes about a person, and §M24 means
     # someone will eventually ask what it remembered and who cleared it.
     MEMORY_DELETED = "MEMORY_DELETED"

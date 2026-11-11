@@ -6,7 +6,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 
 | # | Feature | Plan priority | Status | Where | Gap to close |
 |---|---|---|---|---|---|
-| 1 | Unified dashboard | P0 | Partial | `api/v1/dashboard.py`, `services/dashboard.py`, `frontend/admin` | Time range, alerts, ingestion and agent failure counts, "unavailable" vs zero audit |
+| 1 | Unified dashboard | P0 | Existing (E8) | `api/v1/dashboard.py`, `services/dashboard.py`, `repositories/dashboard.py`, `frontend/admin` | TTFT and throughput (not recorded yet) |
 | 2 | Backend registry | P0 | Existing (E1) | `services/inference_backends.py`, `api/v1/backends.py`, `core/url_policy.py` | Gateway use of backend API keys (E2); deploy/stop/metrics capabilities |
 | 3 | Model registry | P0 | Existing (E3, E4) | `models/models_registry.py`, `services/model_registry.py`, [model-governance.md](../model-governance.md) | Grouping is by `family`, not a `model_versions` table (deliberate) |
 | 4 | OpenAI-compatible gateway | P0 | Existing | `api/v1/gateway.py`, `services/gateway.py`, `services/gateway_policy.py` | Round-robin across replicas; mid-stream failover |
@@ -31,9 +31,9 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 23 | Large connector catalogue | P2 | Planned | `mcp/manifests/` (3) | More connectors |
 | 24 | Teams / tenant isolation | (5.12) | Existing (E3) | `models/teams.py`, `core/scope.py`, `services/teams.py`, Teams page | Memory/conversations still scoped by tenant and end user, not team |
 | 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | GPU-threshold alerts, notification channels |
-| 26 | Settings page | (§6) | Partial | `models/system.py` | UI |
+| 26 | Settings page | (§6) | Existing (E8) | `services/runtime_settings.py`, `api/v1/settings.py`, Settings page | More runtime settings as consumers move to per-request reads |
 | 27 | Diagnostics bundle | (5.16) | Existing (E7) | `services/diagnostics.py`, `core/redact.py`, Diagnostics page | none |
 | 28 | Speech, OCR, voice | (beyond plan) | Existing | `services/voice.py`, `media_provider.py` | none |
 
-**Summary:** of the 23 features in plan §14, 20 are Existing, 2 Partial (dashboard, chargeback) and 1 Planned (connector catalogue).
+**Summary:** of the 23 features in plan §14, 21 are Existing, 1 Partial (chargeback) and 1 Planned (connector catalogue).
 Every P0 item is Existing or Partial.

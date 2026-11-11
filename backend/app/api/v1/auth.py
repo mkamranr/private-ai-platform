@@ -11,7 +11,14 @@ import secrets
 from fastapi import APIRouter, Query, Request, status
 from fastapi.responses import RedirectResponse
 
-from app.api.deps import AuthProvidersDep, AuthServiceDep, CurrentUserDep, RedisDep, SettingsDep
+from app.api.deps import (
+    AuthProvidersDep,
+    AuthServiceDep,
+    CurrentUserDep,
+    EffectiveSettingsDep,
+    RedisDep,
+)
+from app.config.settings import Settings
 from app.core.errors import AuthenticationError, NotFoundError
 from app.core.interfaces.auth_provider import AuthProvider, RedirectAuthProvider
 from app.schemas.auth import (
@@ -143,7 +150,7 @@ async def list_providers(providers: AuthProvidersDep) -> list[AuthProviderRead]:
 async def oidc_authorize(
     request: Request,
     redis: RedisDep,
-    settings: SettingsDep,
+    settings: EffectiveSettingsDep,
     providers: AuthProvidersDep,
 ) -> RedirectResponse:
     """Redirect the browser to the identity provider.
@@ -202,7 +209,7 @@ def _redirect_provider(providers: list[AuthProvider]) -> RedirectAuthProvider:
     )
 
 
-def _callback_url(request: Request, settings: SettingsDep) -> str:
+def _callback_url(request: Request, settings: Settings) -> str:
     """Where the IdP sends the browser back.
 
     Derived from the incoming request rather than configured, so a platform reached by

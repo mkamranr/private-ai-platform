@@ -45,6 +45,7 @@ from app.repositories.agents import (
     ToolRepository,
 )
 from app.repositories.audit import AuditRepository
+from app.repositories.dashboard import DashboardRepository
 from app.repositories.infrastructure import (
     ContainerRepository,
     GpuAllocationRepository,
@@ -130,6 +131,7 @@ from app.services.ops import OpsService
 from app.services.quotas import QuotaService
 from app.services.rag_eval import RagEvalService
 from app.services.retrieval import RetrievalService
+from app.services.runtime_settings import RUNTIME, RuntimeSettingsService
 from app.services.teams import ScopeGuard, TeamService, scope_for
 from app.services.tool_pipeline import ToolPipeline
 from app.services.user import UserService
@@ -177,6 +179,18 @@ def get_token_service(request: Request) -> TokenService:
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
+
+
+async def get_effective_settings(session: SessionDep, settings: SettingsDep) -> Settings:
+    """The deployment settings with the console's runtime overrides applied (E8).
+
+    Only for the consumers of a runtime setting (see `app.services.runtime_settings`), not a
+    replacement for `SettingsDep`: liveness and readiness must not depend on a query.
+    """
+    return await RUNTIME.effective(session, settings)
+
+
+EffectiveSettingsDep = Annotated[Settings, Depends(get_effective_settings)]
 HasherDep = Annotated[PasswordHasherService, Depends(get_password_hasher)]
 TokensDep = Annotated[TokenService, Depends(get_token_service)]
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
@@ -617,7 +631,7 @@ InferenceBackendServiceDep = Annotated[
 
 
 def get_quota_service(
-    request: Request, session: SessionDep, settings: SettingsDep, audit: AuditDep
+    request: Request, session: SessionDep, settings: EffectiveSettingsDep, audit: AuditDep
 ) -> QuotaService:
     quotas = GatewayQuotaRepository(session)
     return QuotaService(
@@ -799,7 +813,7 @@ def build_agent_run_service(session: AsyncSession, app_state: Any) -> AgentRunSe
     So this is the single construction path: the dependencies below call it, and so does
     `app.api.voice_ws`.
     """
-    settings = get_settings()
+    settings = RUNTIME.latest(get_settings())
     audit = AuditService(AuditRepository(session), session_factory=app_state.database.sessionmaker)
     pipeline = ToolPipeline(
         settings,
@@ -877,7 +891,7 @@ def build_workflow_service(session: AsyncSession, app_state: Any) -> WorkflowSer
     One construction path for requests and the workflow worker, so a scheduled run and a
     manual one reach models, knowledge and tools the same way.
     """
-    settings = get_settings()
+    settings = RUNTIME.latest(get_settings())
     audit = AuditService(AuditRepository(session), session_factory=app_state.database.sessionmaker)
     gateway = GatewayService(
         settings,
@@ -1098,7 +1112,7 @@ def get_retrieval_service(
 RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]
 
 
-def get_dashboard_service(session: SessionDep) -> DashboardService:
+def get_dashboard_service(session: SessionDep, health: HealthServiceDep) -> DashboardService:
     return DashboardService(
         NodeRepository(session),
         GpuRepository(session),
@@ -1106,6 +1120,8 @@ def get_dashboard_service(session: SessionDep) -> DashboardService:
         ModelDeploymentRepository(session),
         UsageRepository(session),
         AuditRepository(session),
+        DashboardRepository(session),
+        health,
     )
 
 
@@ -1172,7 +1188,7 @@ ApiKeyServiceDep = Annotated[ApiKeyService, Depends(get_api_key_service)]
 
 
 def get_gateway_service(
-    request: Request, session: SessionDep, settings: SettingsDep
+    request: Request, session: SessionDep, settings: EffectiveSettingsDep
 ) -> GatewayService:
     return GatewayService(
         settings,
@@ -1230,7 +1246,9 @@ GatewayContextDep = Annotated[GatewayContext, Depends(get_gateway_context)]
 # ---------------------------------------------------------------------------
 # Operations and diagnostics (E7)
 # ---------------------------------------------------------------------------
-def get_ops_service(session: SessionDep, settings: SettingsDep, audit: AuditDep) -> OpsService:
+def get_ops_service(
+    session: SessionDep, settings: EffectiveSettingsDep, audit: AuditDep
+) -> OpsService:
     return OpsService(settings, OpsJobRepository(session), OpsRunnerRepository(session), audit)
 
 
@@ -1240,7 +1258,7 @@ OpsServiceDep = Annotated[OpsService, Depends(get_ops_service)]
 def get_diagnostics_service(
     request: Request,
     session: SessionDep,
-    settings: SettingsDep,
+    settings: EffectiveSettingsDep,
     audit: AuditDep,
     health: HealthServiceDep,
     ops: OpsServiceDep,
@@ -1257,3 +1275,15 @@ def get_diagnostics_service(
 
 
 DiagnosticsServiceDep = Annotated[DiagnosticsService, Depends(get_diagnostics_service)]
+
+
+# ---------------------------------------------------------------------------
+# Settings (E8)
+# ---------------------------------------------------------------------------
+def get_runtime_settings_service(
+    session: SessionDep, settings: SettingsDep, audit: AuditDep
+) -> RuntimeSettingsService:
+    return RuntimeSettingsService(session, settings, audit)
+
+
+RuntimeSettingsServiceDep = Annotated[RuntimeSettingsService, Depends(get_runtime_settings_service)]

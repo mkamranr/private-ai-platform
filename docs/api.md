@@ -225,6 +225,12 @@ endpoint; each section additionally requires its own permission and is **omitted
 zeroed — without it. A zero is a claim about the platform; "you cannot see this" is a
 different claim, and rendering them identically lies to the operator.
 
+E8 adds the `dependencies`, `backends`, `alerts`, `knowledge`, `agents` and `workflows`
+sections, gateway error and rate figures, `source`/`collected_at` on fleet, GPU and backend
+figures, and `unavailable`: sections the caller may see whose source failed, with a reason.
+Those are absent too, never zeroed. Knowledge, agent and workflow counts follow team scope.
+See [settings.md](settings.md#dashboard).
+
 `POST /models/{id}/deploy` → **202** with the deployment id. Poll
 `GET /deployments/{id}` for the §M08 state machine
 (`REQUESTED → VALIDATING → SCHEDULING → CREATING → STARTING → HEALTH_CHECK → RUNNING`,
@@ -404,8 +410,12 @@ retrievable — the platform stores a hash, so it genuinely cannot show the key 
 | method | path | permission |
 |---|---|---|
 | GET | `/audit-logs` | `audit.view` |
-| GET | `/settings` | `settings.view` |
-| PUT | `/settings/{key}` | `settings.manage` |
+| GET | `/settings` | `settings.view`. Runtime and deployment settings (E8) |
+| PUT | `/settings/{key}` | `settings.manage`. `value`, `reason`; runtime settings only, 404 otherwise, 422 when invalid |
+| DELETE | `/settings/{key}` | `settings.manage`. Back to the deployment value |
+
+`/settings` is described in [settings.md](settings.md). Changes are audited as
+`SETTING_UPDATED` and `SETTING_RESET`.
 
 `/audit-logs` filters on `user_id, action, resource_type, resource_id, result,
 since, until`. There is no write, update or delete endpoint — the audit log is

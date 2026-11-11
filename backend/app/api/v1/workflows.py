@@ -15,10 +15,10 @@ from fastapi import APIRouter, Header, Path, Query, Response, status
 
 from app.api.deps import (
     AuthServiceDep,
+    EffectiveSettingsDep,
     ScopeDep,
     ScopeGuardDep,
     WorkflowServiceDep,
-    get_settings,
     require_permission,
 )
 from app.core.errors import ValidationError
@@ -308,12 +308,13 @@ async def rotate_webhook(
     service: WorkflowServiceDep,
     actor: Annotated[User, require_permission(Perm.WORKFLOW_EDIT)],
     guard: ScopeGuardDep,
+    settings: EffectiveSettingsDep,
     workflow_id: uuid.UUID = Path(...),
 ) -> WebhookToken:
     """A new token, shown once. The previous token stops working at once."""
     await guard.workflow(workflow_id)
     workflow, token = await service.rotate_webhook(workflow_id, actor=actor)
-    base = get_settings().platform.public_base_url.rstrip("/")
+    base = settings.platform.public_base_url.rstrip("/")
     return WebhookToken(
         token=token,
         url=f"{base}/api/v1/workflow-hooks/{workflow.id}",

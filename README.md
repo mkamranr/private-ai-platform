@@ -165,6 +165,7 @@ all**, then migrates, seeds, signs in, upgrades and rolls back.
 | [rag.md](docs/rag.md) · [chat.md](docs/chat.md) · [speech.md](docs/speech.md) · [voice.md](docs/voice.md) | Knowledge, chat, speech |
 | [security.md](docs/security.md) · [database.md](docs/database.md) · [backup.md](docs/backup.md) | Security model, schema, backup and restore |
 | [operations.md](docs/operations.md) · [threat-model.md](docs/architecture/threat-model.md) | Backups, offline updates and diagnostics from the console; signing, SBOM |
+| [settings.md](docs/settings.md) | Runtime settings and the dashboard |
 | [observability.md](docs/observability.md) · [api.md](docs/api.md) | Metrics, logs, traces; the HTTP surface |
 | [troubleshooting.md](docs/troubleshooting.md) | Failures that have actually happened |
 

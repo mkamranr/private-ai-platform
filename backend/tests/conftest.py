@@ -32,6 +32,7 @@ from app.db.session import Database
 from app.main import create_app
 from app.models.auth import Permission, Role, User
 from app.services.health import HealthService
+from app.services.runtime_settings import RUNTIME
 from app.services.tool_executors import build_executors
 
 TEST_PASSWORD = "test-password-must-be-long"
@@ -95,6 +96,15 @@ async def session(database: Database) -> AsyncIterator[AsyncSession]:
                 yield db_session
             finally:
                 await transaction.rollback()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_runtime_settings() -> Any:
+    """Runtime setting overrides are cached per process (E8); a test's override is rolled
+    back with its transaction, so the cache must not carry it into the next test."""
+    RUNTIME.invalidate()
+    yield
+    RUNTIME.invalidate()
 
 
 # ---------------------------------------------------------------------------

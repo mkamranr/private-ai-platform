@@ -897,3 +897,16 @@ body.app-active main {
   width: 1rem; height: 1rem; vertical-align: -.15em; margin-right: .2rem;
 }
 .kpi-note { overflow-wrap: anywhere; }
+
+/* ---- E8: dashboard provenance, refresh controls, settings ---------------------------- */
+/* Where a figure came from and how old it is: small, but always present (plan §5.1). */
+.src-note { margin-top: .5rem; font-size: .75rem; color: var(--bs-secondary-color); }
+.src-line { font-size: .75rem; color: var(--bs-secondary-color); overflow-wrap: anywhere; }
+.btn > svg.btn-icon, #page-settings .alert > svg {
+  width: 1rem; height: 1rem; vertical-align: -.15em; margin-right: .25rem; flex: none;
+}
+#page-settings .alert > svg { margin-top: .1rem; }
+#page-dashboard .card-title-sm .pill { margin-left: .4rem; }
+#page-settings td { vertical-align: top; }
+#page-settings td code { font-size: .8rem; }
+#page-dashboard .card-title-sm { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
