@@ -102,6 +102,7 @@ class VoiceAssistant {
   }
 
   // -- lifecycle -----------------------------------------------------------
+  /** Resolves true when signed in, false when an authenticator code is needed (E15). */
   async signIn(username, password) {
     const response = await fetch(`${API}/auth/login`, {
       method: 'POST',
@@ -110,7 +111,28 @@ class VoiceAssistant {
     });
     if (!response.ok) throw new Error('Sign-in failed. Check the username and password.');
     const body = await response.json();
+    if (body.mfa_required) {
+      if (body.enrolment_required) throw new Error('Your account must set up two-factor authentication before it can sign in here. Sign in to the admin console once (at the main address of this site) to set it up, then come back.');
+      this.mfaToken = body.mfa_token;
+      return false;
+    }
     token.set(body.access_token);
+    return true;
+  }
+
+  async verifyCode(code) {
+    const response = await fetch(`${API}/auth/mfa/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mfa_token: this.mfaToken, code }),
+    });
+    if (!response.ok) {
+      let message = 'That code is not right.';
+      try { message = (await response.json())?.error?.message || message; } catch { /* */ }
+      throw new Error(message);
+    }
+    this.mfaToken = null;
+    token.set((await response.json()).access_token);
   }
 
   async load() {
@@ -387,7 +409,14 @@ el('signin-form').onsubmit = async (event) => {
   event.preventDefault();
   el('error').classList.add('d-none');
   try {
-    await assistant.signIn(el('username').value, el('password').value);
+    if (assistant.mfaToken) {
+      await assistant.verifyCode(el('mfa-code').value.trim());
+    } else if (!(await assistant.signIn(el('username').value, el('password').value))) {
+      // E15: the password was right; ask for the authenticator code.
+      for (const id of ['mfa-label', 'mfa-code']) el(id).classList.remove('d-none');
+      el('mfa-code').focus();
+      return;
+    }
     await enter();
   } catch (err) {
     showError(err.message);

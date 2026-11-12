@@ -69,10 +69,15 @@ Migration `20260807_1705_phase0_identity_rbac_audit_and_system_settings`.
 | `failed_login_count` | int | wrong passwords in a row; reset by a sign-in or a lock (E14) |
 | `locked_until` | timestamptz | nullable; set when the count reaches `auth.lockout_threshold` (E14) |
 | `session_version` | int | copied into tokens as `sv`; raising it signs the user out everywhere (E14) |
+| `mfa_secret_encrypted` | text | nullable; TOTP secret, Fernet-encrypted (E15) |
+| `mfa_enabled_at` | timestamptz | nullable; set when the first code confirmed the app; sign-in then asks for a code |
+| `mfa_last_step` | bigint | nullable; last accepted TOTP step, so a code works once |
+| `mfa_recovery_hashes` | jsonb | SHA-256 hashes of unused recovery codes, default `[]` |
 | `created_at`, `updated_at` | timestamptz | |
 
 ### `revoked_tokens` (E14)
-`jti` (PK), `user_id` (FK, cascade), `token_type`, `reason` (`logout` or `rotated`),
+`jti` (PK), `user_id` (FK, cascade), `token_type`, `reason` (`logout`, `rotated`, or `mfa`
+for a spent sign-in step token, E15),
 `expires_at` (indexed; rows are pruned hourly once past it), `revoked_at`.
 
 ### `roles`

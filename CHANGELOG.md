@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Two-factor authentication (E15)
+- **Authenticator app codes.** Local accounts can turn on TOTP (RFC 6238), which works with any standard authenticator app. The QR code is drawn on the server, so nothing loads from the internet. Ten single-use recovery codes are shown once.
+- **Two-step sign-in.** With MFA on, `/auth/login` returns `mfa_required` and a short-lived step token instead of tokens; `/auth/mfa/verify` finishes the sign-in. Wrong codes count toward the E14 lockout, and a code works only once.
+- **Policy.** The runtime setting `auth.mfa_required` (`off`, `admins`, `all`) on the Settings page. Required users set MFA up at their next sign-in, and cannot turn it off.
+- **Everywhere you sign in.** The admin console has set-up, the code step and an account dialog. The developer portal and the voice assistant ask for the code. The Users page shows who has 2FA and can reset it for a lost phone (audited, signs the user out).
+- **Upgrade.** One migration (`e6a1c3f5b8d2`) and one new pinned dependency, `segno==1.6.6` (pure Python, hashed in `requirements.txt`). Nothing changes until someone turns MFA on or the policy is set. API clients that sign in as a user should check `mfa_required`. See [docs/security.md](docs/security.md#two-factor-authentication-e15).
+
 ### Auth hardening (E14)
 - **Account lockout.** 10 wrong passwords in a row lock a local account for 15 minutes (`AUTH__LOCKOUT_THRESHOLD`, `AUTH__LOCKOUT_MINUTES`). A locked account gets the same message as a wrong password, and its password is not checked. The lock is audited, raises an alert, and can be lifted early on the Users page.
 - **Per-address throttle.** 30 failed sign-ins from one address in 15 minutes refuse it with `429` (`AUTH__LOGIN_IP_*`). This catches password spraying, and covers directory accounts too. It is audited and raises an alert. It fails open while Valkey is down.

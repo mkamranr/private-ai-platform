@@ -125,7 +125,8 @@
   </span>
   <div class="ms-auto d-flex align-items-center gap-3">
     <span id="poll-status" class="small text-secondary"></span>
-    <span id="user-badge" class="badge text-bg-secondary d-none"></span>
+    <button id="user-badge" type="button" class="badge text-bg-secondary border-0 d-none"
+            title="Your account: two-factor authentication"></button>
     <!-- Dark by default; the toggle exists because a wall-mounted screen and a laptop by
          a window do not want the same thing. -->
     <button id="theme-toggle" class="btn btn-sm btn-outline-secondary" type="button"
@@ -166,6 +167,7 @@
                 stroke-width="1.3" stroke-linecap="round" opacity=".7"/>
         </svg>
       </div>
+      <div id="password-step">
       <h5 class="card-title mb-1">Sign in</h5>
       <p class="small text-secondary mb-3">Private AI Platform — control plane</p>
       <form id="login-form">
@@ -180,6 +182,26 @@
         <div id="login-error" class="alert alert-danger py-2 small d-none"></div>
         <button class="btn btn-primary w-100" type="submit">Sign in</button>
       </form>
+      </div>
+      <!-- E15: the second sign-in step, and the forced set-up when policy requires it. -->
+      <div id="mfa-step" class="d-none">
+        <h5 class="card-title mb-1" id="mfa-title">Two-factor authentication</h5>
+        <p class="small text-secondary mb-3" id="mfa-lead"></p>
+        <div id="mfa-enrol" class="d-none mb-3"></div>
+        <form id="mfa-form" novalidate>
+          <label class="form-label small text-secondary" for="mfa-code">Code</label>
+          <input class="form-control font-monospace text-center fs-5" id="mfa-code"
+                 inputmode="numeric" autocomplete="one-time-code" maxlength="32" required>
+          <div class="form-text small" id="mfa-hint">
+            Lost your phone? Enter one of your recovery codes instead.
+          </div>
+          <div id="mfa-error" class="alert alert-danger py-2 small d-none mt-2"></div>
+          <button class="btn btn-primary w-100 mt-3" type="submit" id="mfa-submit">Verify</button>
+          <button class="btn btn-link btn-sm w-100 mt-1" type="button" id="mfa-restart"
+                  >Start over</button>
+        </form>
+        <div id="mfa-codes" class="d-none"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1666,6 +1688,19 @@
 </div>
 
 <!-- Alert notification channel (E13) -->
+<!-- E15: the signed-in person's own two-factor settings. -->
+<div class="modal fade" id="mfa-modal" tabindex="-1" aria-labelledby="mfa-modal-title">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="mfa-modal-title">Two-factor authentication</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="mfa-modal-body"></div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="notify-modal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
@@ -2562,5 +2597,6 @@
 <script src="/js/chargeback.js"></script>
 <script src="/js/connectors.js"></script>
 <script src="/js/notifications.js"></script>
+<script src="/js/mfa.js"></script>
 </body>
 </html>

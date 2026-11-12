@@ -16,6 +16,7 @@ import datetime as dt
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -28,6 +29,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID  # noqa: N811
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -130,11 +132,32 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Integer, default=0, server_default="0", nullable=False
     )
 
+    # -- E15: two-factor authentication (TOTP) --------------------------------------
+    #: The authenticator secret, Fernet-encrypted. Present but not yet enabled while
+    #: enrolment waits for the first code.
+    mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    #: Set once the first code proved the authenticator works. Sign-in then needs a code.
+    mfa_enabled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: The last time step accepted, so a code cannot be used twice.
+    mfa_last_step: Mapped[int | None] = mapped_column(BigInteger)
+    #: SHA-256 hashes of the unused recovery codes.
+    mfa_recovery_hashes: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles,
         back_populates="users",
         lazy="selectin",  # authorisation needs these on essentially every request
     )
+
+    @property
+    def mfa_enabled(self) -> bool:
+        return self.mfa_enabled_at is not None
+
+    @property
+    def mfa_recovery_codes_left(self) -> int:
+        return len(self.mfa_recovery_hashes or []) if self.mfa_enabled else 0
 
     @property
     def effective_permissions(self) -> frozenset[str]:

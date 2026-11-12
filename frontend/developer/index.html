@@ -43,8 +43,15 @@
         <input class="form-control" id="password" type="password"
                autocomplete="current-password" required>
       </div>
+      <!-- E15: shown after a correct password when the account uses an authenticator. -->
+      <div class="mb-3 d-none" id="mfa-row">
+        <label class="form-label small text-secondary" for="mfa-code"
+               >Code from your authenticator app, or a recovery code</label>
+        <input class="form-control font-monospace" id="mfa-code" inputmode="numeric"
+               autocomplete="one-time-code" maxlength="32">
+      </div>
       <div id="login-error" class="alert alert-danger py-2 small d-none"></div>
-      <button class="btn btn-primary" type="submit">Sign in</button>
+      <button class="btn btn-primary" type="submit" id="login-submit">Sign in</button>
       <div id="sso-slot" class="mt-2"></div>
     </form>
   </div>

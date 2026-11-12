@@ -28,7 +28,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.config.settings import AuthSettings, SecuritySettings
 from app.core.errors import TokenError
 
-TokenType = Literal["access", "refresh"]
+TokenType = Literal["access", "refresh", "mfa"]
 
 _API_KEY_PREFIX: Final = "aip"
 _API_KEY_SECRET_BYTES: Final = 32
@@ -106,6 +106,13 @@ class TokenService:
 
     def create_refresh_token(self, subject: str, **claims: Any) -> str:
         return self._encode(subject, "refresh", self._refresh_ttl, **claims)
+
+    def create_mfa_token(self, subject: str, ttl: int, **claims: Any) -> str:
+        """The short-lived step between a correct password and the code (E15).
+
+        Its own ``typ``, so it is refused wherever an access or refresh token is expected.
+        """
+        return self._encode(subject, "mfa", ttl, **claims)
 
     def decode(self, token: str, *, expected_type: TokenType = "access") -> dict[str, Any]:
         """Verify signature, expiry and issuer. Raises :class:`TokenError`."""

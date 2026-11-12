@@ -29,10 +29,22 @@ from app.schemas.auth import (
     CurrentUserRead,
     LoginRequest,
     LogoutRequest,
+    MfaChallengeResponse,
+    MfaCodeRequest,
+    MfaDisableRequest,
+    MfaEnabledResponse,
+    MfaPasswordRequest,
+    MfaSetupResponse,
+    MfaStatusResponse,
+    MfaTokenRequest,
+    MfaVerifyRequest,
+    RecoveryCodesResponse,
     RefreshRequest,
     TokenResponse,
 )
 from app.schemas.common import MessageResponse
+from app.services.auth import MfaChallenge, TokenPair
+from app.services.mfa import MfaSetup
 
 #: OIDC state lives in Redis rather than a cookie so it works across control-plane
 #: replicas, and expires on its own if a sign-in is abandoned half-way.
@@ -42,12 +54,29 @@ _STATE_TTL_SECONDS = 600
 router = APIRouter(prefix="/auth", tags=["authentication"], route_class=CommittingRoute)
 
 
-@router.post("/login", response_model=TokenResponse, summary="Exchange credentials for tokens")
+def _tokens(pair: TokenPair) -> TokenResponse:
+    return TokenResponse(
+        access_token=pair.access_token,
+        refresh_token=pair.refresh_token,
+        token_type=pair.token_type,
+        expires_in=pair.expires_in,
+    )
+
+
+def _setup(setup: MfaSetup) -> MfaSetupResponse:
+    return MfaSetupResponse(secret=setup.secret, otpauth_uri=setup.otpauth_uri, qr_svg=setup.qr_svg)
+
+
+@router.post(
+    "/login",
+    response_model=TokenResponse | MfaChallengeResponse,
+    summary="Exchange credentials for tokens",
+)
 async def login(
     payload: LoginRequest,
     request: Request,
     auth: AuthServiceDep,
-) -> TokenResponse:
+) -> TokenResponse | MfaChallengeResponse:
     """Authenticate and issue an access/refresh pair.
 
     Both success and failure are audited (§M24). Failures are written on an
@@ -55,16 +84,110 @@ async def login(
     otherwise the platform would log successful logins and silently drop every
     failed one.
     """
-    pair = await auth.login(
+    result = await auth.login(
         payload.username,
         payload.password,
         user_agent=request.headers.get("user-agent"),
     )
-    return TokenResponse(
-        access_token=pair.access_token,
-        refresh_token=pair.refresh_token,
-        token_type=pair.token_type,
-        expires_in=pair.expires_in,
+    if isinstance(result, MfaChallenge):
+        # E15: the password was right; the authenticator code is the next step.
+        return MfaChallengeResponse(
+            mfa_token=result.mfa_token,
+            enrolment_required=result.enrolment_required,
+            expires_in=result.expires_in,
+        )
+    return _tokens(result)
+
+
+# -- two-factor authentication (E15) ---------------------------------------------
+@router.post("/mfa/verify", response_model=TokenResponse, summary="Sign in: the code step")
+async def mfa_verify(
+    payload: MfaVerifyRequest, request: Request, auth: AuthServiceDep
+) -> TokenResponse:
+    """Exchange the step token from ``/auth/login`` and a code for tokens.
+
+    The code is six digits from the authenticator app, or an unused recovery code. A
+    wrong code counts toward the account lockout, like a wrong password.
+    """
+    pair = await auth.complete_mfa(
+        payload.mfa_token, payload.code, user_agent=request.headers.get("user-agent")
+    )
+    return _tokens(pair)
+
+
+@router.post(
+    "/mfa/enrol/start",
+    response_model=MfaSetupResponse,
+    summary="Sign in: set up the required authenticator",
+)
+async def mfa_enrol_start(payload: MfaTokenRequest, auth: AuthServiceDep) -> MfaSetupResponse:
+    """For an account the policy obliges to use MFA: a new secret and its QR code."""
+    return _setup(await auth.start_enrolment(payload.mfa_token))
+
+
+@router.post(
+    "/mfa/enrol/finish",
+    response_model=MfaEnabledResponse,
+    summary="Sign in: confirm the authenticator",
+)
+async def mfa_enrol_finish(
+    payload: MfaVerifyRequest, request: Request, auth: AuthServiceDep
+) -> MfaEnabledResponse:
+    """The first code turns MFA on and signs in. Recovery codes are returned once."""
+    pair, codes = await auth.finish_enrolment(
+        payload.mfa_token, payload.code, user_agent=request.headers.get("user-agent")
+    )
+    return MfaEnabledResponse(**_tokens(pair).model_dump(), recovery_codes=codes)
+
+
+@router.get("/mfa", response_model=MfaStatusResponse, summary="Two-factor status")
+async def mfa_status(user: CurrentUserDep, auth: AuthServiceDep) -> MfaStatusResponse:
+    return MfaStatusResponse(
+        available=user.auth_provider == "local",
+        enabled=user.mfa_enabled,
+        enabled_at=user.mfa_enabled_at,
+        recovery_codes_left=user.mfa_recovery_codes_left,
+        required=auth.mfa_required(user),
+    )
+
+
+@router.post("/mfa/setup", response_model=MfaSetupResponse, summary="Start setting up MFA")
+async def mfa_setup(
+    payload: MfaPasswordRequest, user: CurrentUserDep, auth: AuthServiceDep
+) -> MfaSetupResponse:
+    """A new secret and its QR code. Nothing changes at sign-in until it is confirmed."""
+    return _setup(auth.begin_mfa(user, payload.password))
+
+
+@router.post("/mfa/enable", response_model=MfaEnabledResponse, summary="Turn MFA on")
+async def mfa_enable(
+    payload: MfaCodeRequest, user: CurrentUserDep, auth: AuthServiceDep
+) -> MfaEnabledResponse:
+    """Confirm with a first code. Other sessions are signed out; use the new tokens."""
+    pair, codes = await auth.enable_mfa(user, payload.code)
+    return MfaEnabledResponse(**_tokens(pair).model_dump(), recovery_codes=codes)
+
+
+@router.post("/mfa/disable", response_model=MessageResponse, summary="Turn MFA off")
+async def mfa_disable(
+    payload: MfaDisableRequest, user: CurrentUserDep, auth: AuthServiceDep
+) -> MessageResponse:
+    """Needs the password and a code. Refused while the policy requires MFA."""
+    await auth.disable_mfa(user, payload.password, payload.code)
+    return MessageResponse(message="Two-factor authentication is off.")
+
+
+@router.post(
+    "/mfa/recovery-codes",
+    response_model=RecoveryCodesResponse,
+    summary="Replace the recovery codes",
+)
+async def mfa_recovery_codes(
+    payload: MfaCodeRequest, user: CurrentUserDep, auth: AuthServiceDep
+) -> RecoveryCodesResponse:
+    """New codes; the old ones stop working. Needs a current code."""
+    return RecoveryCodesResponse(
+        recovery_codes=await auth.regenerate_recovery_codes(user, payload.code)
     )
 
 
@@ -128,6 +251,8 @@ async def me(user: CurrentUserDep) -> CurrentUserRead:
                     "is_superuser",
                     "last_login_at",
                     "created_at",
+                    "auth_provider",
+                    "mfa_enabled",
                 )
             },
             "roles": user.roles,

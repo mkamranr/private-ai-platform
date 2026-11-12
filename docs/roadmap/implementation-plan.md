@@ -98,7 +98,7 @@ dashboard real signals.
 - [x] Version inventory, redacted effective configuration and a support bundle (health, inventory, config, alerts, ops history, optional Loki logs). Redaction in `core/redact.py`.
 - [x] Bundles: ECDSA P-256 signed manifest (`scripts/bundle_signing.py`), CycloneDX 1.5 SBOM and licence list (`scripts/sbom.py`); `install.sh`/`upgrade.sh --trust-key`; trust key outside the tree.
 - [x] Admin: Backup & Restore, Offline Updates and Diagnostics pages. Docs: [operations.md](../operations.md), [threat-model.md](../architecture/threat-model.md).
-- [ ] No partial restore, runner-token rate limiting or bundle upload through the console. See operations.md. (Scheduled backups and retention arrived in E12.)
+- [ ] No partial restore or bundle upload through the console. See operations.md. (Scheduled backups and retention arrived in E12; runner-token rate limiting in E14.)
 
 ## E8: Dashboard and settings (closes plan §5.1 and the §6 Settings page)
 
@@ -165,7 +165,18 @@ dashboard real signals.
 - [x] Ops runner: wrong tokens audited (`OPS_RUNNER_AUTH_FAILED`) and throttled per address (`ops.runner_max_failures` in `ops.runner_failure_window_seconds`), WARNING alert (threat model #12).
 - [x] API: `POST /auth/logout` (optional `refresh_token`), `POST /auth/logout-all`, `POST /users/{id}/unlock`, `POST /users/{id}/sessions/revoke`. Users page: locked pill, Unlock, Sign out everywhere. Alert sources `auth`, `ops_runner` for notification filters.
 - [x] Migration `d5f9b2a3e7c1` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#sign-in-hardening-e14).
-- [ ] No lockout for directory accounts, no CAPTCHA, no MFA.
+- [ ] No lockout for directory accounts, no CAPTCHA. (MFA arrived in E15.)
+
+## E15: Two-factor authentication
+
+- [x] TOTP (RFC 6238) on the standard library (`app/core/totp.py`), with RFC test vectors, ±1 step of drift, and replay protection via `users.mfa_last_step` and a conditional UPDATE. QR code as server-side SVG (`segno==1.6.6`, pure Python, hashed).
+- [x] Two-step sign-in: `/auth/login` returns a `typ: mfa` step token (`auth.mfa_challenge_ttl_seconds`), and `/auth/mfa/verify` exchanges it plus a code for tokens. The step token is single-use (`revoked_tokens`, reason `mfa`). Wrong codes count toward lockout and the address throttle; the password step does not reset the count.
+- [x] Recovery codes: ten single-use, SHA-256 hashed, audited when used, replaceable with a current code.
+- [x] Self-service: setup (password), enable (first code; other sessions signed out, new tokens returned), disable (password + code), recovery codes. Admin reset (`user.manage`, audited, signs out).
+- [x] Policy: runtime setting `auth.mfa_required` = off / admins / all. Forced enrolment at sign-in (`/auth/mfa/enrol/start`, `/finish`). It cannot be disabled while required. Local accounts only.
+- [x] UI: console code step, forced enrolment, account dialog behind the user badge, 2FA marker and Reset 2FA on the Users page. The developer portal and voice assistant ask for the code.
+- [x] Migration `e6a1c3f5b8d2` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#two-factor-authentication-e15).
+- [ ] No WebAuthn/passkeys, no remembered devices. The portal and voice assistant send people who must enrol to the console.
 
 ## Phase acceptance (applies to each)
 

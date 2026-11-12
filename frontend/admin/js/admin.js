@@ -41,7 +41,9 @@ async function api(path, options = {}) {
     // A 401 from the login endpoint is a wrong password, not an expired session — there
     // was no session. Reporting it as one sends someone to sign in again with the same
     // credentials that just failed, and tells them nothing.
-    const signingIn = path.startsWith('/auth/login');
+    // Likewise a wrong code at the second sign-in step (E15).
+    const signingIn = path.startsWith('/auth/login') || path.startsWith('/auth/mfa/verify') ||
+      path.startsWith('/auth/mfa/enrol');
     if (!signingIn) {
       // Expired or revoked. Bounce to login rather than leaving the UI in a state
       // where every request silently fails.
@@ -2499,6 +2501,21 @@ async function renderUsers() {
     });
   });
 
+  document.querySelectorAll('[data-user-mfa-reset]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(
+        `Remove two-factor authentication from ${button.dataset.userName}?
+
+` +
+        'For a lost phone. They are signed out everywhere, and set it up again at ' +
+        'their next sign-in if the platform requires it. Make sure the request really ' +
+        'comes from them.')) return;
+      await api(`/users/${button.dataset.userMfaReset}/mfa/reset`, { method: 'POST' });
+      alert(`Two-factor authentication removed from ${button.dataset.userName}.`, 'success');
+      await renderUsers();
+    });
+  });
+
   document.querySelectorAll('[data-user-signout]').forEach((button) => {
     button.onclick = () => guard(button, async () => {
       const self = button.dataset.userSignout === currentUserId();
@@ -2602,6 +2619,8 @@ function userRow(user) {
     <td>
       <div class="fw-medium">${esc(user.username)}
         ${user.is_superuser ? '<span class="badge text-bg-danger ms-1">superuser</span>' : ''}
+        ${user.mfa_enabled ? '<span class="badge text-bg-success ms-1" ' +
+          'title="Signs in with an authenticator code">2FA</span>' : ''}
       </div>
       <div class="small text-secondary">${esc(user.full_name || '')} ${esc(user.email)}</div>
     </td>
@@ -2635,6 +2654,9 @@ function userRow(user) {
       ${federated ? '' : `<button class="btn btn-sm btn-outline-secondary ms-1"
               data-user-password="${esc(user.id)}"
               data-user-name="${esc(user.username)}">Password</button>`}
+      ${user.mfa_enabled ? `<button class="btn btn-sm btn-outline-secondary ms-1"
+              data-user-mfa-reset="${esc(user.id)}" data-user-name="${esc(user.username)}"
+              title="Remove two-factor authentication (lost phone)">Reset 2FA</button>` : ''}
       <button class="btn btn-sm btn-outline-secondary ms-1"
               data-user-signout="${esc(user.id)}" data-user-name="${esc(user.username)}"
               title="Every token issued to this account stops working">Sign out everywhere</button>
@@ -4474,6 +4496,7 @@ function showLogin() {
   document.getElementById('user-badge').classList.add('d-none');
   document.getElementById('logout-btn').classList.add('d-none');
   document.getElementById('poll-status').textContent = '';
+  if (typeof resetMfaStep === 'function') resetMfaStep();  // E15, mfa.js
 }
 
 async function showApp() {
@@ -4514,6 +4537,11 @@ document.getElementById('login-form').onsubmit = async (event) => {
         password: document.getElementById('password').value,
       }),
     });
+    if (result.mfa_required) {  // E15: the password was right; a code is next
+      document.getElementById('password').value = '';
+      startMfaStep(result);
+      return;
+    }
     token.set(result.access_token);
     await showApp();
   } catch (err) {

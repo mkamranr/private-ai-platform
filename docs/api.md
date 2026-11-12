@@ -94,6 +94,14 @@ credential exists. Responses carry no hostnames, DSNs or stack traces.
 | POST | `/auth/refresh` | — | `{refresh_token}` → new pair. Each refresh token works once (E14) |
 | POST | `/auth/logout` | authenticated | Revokes this access token, and `{refresh_token}` if given (E14) |
 | POST | `/auth/logout-all` | authenticated | Every token for this account stops working (E14) |
+| POST | `/auth/mfa/verify` | — | `{mfa_token, code}` → token pair. The second sign-in step (E15) |
+| POST | `/auth/mfa/enrol/start` | — | `{mfa_token}` → secret, `otpauth://` URI, QR SVG, when policy requires set-up (E15) |
+| POST | `/auth/mfa/enrol/finish` | — | `{mfa_token, code}` → token pair + recovery codes (E15) |
+| GET | `/auth/mfa` | authenticated | Own MFA status: enabled, recovery codes left, required by policy (E15) |
+| POST | `/auth/mfa/setup` | authenticated | `{password}` → secret, URI, QR SVG. Not on until confirmed (E15) |
+| POST | `/auth/mfa/enable` | authenticated | `{code}` → new token pair + recovery codes; other sessions signed out (E15) |
+| POST | `/auth/mfa/disable` | authenticated | `{password, code}`. 403 while policy requires MFA (E15) |
+| POST | `/auth/mfa/recovery-codes` | authenticated | `{code}` → ten new recovery codes (E15) |
 | GET | `/auth/me` | authenticated | Identity + resolved permission list |
 
 Login failures return one message regardless of cause — distinguishing "no such user"
@@ -108,6 +116,11 @@ message as a wrong password. Logout revokes tokens by their `jti`, and a session
 version claim (`sv`) lets one change sign out every session. A refresh token presented
 again after it was exchanged signs the account out everywhere. See
 [security.md](security.md#sign-in-hardening-e14).
+
+With two-factor authentication on (E15), `/auth/login` answers a correct password with
+`{mfa_required: true, mfa_token, enrolment_required, expires_in}` instead of tokens. A
+client that only reads `access_token` must check `mfa_required` first. See
+[security.md](security.md#two-factor-authentication-e15).
 
 ---
 
@@ -500,6 +513,7 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 | PUT | `/users/{id}/password` | `user.manage` — refused for a federated account. Signs the user out and lifts a lock (E14) |
 | POST | `/users/{id}/unlock` | `user.manage` — lifts a lockout early, clears its alert (E14) |
 | POST | `/users/{id}/sessions/revoke` | `user.manage` — signs the user out everywhere (E14) |
+| POST | `/users/{id}/mfa/reset` | `user.manage` — removes MFA (lost phone) and signs the user out (E15) |
 | POST | `/users/me/password` | **none** — anyone may change their own, and requires the current one. Signs out every session (E14) |
 
 ### API keys (M20)

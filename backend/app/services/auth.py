@@ -19,6 +19,14 @@ the same rules with no request in scope.
 
 Tokens issued before E14 carry no ``sv`` and count as version 0, which every existing
 account has, so an upgrade signs nobody out.
+
+**Two-factor authentication (E15).** For an account with MFA on, or one that
+``auth.mfa_required`` obliges to set it up, a correct password does not issue tokens.
+It returns an :class:`MfaChallenge`: a short-lived token of its own type, which
+:meth:`AuthService.complete_mfa` (or the enrolment pair) exchanges for tokens. A
+wrong code counts toward the same lockout as a wrong password. The failure counter is
+deliberately *not* reset by the correct password: otherwise password, nine guesses,
+password again would give unlimited guesses at the code.
 """
 
 from __future__ import annotations
@@ -29,7 +37,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.errors import AuthenticationError, PermissionDeniedError, RateLimitError, TokenError
+from app.core.errors import (
+    AuthenticationError,
+    PermissionDeniedError,
+    RateLimitError,
+    TokenError,
+    ValidationError,
+)
 from app.core.interfaces.auth_provider import ExternalIdentity, PasswordAuthProvider
 from app.core.logging import get_logger
 from app.core.request_context import get_client_ip
@@ -41,11 +55,14 @@ from app.repositories.user import UserRepository
 from app.services.audit import AuditService
 from app.services.federation import FederationService
 from app.services.login_guard import LoginGuard, account_locked_fingerprint
+from app.services.mfa import MfaService, MfaSetup, mfa_required_for
 
 log = get_logger(__name__)
 
 _BAD_CREDENTIALS = "Incorrect username or password."
 _SIGNED_OUT = "This session has been signed out. Sign in again."
+_BAD_CODE = "Incorrect authentication code."
+_MFA_STEP_USED = "This sign-in has already been completed or abandoned. Sign in again."
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +71,15 @@ class TokenPair:
     refresh_token: str
     token_type: str = "bearer"  # noqa: S105 — an OAuth2 type name, not a credential
     expires_in: int = 3600
+
+
+@dataclass(frozen=True, slots=True)
+class MfaChallenge:
+    """The password was right; a code (or, ``enrolment_required``, a set-up) is next."""
+
+    mfa_token: str
+    expires_in: int
+    enrolment_required: bool = False
 
 
 def _expiry(payload: dict[str, Any]) -> dt.datetime:
@@ -72,6 +98,9 @@ class AuthService:
         *,
         revocations: RevokedTokenRepository | None = None,
         guard: LoginGuard | None = None,
+        mfa: MfaService | None = None,
+        mfa_policy: str = "off",
+        mfa_challenge_ttl: int = 300,
     ) -> None:
         self._users = users
         self._hasher = hasher
@@ -83,6 +112,9 @@ class AuthService:
         self._federation = federation
         self._revocations = revocations or RevokedTokenRepository(users.session)
         self._guard = guard
+        self._mfa = mfa
+        self._mfa_policy = mfa_policy
+        self._mfa_challenge_ttl = mfa_challenge_ttl
 
     # -- authentication ----------------------------------------------------
     async def login(
@@ -91,31 +123,15 @@ class AuthService:
         password: str,
         *,
         user_agent: str | None = None,
-    ) -> TokenPair:
-        """Verify credentials and issue tokens.
+    ) -> TokenPair | MfaChallenge:
+        """Verify credentials and issue tokens, or the MFA step that leads to them.
 
         Every failure returns the *same* error regardless of cause, including a locked
         account. Distinguishing "no such user", "wrong password" or "locked" would turn
         this endpoint into a user enumeration oracle.
         """
         address = get_client_ip() or "unknown"
-        if self._guard is not None:
-            retry = await self._guard.check_address(address)
-            if retry:
-                await self._audit.record_independent(
-                    AuditAction.LOGIN_THROTTLED,
-                    result=AuditResult.DENIED,
-                    username=username,
-                    message="Sign-in refused: too many failures from this address",
-                    metadata={"address": address},
-                    user_agent=user_agent,
-                )
-                minutes = max(1, round(retry / 60))
-                raise RateLimitError(
-                    f"Too many failed sign-ins from this address. Try again in {minutes} "
-                    f"minute{'s' if minutes != 1 else ''}.",
-                    details={"retry_after_seconds": retry},
-                )
+        await self._refuse_throttled(address, username=username, user_agent=user_agent)
 
         user = await self._users.get_by_username(username)
 
@@ -196,8 +212,27 @@ class AuthService:
             user.hashed_password = self._hasher.hash(password)
             log.info("password_hash_upgraded", username=user.username)
 
+        if self._mfa is not None and (user.mfa_enabled or mfa_required_for(user, self._mfa_policy)):
+            enrol = not user.mfa_enabled
+            return MfaChallenge(
+                mfa_token=self._tokens.create_mfa_token(
+                    str(user.id),
+                    self._mfa_challenge_ttl,
+                    sv=user.session_version or 0,
+                    purpose="enrol" if enrol else "verify",
+                ),
+                expires_in=self._mfa_challenge_ttl,
+                enrolment_required=enrol,
+            )
+
+        return await self._signed_in(user, user_agent=user_agent)
+
+    async def _signed_in(
+        self, user: User, *, user_agent: str | None, metadata: dict[str, Any] | None = None
+    ) -> TokenPair:
+        """Every check passed: reset the failure state, audit, issue tokens."""
         was_locked = user.locked_until is not None
-        user.last_login_at = now
+        user.last_login_at = dt.datetime.now(dt.UTC)
         user.failed_login_count = 0
         user.locked_until = None
         if was_locked and self._guard is not None:
@@ -208,8 +243,176 @@ class AuthService:
             user_id=user.id,
             username=user.username,
             user_agent=user_agent,
+            metadata=metadata or {},
         )
         return self._issue(user)
+
+    # -- two-factor sign-in (E15) ------------------------------------------------
+    async def _challenge_user(self, mfa_token: str, purpose: str) -> tuple[User, dict]:
+        """The account an MFA step token names, if the token is still good for ``purpose``."""
+        payload = self._tokens.decode(mfa_token, expected_type="mfa")
+        if payload.get("purpose") != purpose:
+            raise TokenError(_MFA_STEP_USED)
+        jti = payload.get("jti")
+        if not jti or await self._revocations.is_revoked(str(jti)):
+            raise TokenError(_MFA_STEP_USED)
+        user = await self._resolve_subject(payload.get("sub"))
+        if not user.is_active:
+            raise AuthenticationError("This account is disabled.")
+        if int(payload.get("sv", 0)) != user.session_version:
+            raise TokenError(_MFA_STEP_USED)
+        return user, payload
+
+    async def _spend(self, user: User, payload: dict) -> None:
+        """An MFA step token works for one completed sign-in."""
+        await self._revocations.revoke(
+            jti=str(payload["jti"]),
+            user_id=user.id,
+            token_type="mfa",  # noqa: S106 — a token kind, not a credential
+            reason="mfa",
+            expires_at=_expiry(payload),
+        )
+
+    async def complete_mfa(
+        self, mfa_token: str, code: str, *, user_agent: str | None = None
+    ) -> TokenPair:
+        """Exchange the MFA step token and an authenticator or recovery code for tokens."""
+        if self._mfa is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Two-factor authentication is not configured.")
+        user, payload = await self._challenge_user(mfa_token, "verify")
+        address = get_client_ip() or "unknown"
+        await self._refuse_throttled(address, username=user.username, user_agent=user_agent)
+
+        now = dt.datetime.now(dt.UTC)
+        if user.locked_until is not None and user.locked_until > now:
+            await self._audit.record_independent(
+                AuditAction.USER_LOGIN,
+                result=AuditResult.DENIED,
+                user_id=user.id,
+                username=user.username,
+                message="Account is locked",
+                metadata={"step": "mfa"},
+                user_agent=user_agent,
+            )
+            await self._address_failed(address)
+            raise AuthenticationError(_BAD_CODE)
+
+        method = await self._mfa.check(user, code)
+        if method is None:
+            failures, locked = (
+                await self._guard.account_failed(user, now=now)
+                if self._guard is not None
+                else (user.failed_login_count + 1, False)
+            )
+            await self._audit.record_independent(
+                AuditAction.USER_LOGIN,
+                result=AuditResult.FAILURE,
+                user_id=user.id,
+                username=user.username,
+                message="Incorrect authentication code",
+                metadata={"failed_login_count": failures, "step": "mfa"},
+                user_agent=user_agent,
+            )
+            if locked and self._guard is not None:
+                await self._guard.account_locked(user, audit=self._audit, failures=failures)
+            await self._address_failed(address)
+            raise AuthenticationError(_BAD_CODE)
+
+        await self._spend(user, payload)
+        return await self._signed_in(user, user_agent=user_agent, metadata={"mfa": method})
+
+    async def start_enrolment(self, mfa_token: str) -> MfaSetup:
+        """Sign-in step for someone ``auth.mfa_required`` obliges to set up MFA first."""
+        if self._mfa is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Two-factor authentication is not configured.")
+        user, _payload = await self._challenge_user(mfa_token, "enrol")
+        return self._mfa.begin(user)
+
+    async def finish_enrolment(
+        self, mfa_token: str, code: str, *, user_agent: str | None = None
+    ) -> tuple[TokenPair, list[str]]:
+        """Check the first code, turn MFA on and sign in. Returns tokens and recovery codes."""
+        if self._mfa is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Two-factor authentication is not configured.")
+        user, payload = await self._challenge_user(mfa_token, "enrol")
+        codes = await self._mfa.activate(user, code)
+        await self._spend(user, payload)
+        pair = await self._signed_in(user, user_agent=user_agent, metadata={"mfa": "enrolled"})
+        return pair, codes
+
+    # -- two-factor self-service (E15) ------------------------------------------
+    def mfa_required(self, user: User) -> bool:
+        return mfa_required_for(user, self._mfa_policy)
+
+    def _check_password(self, user: User, password: str) -> None:
+        # A 422, not a 401: the console treats 401 as an expired session and signs out.
+        if user.hashed_password is None or not self._hasher.verify(user.hashed_password, password):
+            raise ValidationError("Your current password is not right.")
+
+    def begin_mfa(self, user: User, password: str) -> MfaSetup:
+        if self._mfa is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Two-factor authentication is not configured.")
+        self._check_password(user, password)
+        return self._mfa.begin(user)
+
+    async def enable_mfa(self, user: User, code: str) -> tuple[TokenPair, list[str]]:
+        """Turn MFA on. Every other session is signed out: they never gave a code."""
+        if self._mfa is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Two-factor authentication is not configured.")
+        codes = await self._mfa.activate(user, code)
+        user.session_version += 1
+        return self._issue(user), codes
+
+    def _mfa_service(self) -> MfaService:
+        if self._mfa is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Two-factor authentication is not configured.")
+        return self._mfa
+
+    async def _require_code(self, user: User, code: str) -> None:
+        if self._mfa is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Two-factor authentication is not configured.")
+        if not user.mfa_enabled:
+            raise ValidationError("Two-factor authentication is not on for this account.")
+        if await self._mfa.check(user, code) is None:
+            raise ValidationError("That code is not right.")
+
+    async def disable_mfa(self, user: User, password: str, code: str) -> None:
+        if self.mfa_required(user):
+            raise PermissionDeniedError(
+                "Two-factor authentication is required for this account by the platform's "
+                "policy, so it cannot be turned off. An administrator can reset it."
+            )
+        self._check_password(user, password)
+        await self._require_code(user, code)
+        await self._mfa_service().disable(user)
+
+    async def regenerate_recovery_codes(self, user: User, code: str) -> list[str]:
+        await self._require_code(user, code)
+        return await self._mfa_service().regenerate_recovery_codes(user)
+
+    async def _refuse_throttled(
+        self, address: str, *, username: str, user_agent: str | None = None
+    ) -> None:
+        """Refuse an address that has failed too often, at either sign-in step."""
+        if self._guard is None:
+            return
+        retry = await self._guard.check_address(address)
+        if not retry:
+            return
+        await self._audit.record_independent(
+            AuditAction.LOGIN_THROTTLED,
+            result=AuditResult.DENIED,
+            username=username,
+            message="Sign-in refused: too many failures from this address",
+            metadata={"address": address},
+            user_agent=user_agent,
+        )
+        minutes = max(1, round(retry / 60))
+        raise RateLimitError(
+            f"Too many failed sign-ins from this address. Try again in {minutes} "
+            f"minute{'s' if minutes != 1 else ''}.",
+            details={"retry_after_seconds": retry},
+        )
 
     async def _address_failed(self, address: str) -> None:
         if self._guard is not None:

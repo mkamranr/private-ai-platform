@@ -44,7 +44,7 @@ drifted, search for the named function.
 | 10 | Unauthorized deployment actions | Permission per route, socket only on the node agent | The node-agent token is effectively root on the host |
 | 11 | Prompt/response exposure through logs | Access log without bodies, audit redaction | No redaction processor in application logs |
 | 12 | Ops actions: backup, restore, upgrade (E7) | Split permissions, typed confirmation, audited host runner, wrong runner tokens throttled per address and audited (E14) | Runner token in `.env`. The runner runs as a host user with Docker access |
-| 13 | Password guessing, stolen session tokens (E14) | Account lockout, per-address sign-in throttle, `jti` revocation, session versions, refresh rotation with reuse detection | Throttle fails open without Valkey. Directory accounts are not locked by the platform |
+| 13 | Password guessing, stolen session tokens (E14) | Account lockout, per-address sign-in throttle, `jti` revocation, session versions, refresh rotation with reuse detection, optional or enforced TOTP second factor (E15) | Throttle fails open without Valkey. Directory accounts are not locked by the platform. MFA is opt-in unless `auth.mfa_required` is set. An administrator's MFA reset is a social-engineering target |
 
 ---
 

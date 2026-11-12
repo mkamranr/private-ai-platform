@@ -919,3 +919,11 @@ body.app-active main {
 .conn-tools { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }
 .conn-config summary { cursor: pointer; color: var(--bs-secondary-color); }
 .conn-config li { margin-top: .25rem; }
+
+/* Two-factor authentication (E15). The QR code keeps its white ground in dark mode:
+   phone cameras read dark-on-light far more reliably. */
+.mfa-qr { width: 11rem; background: #fff; padding: .4rem; border-radius: .5rem; }
+.mfa-qr svg { display: block; width: 100%; height: auto; }
+.mfa-recovery { columns: 2; column-gap: 2rem; padding-left: 1.4rem; }
+.mfa-recovery li { margin-bottom: .2rem; }
+#user-badge { cursor: pointer; }
