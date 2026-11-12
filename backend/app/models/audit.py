@@ -129,6 +129,10 @@ class AuditAction(enum.StrEnum):
     COST_RATE_CREATED = "COST_RATE_CREATED"
     COST_RATE_DELETED = "COST_RATE_DELETED"
     CHARGEBACK_EXPORTED = "CHARGEBACK_EXPORTED"
+    # Cost budgets (E12)
+    COST_BUDGET_CREATED = "COST_BUDGET_CREATED"
+    COST_BUDGET_UPDATED = "COST_BUDGET_UPDATED"
+    COST_BUDGET_DELETED = "COST_BUDGET_DELETED"
     # Connector catalogue (E10)
     CONNECTOR_RISK_APPLIED = "CONNECTOR_RISK_APPLIED"
     # Recorded because a memory holds what an agent believes about a person, and §M24 means

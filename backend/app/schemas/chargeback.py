@@ -104,3 +104,56 @@ class ChargebackReport(BaseModel):
     unpriced_models: list[str]
     rates_defined: bool
     totals: ChargebackTotals
+
+
+# -- cost budgets (E12) ------------------------------------------------------------
+BudgetScope = Literal["global", "team", "api_key"]
+BudgetStatus = Literal["ok", "warning", "exceeded", "unpriced", "disabled"]
+
+
+class CostBudgetCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: BudgetScope
+    subject: str | None = Field(
+        default=None, max_length=64, description="Team or API key id. Ignored for 'global'."
+    )
+    monthly_amount: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    warn_percent: int = Field(default=80, ge=1, le=99)
+    description: str | None = Field(default=None, max_length=500)
+    enabled: bool = True
+
+
+class CostBudgetUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    monthly_amount: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=6)
+    warn_percent: int | None = Field(default=None, ge=1, le=99)
+    description: str | None = Field(default=None, max_length=500)
+    enabled: bool | None = None
+
+
+class CostBudgetRead(BaseModel):
+    id: uuid.UUID
+    scope: BudgetScope
+    subject: str
+    subject_label: str
+    monthly_amount: Decimal
+    warn_percent: int
+    description: str | None
+    enabled: bool
+    #: Estimated spend this calendar month (UTC); null when none of it is priced.
+    spend: Decimal | None
+    #: Some usage had no rate, so ``spend`` is a lower bound.
+    spend_partial: bool
+    percent: int | None
+    status: BudgetStatus
+    currency: str
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+class CostBudgetsResponse(BaseModel):
+    currency: str
+    month_start: dt.date
+    items: list[CostBudgetRead]

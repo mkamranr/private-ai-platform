@@ -691,6 +691,7 @@ rollback, gets 409. See [operations.md](operations.md).
 | GET | `/ops/jobs/{id}` | `diagnostics.view`. With the output lines |
 | POST | `/ops/jobs/{id}/cancel` | `backup.manage`. Queued jobs, or running ones whose runner is offline |
 | GET / POST | `/ops/backups` | `backup.manage`. POST body: `reason` |
+| GET | `/ops/backups/schedule` | `backup.manage`. `enabled`, `interval_hours`, `keep`, `next_due_at`, `overdue`, `runner_online`, `last_job`, `prune_candidates`, `note` (E12) |
 | POST | `/ops/backups/{name}/verify` | `backup.manage` |
 | POST | `/ops/backups/{name}/restore` | `backup.restore`. `confirm` (the name), `reason`; refused for a backup under another encryption key |
 | GET | `/ops/bundles` | `system.upgrade` |
@@ -720,7 +721,13 @@ currency; `null` means not priced, never 0. See [chargeback.md](chargeback.md).
 | GET | `/chargeback/report` | `cost.view`. `?group_by=team\|api_key\|user\|end_user\|model&start=&end=` (UTC days, inclusive, max 366). Rows follow team scope; `idle` only with `scope.all` |
 | POST | `/chargeback/export` | `cost.view`. Same parameters; `text/csv`, every row; audited |
 
-Audit actions: `COST_RATE_CREATED`, `COST_RATE_DELETED`, `CHARGEBACK_EXPORTED`.
+| GET | `/chargeback/budgets` | `cost.view`. `currency`, `month_start`, `items[]` with `spend`, `spend_partial`, `percent`, `status` (`ok`, `warning`, `exceeded`, `unpriced`, `disabled`). Team budgets follow team scope; global and API-key budgets need `scope.all` (E12) |
+| POST | `/chargeback/budgets` | `cost.manage`. `scope` (`global`, `team`, `api_key`), `subject` (id; none for global), `monthly_amount`, `warn_percent?` (1–99, default 80), `description?`, `enabled?`; 201; 409 for a second budget on the same subject, 422 for an unknown subject |
+| PATCH | `/chargeback/budgets/{id}` | `cost.manage`. Any of `monthly_amount`, `warn_percent`, `description`, `enabled` |
+| DELETE | `/chargeback/budgets/{id}` | `cost.manage`. 204 |
+
+Audit actions: `COST_RATE_CREATED`, `COST_RATE_DELETED`, `CHARGEBACK_EXPORTED`,
+`COST_BUDGET_CREATED`, `COST_BUDGET_UPDATED`, `COST_BUDGET_DELETED`.
 
 ## Connector catalogue — Expansion E10
 

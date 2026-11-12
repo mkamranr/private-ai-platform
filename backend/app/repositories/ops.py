@@ -74,6 +74,11 @@ class OpsJobRepository(BaseRepository[OpsJob]):
         stmt = stmt.order_by(OpsJob.created_at.desc()).limit(1)
         return (await self.session.execute(stmt)).scalars().first()
 
+    async def latest_of_kind(self, kind: str) -> OpsJob | None:
+        """Newest job of ``kind``, whatever its parameters or outcome."""
+        stmt = select(OpsJob).where(OpsJob.kind == kind).order_by(OpsJob.created_at.desc()).limit(1)
+        return (await self.session.execute(stmt)).scalars().first()
+
     async def recent_finished(self, since: dt.datetime, limit: int = 200) -> Sequence[OpsJob]:
         stmt = (
             select(OpsJob)

@@ -281,3 +281,46 @@ class TestRunnerUpgrade:
             runner, site, monkeypatch, fail_on="--rbac-only"
         )
         assert status == "FAILED" and "seed --rbac-only" in detail
+
+
+class TestRunnerPrune:
+    """E12: retention deletes only listed, complete backups, and never the newest."""
+
+    @pytest.fixture
+    def runner(self):
+        return load("ops_runner")
+
+    @pytest.fixture
+    def site(self, runner, tmp_path):
+        root = tmp_path / "site"
+        for name in ("20261101T000000Z", "20261102T000000Z", "20261103T000000Z"):
+            (root / "backups" / name).mkdir(parents=True)
+            (root / "backups" / name / "manifest.json").write_text("{}", encoding="utf-8")
+        (root / "backups" / "20261104T000000Z").mkdir()  # still being written
+        return runner.Inventory(root, root / "updates", {})
+
+    def _prune(self, runner, site, names):
+        reporter = TestRunnerUpgrade.StubReporter()
+        spec = {"kind": "backup.prune", "params": {"delete": names}}
+        return runner.execute(spec, site, reporter, "python3"), reporter
+
+    def test_deletes_listed_old_backups(self, runner, site):
+        outcome, reporter = self._prune(runner, site, ["20261101T000000Z"])
+        assert outcome == ("SUCCEEDED", None)
+        assert reporter.result["deleted"] == ["20261101T000000Z"]
+        assert not (site.backups_dir / "20261101T000000Z").exists()
+
+    def test_never_the_newest_complete_or_an_incomplete_one(self, runner, site):
+        names = ["20261103T000000Z", "20261104T000000Z", "20261102T000000Z"]
+        outcome, reporter = self._prune(runner, site, names)
+        assert outcome == ("SUCCEEDED", None)
+        assert reporter.result == {
+            "deleted": ["20261102T000000Z"],
+            "kept_newest": "20261103T000000Z",
+        }
+        assert (site.backups_dir / "20261103T000000Z").exists()
+        assert (site.backups_dir / "20261104T000000Z").exists()
+
+    def test_an_unlisted_name_fails_the_job(self, runner, site):
+        with pytest.raises(runner.JobError):
+            self._prune(runner, site, ["../etc"])

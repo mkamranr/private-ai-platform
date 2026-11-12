@@ -112,6 +112,11 @@ The page lists each backup with:
 - It is all-or-nothing, and the API is down while it runs.
 - Vector snapshots are not restored automatically (see [backup.md](backup.md)).
 
+**Schedule (E12).** With `ops.backup_interval_hours` set, the platform queues backups
+itself as jobs requested by `scheduler`. With `ops.backup_keep` set, it queues
+*Retention* (`backup.prune`) jobs that delete the oldest complete backups. Both appear
+under Recent operations. See [backup.md](backup.md#schedule-and-retention-e12).
+
 ## Offline Updates
 
 1. **Import.**
@@ -240,6 +245,7 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 | `GET /ops/jobs`, `GET /ops/jobs/{id}` | `diagnostics.view` | history, and one job with its output |
 | `POST /ops/jobs/{id}/cancel` | `backup.manage` | queued, or running with an offline runner |
 | `GET /ops/backups`, `POST /ops/backups` | `backup.manage` | list (with last verify), take |
+| `GET /ops/backups/schedule` | `backup.manage` | schedule, next due, overdue, retention candidates |
 | `POST /ops/backups/{name}/verify` | `backup.manage` | |
 | `POST /ops/backups/{name}/restore` | `backup.restore` | body `{confirm: name, reason}` |
 | `GET /ops/bundles`, `POST /ops/bundles/{name}/verify` | `system.upgrade` | |
@@ -259,11 +265,12 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 | `OPS__MAX_LOG_LINES` | 2000 | output lines kept per job |
 | `OPS__LOKI_URL` | `http://loki:3100` | log source for support bundles; empty to skip |
 | `OPS__SUPPORT_LOG_HOURS` / `OPS__SUPPORT_LOG_LINES` | 6 / 5000 | how much log a support bundle includes |
+| `OPS__BACKUP_INTERVAL_HOURS` | 0 (off) | scheduled backup every N hours; also a runtime setting |
+| `OPS__BACKUP_KEEP` | 0 (keep all) | retention: keep the newest N complete backups; also a runtime setting |
 
 ## Not built yet
 
-- No scheduled backups or retention policy. Use cron with `make backup`, or schedule the API
-  call.
+- Retention is by count only. There is no age-based policy and no off-host copy.
 - No partial restore (one team or knowledge base), and no automatic Qdrant snapshot restore.
 - No rate limit on failed runner-token attempts (threat model #12).
 - Bundle import is a copy on the host. There is no streaming upload through the console.

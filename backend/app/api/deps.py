@@ -46,7 +46,11 @@ from app.repositories.agents import (
     ToolRepository,
 )
 from app.repositories.audit import AuditRepository
-from app.repositories.chargeback import ChargebackRepository, CostRateRepository
+from app.repositories.chargeback import (
+    ChargebackRepository,
+    CostBudgetRepository,
+    CostRateRepository,
+)
 from app.repositories.dashboard import DashboardRepository
 from app.repositories.infrastructure import (
     ContainerRepository,
@@ -111,6 +115,8 @@ from app.services.api_keys import ApiKeyService
 from app.services.audit import AuditService
 from app.services.auth import AuthService
 from app.services.auth_providers import LdapAuthProvider, LocalAuthProvider
+from app.services.backup_schedule import BackupScheduler
+from app.services.budgets import CostBudgetService
 from app.services.chargeback import ChargebackService
 from app.services.connector_catalogue import ConnectorCatalogueService
 from app.services.dashboard import DashboardService
@@ -1261,6 +1267,15 @@ def get_ops_service(
 OpsServiceDep = Annotated[OpsService, Depends(get_ops_service)]
 
 
+def get_backup_scheduler(
+    settings: EffectiveSettingsDep, ops: OpsServiceDep, alerts: AlertServiceDep
+) -> BackupScheduler:
+    return BackupScheduler(settings, ops, alerts)
+
+
+BackupSchedulerDep = Annotated[BackupScheduler, Depends(get_backup_scheduler)]
+
+
 def get_diagnostics_service(
     request: Request,
     session: SessionDep,
@@ -1310,6 +1325,21 @@ def get_chargeback_service(
 
 
 ChargebackServiceDep = Annotated[ChargebackService, Depends(get_chargeback_service)]
+
+
+def get_cost_budget_service(
+    session: SessionDep, chargeback: ChargebackServiceDep, audit: AuditDep
+) -> CostBudgetService:
+    return CostBudgetService(
+        CostBudgetRepository(session),
+        chargeback,
+        ApiKeyRepository(session),
+        TeamRepository(session),
+        audit,
+    )
+
+
+CostBudgetServiceDep = Annotated[CostBudgetService, Depends(get_cost_budget_service)]
 
 
 # ---------------------------------------------------------------------------

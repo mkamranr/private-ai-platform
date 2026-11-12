@@ -478,6 +478,27 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
             reporter.result["rbac_reconciled"] = True
         return "SUCCEEDED", None
 
+    if kind == "backup.prune":
+        # Retention (E12). The API names what to delete; every name is checked again
+        # against this disk, and the newest complete backup is never deleted, whatever
+        # the request says.
+        complete = sorted(b["name"] for b in inventory.backups() if b.get("complete"))
+        newest = complete[-1] if complete else None
+        deleted: list[str] = []
+        for name in params.get("delete") or []:
+            path = inventory.backup_path(name)
+            if name == newest:
+                reporter.line(f"kept {name}: it is the newest complete backup")
+                continue
+            if not (path / "manifest.json").exists():
+                reporter.line(f"kept {name}: incomplete, it may still be being written")
+                continue
+            shutil.rmtree(path)
+            deleted.append(name)
+            reporter.line(f"deleted {name}")
+        reporter.result = {"deleted": deleted, "kept_newest": newest}
+        return "SUCCEEDED", None
+
     if kind == "rollback":
         point = inventory.rollback_name(params.get("point", ""))
         script = root / "offline" / "rollback.sh"

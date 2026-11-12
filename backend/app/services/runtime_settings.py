@@ -185,6 +185,31 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next support bundle",
     ),
     RuntimeSetting(
+        "ops.backup_interval_hours",
+        "operations",
+        "Scheduled backup every (hours)",
+        "The platform queues a backup this often for the host runner. 0 turns scheduled "
+        "backups off. Read by the backup schedule job.",
+        "Next schedule check (within 5 minutes)",
+    ),
+    RuntimeSetting(
+        "ops.backup_keep",
+        "operations",
+        "Backups to keep",
+        "After a scheduled backup, older complete backups beyond this many are deleted. "
+        "0 keeps every backup; the newest complete one is never deleted. Read by the "
+        "backup schedule job.",
+        "Next scheduled backup",
+    ),
+    RuntimeSetting(
+        "gateway.budget_warning_percent",
+        "gateway",
+        "Budget warning at (%)",
+        "A daily or monthly token budget raises a warning alert at this share of its "
+        "limit, and a critical one when it is used up. Read by the budget check job.",
+        "Next budget check",
+    ),
+    RuntimeSetting(
         "chargeback.currency",
         "chargeback",
         "Currency",

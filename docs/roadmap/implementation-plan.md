@@ -118,7 +118,7 @@ dashboard real signals.
 - [x] Unpriced is not free: no applicable rate gives `null` cost and an `unpriced` count; partial streams are flagged. Every report and export says it is an estimate.
 - [x] CSV export (POST, audited, every row, formula-safe cells).
 - [x] Chargeback page: grouping and period pickers, totals, unpriced warning, cost table, idle capacity, rates with status, add/remove rate. `chargeback.currency` runtime setting. Doc: [docs/chargeback.md](../chargeback.md).
-- [ ] No currency budgets, cost alerts or conversion; no cost for ingestion, tool calls or voice.
+- [ ] No currency conversion; no cost for ingestion, tool calls or voice. (Budgets and cost alerts arrived in E12.)
 
 ## E10: Connector catalogue (closes plan §14 "Large connector catalogue")
 
@@ -137,6 +137,15 @@ dashboard real signals.
 - [x] Telemetry: Alloy `--disable-reporting`; Open WebUI's opt-outs stated in compose. Pins: images by digest, requirements with hashes (`make airgap` passes). Migrations: an empty database goes head → base → head with no leftover tables or types, and `alembic check` is clean.
 - [x] Version 0.2.0, [CHANGELOG.md](../../CHANGELOG.md), [upgrade guide](../upgrade-0.2.md), [release checklist](../release-checklist.md).
 - [ ] Not exercised here: building images, the air-gapped rehearsal (`make gate-phase8`) and the connector images (no Docker on this machine).
+
+## E12: Budget alerts and scheduled backups
+
+- [x] Token quota alerts: WARNING at `gateway.budget_warning_percent` (default 80, runtime setting) and CRITICAL at 100% of daily and monthly quotas, per subject. A `*` quota covers each subject without an explicit enabled quota. Alerts clear themselves. Job `budget_check`.
+- [x] Cost budgets (`cost_budgets`): monthly, global, per team or per API key, each with its own warning share. Alerts only, never refusals; unpriced usage raises nothing, and partly priced usage is flagged as a lower bound. CRUD under `/chargeback/budgets`, audited, team-scoped. Budgets card on the Chargeback page.
+- [x] Scheduled backups: `ops.backup_interval_hours` queues `backup.create` jobs as `scheduler` (audited). At most one attempt per interval, nothing while the runner is offline. Alerts for overdue and failed backups.
+- [x] Retention: `ops.backup_keep` queues `backup.prune` jobs. The runner checks the names again, keeps the newest complete backup and never deletes a folder without a manifest. Schedule card on the Backup & Restore page and `GET /ops/backups/schedule`.
+- [x] Migration `9a6f2c4e1b57` (table and `backup.prune` job kind) upgrades and downgrades cleanly.
+- [ ] Alerts are in-app only (no email or chat). Retention is by count, not age. No off-host copy of backups.
 
 ## Phase acceptance (applies to each)
 

@@ -55,6 +55,8 @@ log = get_logger(__name__)
 SUPPORTED_BUNDLE_FORMATS = frozenset({2})
 _NAME = re.compile(NAME_PATTERN)
 _RUNNER_USER = "ops-runner"
+#: Who a job queued by the backup schedule (E12) is recorded as requested by.
+SCHEDULER_USER = "scheduler"
 
 
 def _now() -> dt.datetime:
@@ -295,9 +297,12 @@ class OpsService:
         kind: JobKind,
         params: dict[str, Any],
         *,
-        actor: User,
+        actor: User | None,
         reason: str | None,
     ) -> OpsJob:
+        """Queue an audited job. ``actor`` is None for one the schedule queued."""
+        user_id = actor.id if actor is not None else None
+        username = actor.username if actor is not None else SCHEDULER_USER
         for job in await self._jobs.active():
             if job.kind == kind and job.params == params:
                 raise ConflictError(f"The same {kind} is already {job.status.lower()}.")
@@ -316,23 +321,34 @@ class OpsService:
                 params=params,
                 result={},
                 log=[],
-                requested_by=actor.id,
-                requested_by_name=actor.username,
+                requested_by=user_id,
+                requested_by_name=username,
                 reason=reason,
             )
         )
         await self._save(job)
         await self._audit.record(
             AuditAction.OPS_JOB_REQUESTED,
-            user_id=actor.id,
-            username=actor.username,
+            user_id=user_id,
+            username=username,
             resource_type="ops_job",
             resource_id=str(job.id),
             message=f"requested {kind}",
             metadata={"kind": str(kind), "params": params, "reason": reason},
         )
-        log.info("ops_job_requested", job_id=str(job.id), kind=str(kind), user=actor.username)
+        log.info("ops_job_requested", job_id=str(job.id), kind=str(kind), user=username)
         return job
+
+    async def request_scheduled(
+        self, kind: JobKind, params: dict[str, Any], *, reason: str
+    ) -> OpsJob:
+        """A job the backup schedule queues (E12): audited, with no person behind it."""
+        if kind not in (JobKind.BACKUP_CREATE, JobKind.BACKUP_PRUNE):
+            raise ValidationError(f"The schedule does not queue {kind} jobs.")
+        return await self._request(kind, params, actor=None, reason=reason)
+
+    async def latest_of_kind(self, kind: JobKind) -> OpsJob | None:
+        return await self._jobs.latest_of_kind(str(kind))
 
     @staticmethod
     def _check_confirm(confirm: str, expected: str) -> None:

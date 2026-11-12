@@ -67,10 +67,41 @@ does not appear to be a valid archive", which reads exactly like a corrupt backu
 someone hunting a data-loss incident that never happened. Both verify and restore stage the
 dump to a file inside the container first.
 
+## Schedule and retention (E12)
+
+Two runtime settings on the Settings page (Operations) control them. Both are off (0) by
+default.
+
+| Setting | Meaning |
+|---|---|
+| `ops.backup_interval_hours` | take a backup every N hours (1–720) |
+| `ops.backup_keep` | keep the newest N complete backups and delete older ones |
+
+Every five minutes the platform checks the runner's inventory:
+
+- **A backup is due** when the newest complete backup is older than the interval. The check
+  queues an ordinary `backup.create` job, requested by `scheduler` and audited like any
+  other. It queues nothing while the runner is offline or another backup is queued or
+  running, and makes at most one attempt per interval, so a failing backup is not retried
+  in a loop.
+- **Retention** queues a `backup.prune` job listing the backups beyond `ops.backup_keep`,
+  once per new backup and only when no other job is active. The runner checks each name
+  again, always keeps the newest complete backup, and never deletes a folder without a
+  `manifest.json` (it could be a backup still being written). Incomplete backups do not
+  count towards the number kept.
+- **Alerts.** `Scheduled backup overdue` (WARNING) appears when no backup has completed
+  within 1.5 intervals (at least interval + 1 hour). `Scheduled backup failed` appears when
+  the latest backup job failed. Each clears itself once a backup succeeds.
+
+The Backup & Restore page shows the schedule, when the next backup is due, the last
+backup job and how many backups the next retention run will delete.
+`GET /api/v1/ops/backups/schedule` returns the same information.
+
+Retention deletes only local backups under `backups/`. Copy backups off the host
+separately: a schedule on one disk does not protect against losing that disk.
+
 ## Not built yet
 
-* No scheduling. This is a command an operator, cron or a call to `POST /api/v1/ops/backups`
-  runs, not a platform worker.
-* No retention or pruning — `backups/` grows until someone removes something.
+* Scheduling runs through the ops runner. Without the runner, use cron with `make backup`.
 * No incremental backups; every run is full.
 * Restore is all-or-nothing: there is no way to recover a single tenant or knowledge base.
