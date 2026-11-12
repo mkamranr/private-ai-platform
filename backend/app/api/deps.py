@@ -82,6 +82,10 @@ from app.repositories.models_registry import (
     ModelRepository,
     UsageRepository,
 )
+from app.repositories.notifications import (
+    NotificationChannelRepository,
+    NotificationDeliveryRepository,
+)
 from app.repositories.operations import (
     AlertRepository,
     GatewayQuotaRepository,
@@ -137,6 +141,8 @@ from app.services.memory import MemoryService
 from app.services.model_registry import ModelRegistryService
 from app.services.monitoring import MonitoringService, TraceService
 from app.services.node_enrollment import NodeEnrollmentService
+from app.services.notification_senders import EmailSender, WebhookSender
+from app.services.notifications import ChannelSender, NotificationService
 from app.services.ops import OpsService
 from app.services.quotas import QuotaService
 from app.services.rag_eval import RagEvalService
@@ -1340,6 +1346,34 @@ def get_cost_budget_service(
 
 
 CostBudgetServiceDep = Annotated[CostBudgetService, Depends(get_cost_budget_service)]
+
+
+def get_channel_sender(settings: SettingsDep, cipher: CipherDep) -> ChannelSender:
+    """Overridden in tests with fake transports."""
+    return ChannelSender(cipher, WebhookSender(), EmailSender(settings.notifications))
+
+
+ChannelSenderDep = Annotated[ChannelSender, Depends(get_channel_sender)]
+
+
+def get_notification_service(
+    session: SessionDep,
+    settings: SettingsDep,
+    sender: ChannelSenderDep,
+    alerts: AlertServiceDep,
+    audit: AuditDep,
+) -> NotificationService:
+    return NotificationService(
+        settings,
+        NotificationChannelRepository(session),
+        NotificationDeliveryRepository(session),
+        sender,
+        alerts,
+        audit,
+    )
+
+
+NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
 
 
 # ---------------------------------------------------------------------------

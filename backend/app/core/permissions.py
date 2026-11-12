@@ -117,6 +117,8 @@ class Permission:
     # In-app alerts (E1, plan §5.15).
     ALERT_VIEW: Final = "alert.view"
     ALERT_MANAGE: Final = "alert.manage"
+    # Alert notification channels (E13): they send platform data to other systems.
+    NOTIFICATION_MANAGE: Final = "notification.manage"
 
 
 #: ``permission name -> human description``, used by the seeder and the admin UI.
@@ -182,6 +184,9 @@ PERMISSION_CATALOGUE: Final[dict[str, str]] = {
     Permission.TRACE_VIEW: "View LLM and agent execution traces",
     Permission.ALERT_VIEW: "View platform alerts",
     Permission.ALERT_MANAGE: "Acknowledge and resolve platform alerts",
+    Permission.NOTIFICATION_MANAGE: (
+        "Add, change, test and remove the email and webhook channels alerts are sent to"
+    ),
 }
 
 

@@ -742,3 +742,21 @@ Under `/api/v1/mcp/catalogue`. See [mcp.md](mcp.md#connector-catalogue-e10).
 
 `POST /mcp/servers/import-manifests` now skips a manifest with problems and reports why.
 Audit action: `CONNECTOR_RISK_APPLIED`.
+
+## Alert notifications — Expansion E13
+
+Under `/api/v1/notifications`; every route needs `notification.manage`. See
+[notifications.md](notifications.md).
+
+| method | path | permission |
+|---|---|---|
+| GET | `/notifications/channels` | Channels with health and `pending`, plus `smtp_configured`, `console_url_configured`, `sources[]`. Webhook URLs are masked to scheme, host and port; secrets are reported as `has_signing_secret` / `has_authorization` |
+| POST | `/notifications/channels` | `name`, `kind` (`webhook`, `email`), `min_severity?`, `sources?`, `notify_resolved?`, `description?`, `enabled?`; webhook: `url`, `payload_format?` (`chat`, `generic`), `signing_secret?` (≥16 chars), `authorization?`, `verify_tls?`, `timeout_seconds?`; email: `recipients` (1–20). 201; 409 duplicate name; 422 refused URL, unknown source or bad address |
+| PATCH | `/notifications/channels/{id}` | Omitted fields unchanged; `""` removes `signing_secret` or `authorization`; `kind` is fixed. Turning off cancels queued messages |
+| DELETE | `/notifications/channels/{id}` | 204, with its delivery history |
+| POST | `/notifications/channels/{id}/test` | Sends now: `{ok, detail, code}`; a failed send is still 200 |
+| GET | `/notifications/deliveries` | `?channel_id=&status=&limit=&offset=` |
+
+Audit actions: `NOTIFICATION_CHANNEL_CREATED`, `NOTIFICATION_CHANNEL_UPDATED`,
+`NOTIFICATION_CHANNEL_DELETED`, `NOTIFICATION_CHANNEL_TESTED` (result `FAILURE` when the
+test failed).

@@ -634,6 +634,10 @@ class WorkersSettings(BaseModel):
     #: How often token budgets and cost budgets are compared with usage (E12). Usage is
     #: summed from usage_records, so this is a few aggregate queries per run.
     budget_check_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    #: How often alert notifications are queued and sent (E13). Each run is a few
+    #: small queries when nothing changed, so a short interval costs little and gets
+    #: a page out quickly.
+    notification_interval_seconds: int = Field(default=30, ge=10, le=600)
 
 
 class OpsSettings(BaseModel):
@@ -664,6 +668,38 @@ class OpsSettings(BaseModel):
     #: E12: keep this many complete backups and delete older ones after each scheduled
     #: backup. 0 keeps every backup. The newest complete backup is never deleted.
     backup_keep: int = Field(default=0, ge=0, le=1000)
+
+
+class NotificationsSettings(BaseModel):
+    """Alert notifications outside the console (E13).
+
+    Channels (webhooks and email recipients) live in the database and are managed in the
+    console. The mail server is configured here, because its password is a secret and
+    belongs in ``.env``, not in a table an administrator can read back. Without
+    ``smtp_host`` email channels can be created but every delivery fails with a clear
+    "no mail server configured" error.
+    """
+
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    #: ``starttls`` upgrades a plain connection (port 587), ``ssl`` is implicit TLS
+    #: (port 465), ``none`` is for a relay on a trusted network only.
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from: str = "ai-platform@localhost"
+    smtp_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    #: Verify the mail server's certificate. Turn off only for an internal relay with a
+    #: self-signed certificate.
+    smtp_verify_tls: bool = True
+    #: The console's address as people reach it, e.g. ``https://ai.example.internal``.
+    #: Notifications link to the Alerts page when it is set.
+    console_url: str | None = None
+    #: Attempts per delivery before it is marked failed. Retries back off from 30 s to
+    #: about two hours.
+    max_attempts: int = Field(default=5, ge=1, le=10)
+    #: Deliveries sent per run, across all channels, so a burst cannot stall the worker.
+    batch_size: int = Field(default=50, ge=1, le=500)
 
 
 class ChargebackSettings(BaseModel):
@@ -827,6 +863,7 @@ class Settings(BaseSettings):
     workers: WorkersSettings = Field(default_factory=WorkersSettings)
     ops: OpsSettings = Field(default_factory=OpsSettings)
     chargeback: ChargebackSettings = Field(default_factory=ChargebackSettings)
+    notifications: NotificationsSettings = Field(default_factory=NotificationsSettings)
 
     @classmethod
     def settings_customise_sources(
