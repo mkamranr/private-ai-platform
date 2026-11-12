@@ -58,6 +58,10 @@ from app.repositories.infrastructure import (
     NodeRepository,
 )
 from app.repositories.models_registry import ApiKeyRepository
+from app.repositories.notifications import (
+    NotificationChannelRepository,
+    NotificationDeliveryRepository,
+)
 from app.repositories.operations import (
     AlertRepository,
     GatewayQuotaRepository,
@@ -72,6 +76,8 @@ from app.services.budgets import BudgetWatcher, CostBudgetService
 from app.services.chargeback import ChargebackService
 from app.services.inference_backends import InferenceBackendService
 from app.services.infrastructure import GpuService, NodeService
+from app.services.notification_senders import EmailSender, WebhookSender
+from app.services.notifications import ChannelSender, NotificationDispatcher
 from app.services.ops import OpsService
 from app.services.runtime_settings import RUNTIME
 
@@ -303,6 +309,37 @@ class InfrastructureWorker:
         except Exception:
             log.exception("backup_schedule_failed")
 
+    async def send_notifications(self) -> None:
+        """Queue and send alert notifications (E13). Never raises."""
+        try:
+            async with self._session_factory() as session:
+                settings = await RUNTIME.effective(session, self._settings)
+                audit = AuditService(
+                    AuditRepository(session), session_factory=self._session_factory
+                )
+                dispatcher = NotificationDispatcher(
+                    settings,
+                    NotificationChannelRepository(session),
+                    NotificationDeliveryRepository(session),
+                    ChannelSender(
+                        self._cipher, WebhookSender(), EmailSender(settings.notifications)
+                    ),
+                    AlertService(AlertRepository(session), audit),
+                )
+                result = await dispatcher.run()
+                await session.commit()
+            if result.queued or result.sent or result.failed or result.retrying:
+                log.info(
+                    "notifications_dispatched",
+                    queued=result.queued,
+                    sent=result.sent,
+                    retrying=result.retrying,
+                    failed=result.failed,
+                    deferred=result.deferred,
+                )
+        except Exception:
+            log.exception("notification_dispatch_failed")
+
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
         interval = self._settings.gpu.poll_interval_seconds
@@ -364,6 +401,17 @@ class InfrastructureWorker:
             coalesce=True,
             max_instances=1,
             misfire_grace_time=BACKUP_SCHEDULE_CHECK_SECONDS,
+        )
+
+        notify_interval = self._settings.workers.notification_interval_seconds
+        self._scheduler.add_job(
+            self.send_notifications,
+            IntervalTrigger(seconds=notify_interval),
+            id="notification_dispatch",
+            name="Queue and send alert notifications",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=notify_interval,
         )
 
         self._scheduler.start()

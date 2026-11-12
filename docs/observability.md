@@ -110,6 +110,10 @@ There is **no Alertmanager**. An air-gapped site has no SMTP relay, no PagerDuty
 Slack; alerts surface in Grafana's alert list. A site with an internal notification
 channel can add one and point these rules at it.
 
+The platform's own **in-app alerts** (backends, deployments, budgets, backups) can be sent
+to internal webhooks and email without Prometheus: see [notifications.md](notifications.md).
+Send attempts are counted in `ai_platform_notifications_total{kind, outcome}`.
+
 ## The Docker socket
 
 Alloy reads it, read-only. That is the platform's one exception to "only the node agent

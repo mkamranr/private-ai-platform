@@ -71,6 +71,14 @@ from app.models.models_registry import (
     ModelType,
     UsageRecord,
 )
+from app.models.notifications import (
+    ChannelKind,
+    DeliveryEvent,
+    DeliveryStatus,
+    NotificationChannel,
+    NotificationDelivery,
+    PayloadFormat,
+)
 from app.models.operations import (
     OPEN_ALERT_STATES,
     QUOTA_WILDCARD,
@@ -132,6 +140,7 @@ __all__ = [
     "AuditResult",
     "BackendStatus",
     "BackendType",
+    "ChannelKind",
     "Container",
     "ContainerState",
     "Conversation",
@@ -139,6 +148,8 @@ __all__ = [
     "CostBudget",
     "CostBudgetScope",
     "CostRate",
+    "DeliveryEvent",
+    "DeliveryStatus",
     "DeploymentRevision",
     "DeploymentState",
     "Document",
@@ -171,8 +182,11 @@ __all__ = [
     "NodeEnrollment",
     "NodeRole",
     "NodeStatus",
+    "NotificationChannel",
+    "NotificationDelivery",
     "OpsJob",
     "OpsRunner",
+    "PayloadFormat",
     "Permission",
     "QuotaScope",
     "RagEvalCase",

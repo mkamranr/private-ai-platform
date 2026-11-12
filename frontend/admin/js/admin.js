@@ -3658,6 +3658,11 @@ async function renderAlerts() {
       await refresh({ force: true });
     });
   });
+  // Where alerts are sent (E13, js/notifications.js).
+  if (can('notification.manage')) {
+    await renderNotifySection(body).catch((err) => body.insertAdjacentHTML('beforeend',
+      `<div class="alert alert-danger small mt-4">Notification channels could not be loaded: ${esc(err.message)}</div>`));
+  }
 }
 
 function alertRow(a, manage) {

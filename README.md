@@ -91,7 +91,20 @@ make mcp-vendor    # on a connected machine: build connector images from mcp/man
 make mcp           # start them, then install each from the Connector Catalogue page
 ```
 
-### 5. Backups and upgrades from the console
+### 5. Alert notifications (optional)
+
+To send alerts to chat, a ticketing system or email, add a channel on the Alerts page
+(*Notification channels*) and press *Send test*. Email needs your mail server in `.env`:
+
+```bash
+NOTIFICATIONS__SMTP_HOST=mail.example.internal
+NOTIFICATIONS__SMTP_FROM=ai-platform@example.internal
+NOTIFICATIONS__CONSOLE_URL=https://ai.example.internal   # messages link back to the Alerts page
+```
+
+See [notifications.md](docs/notifications.md).
+
+### 6. Backups and upgrades from the console
 
 Backups, restores and upgrades need `pg_dump` and Docker. By design, the control plane
 has neither, so a small runner on the host does that work for the console:
@@ -171,6 +184,7 @@ Release-specific steps are in [upgrade-0.2.md](docs/upgrade-0.2.md).
 |---|---|
 | **Budget alerts (E12)** | Alerts at 80% and 100% of token quotas, plus monthly cost budgets per team, key or platform. They alert but never block |
 | **Scheduled backups (E12)** | Backups every N hours through the ops runner, retention that keeps the newest N, and alerts when a backup fails or is overdue |
+| **Alert notifications (E13)** | Alerts sent to chat and ticketing webhooks and to email, once when raised, escalated and resolved, with retries, signing and a delivery history |
 
 ## It also runs without much GPU, or none at all
 
@@ -268,7 +282,8 @@ all**, then migrates, seeds, signs in, upgrades and rolls back.
 | [security.md](docs/security.md) · [database.md](docs/database.md) · [backup.md](docs/backup.md) | Security model, schema, backup and restore |
 | [operations.md](docs/operations.md) · [threat-model.md](docs/architecture/threat-model.md) | Backups, offline updates and diagnostics from the console; signing, SBOM |
 | [settings.md](docs/settings.md) | Runtime settings and the dashboard |
-| [chargeback.md](docs/chargeback.md) | Cost rates, cost reports and CSV export |
+| [chargeback.md](docs/chargeback.md) | Cost rates, cost reports, budgets and CSV export |
+| [notifications.md](docs/notifications.md) | Sending alerts to webhooks and email |
 | [observability.md](docs/observability.md) · [api.md](docs/api.md) | Metrics, logs, traces; the HTTP surface |
 | [troubleshooting.md](docs/troubleshooting.md) | Failures that have actually happened |
 | [CHANGELOG.md](CHANGELOG.md) · [upgrade-0.2.md](docs/upgrade-0.2.md) · [release-checklist.md](docs/release-checklist.md) | What changed, upgrading from 0.1.0, cutting a release |

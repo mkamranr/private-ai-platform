@@ -84,6 +84,12 @@ Phase 6 deliverable; until then, treat the key as permanent for a deployment and
 it up separately from the database. Storing both in the same backup archive would
 undo the whole point.
 
+Alert notification channels (E13) keep their webhook URL, signing secret and
+authorization header in these columns too. A chat webhook's URL *is* its credential, so
+only its scheme, host and port are ever returned or audited. The mail server password
+is not in the database at all: it is `NOTIFICATIONS__SMTP_PASSWORD` in `.env`. See
+[notifications.md](notifications.md).
+
 API keys are stored as SHA-256 plus a visible prefix. The full key is shown once. A
 fast hash is correct here — the key is 256 bits of machine-generated entropy, so there
 is nothing to brute-force, and gateway auth must not pay an argon2 cost per request.

@@ -95,6 +95,13 @@ GATEWAY_QUOTA_REJECTIONS = Counter(
     registry=REGISTRY,
 )
 
+NOTIFICATIONS_SENT = Counter(
+    "ai_platform_notifications_total",
+    "Alert notification send attempts (E13), by channel kind and outcome.",
+    ("kind", "outcome"),
+    registry=REGISTRY,
+)
+
 GATEWAY_CIRCUIT_OPENS = Counter(
     "ai_platform_gateway_circuit_opens_total",
     "Times a backend circuit breaker opened after repeated upstream failures.",

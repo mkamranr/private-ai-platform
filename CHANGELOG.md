@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Alert notifications (E13)
+- **Notification channels.** Send alerts to webhooks (Mattermost, Slack, Teams, Rocket.Chat, ticketing, SOC) and to email lists on the site's own mail server. Managed on the Alerts page with the new `notification.manage` permission (ADMIN and SUPER_ADMIN).
+- **Once per change.** Each alert is announced when raised, when it escalates, and when it is resolved. Repeats are not resent. Each channel has a minimum severity and a source filter.
+- **Reliable delivery.** An outbox with retries and back-off, a delivery history, a *Send test* button, and an in-app alert when a channel keeps failing.
+- **Secrets stay secret.** Webhook URLs, signing secrets and authorization headers are stored encrypted and never shown again. Messages can be signed with HMAC-SHA256 (`X-AIP-Signature`). URLs go through the outbound URL policy, and redirects are never followed.
+- **Upgrade.** One migration (`c4e8a1f2d6b9`). Run `make seed-rbac` (the console upgrade does it) to grant `notification.manage`. Nothing is sent until a channel is added. For email, set `NOTIFICATIONS__SMTP_HOST` and the related settings in `.env`. See [docs/notifications.md](docs/notifications.md).
+
 ### Budget alerts and scheduled backups (E12)
 - **Token quota alerts.** In-app WARNING at 80% (`gateway.budget_warning_percent`) and CRITICAL at 100% of each daily and monthly quota, per subject. They clear themselves when usage resets.
 - **Cost budgets.** Monthly budgets in the chargeback currency, for the whole platform, a team or an API key, each with its own warning share. They raise alerts but never block traffic. New routes under `/api/v1/chargeback/budgets`, audited. Budgets card on the Chargeback page.

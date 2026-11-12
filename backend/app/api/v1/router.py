@@ -25,6 +25,7 @@ from app.api.v1 import (
     knowledge,
     models,
     monitoring,
+    notifications,
     ops,
     quotas,
     retrieval,
@@ -77,6 +78,8 @@ api_router.include_router(diagnostics.router)
 api_router.include_router(settings.router)
 api_router.include_router(chargeback.router)
 api_router.include_router(connectors.router)
+# E13: where alerts are sent (webhooks and email).
+api_router.include_router(notifications.router)
 
 # The OpenAI-compatible gateway is deliberately NOT here. It mounts at `/v1` in
 # app.main, because the SDK derives its paths from base_url and `GET {base}/models`

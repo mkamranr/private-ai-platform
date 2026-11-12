@@ -44,7 +44,7 @@ dashboard real signals.
 - [x] `Retry-After` header on 429/503 errors that know when to retry.
 - [x] Admin: Usage & Quotas page (totals, quotas with usage bars, by model/key/end user, open circuits) and a fallback picker on aliases. Permissions `quota.view|manage`, seeded and audited.
 - [x] Tests: `tests/unit/test_gateway_policy.py`, `tests/api/test_gateway_policy.py`. Doc: [docs/gateway-policy.md](../gateway-policy.md).
-- [ ] Soft warnings (an alert at 80% of a budget) — not done.
+- [x] Soft warnings (an alert at 80% of a budget): done in E12.
 
 ## E3: Teams and scope (P1, a migration with high blast radius)
 
@@ -98,7 +98,7 @@ dashboard real signals.
 - [x] Version inventory, redacted effective configuration and a support bundle (health, inventory, config, alerts, ops history, optional Loki logs). Redaction in `core/redact.py`.
 - [x] Bundles: ECDSA P-256 signed manifest (`scripts/bundle_signing.py`), CycloneDX 1.5 SBOM and licence list (`scripts/sbom.py`); `install.sh`/`upgrade.sh --trust-key`; trust key outside the tree.
 - [x] Admin: Backup & Restore, Offline Updates and Diagnostics pages. Docs: [operations.md](../operations.md), [threat-model.md](../architecture/threat-model.md).
-- [ ] No scheduled backups or retention, partial restore, runner-token rate limiting or bundle upload through the console. See operations.md.
+- [ ] No partial restore, runner-token rate limiting or bundle upload through the console. See operations.md. (Scheduled backups and retention arrived in E12.)
 
 ## E8: Dashboard and settings (closes plan §5.1 and the §6 Settings page)
 
@@ -145,7 +145,16 @@ dashboard real signals.
 - [x] Scheduled backups: `ops.backup_interval_hours` queues `backup.create` jobs as `scheduler` (audited). At most one attempt per interval, nothing while the runner is offline. Alerts for overdue and failed backups.
 - [x] Retention: `ops.backup_keep` queues `backup.prune` jobs. The runner checks the names again, keeps the newest complete backup and never deletes a folder without a manifest. Schedule card on the Backup & Restore page and `GET /ops/backups/schedule`.
 - [x] Migration `9a6f2c4e1b57` (table and `backup.prune` job kind) upgrades and downgrades cleanly.
-- [ ] Alerts are in-app only (no email or chat). Retention is by count, not age. No off-host copy of backups.
+- [ ] Retention is by count, not age. No off-host copy of backups. (Alerts reach email and chat since E13.)
+
+## E13: Alert notifications
+
+- [x] Channels (`notification_channels`): webhooks (chat text or a JSON document, optional HMAC-SHA256 signature and Authorization header) and email lists through the site's SMTP server (`NOTIFICATIONS__SMTP_*`). URL and secrets Fernet-encrypted; only scheme, host and port shown or audited. URLs checked by the outbound URL policy at save and send; redirects never followed.
+- [x] Per channel: minimum severity, source filter, resolution messages. Raised, escalated and resolved are each sent once (unique key per channel, alert and severity); repeats, downgrades and alerts older than the channel are not.
+- [x] Outbox (`notification_deliveries`) with a dispatcher job (`notification_dispatch`, 30 s): retries with back-off up to `max_attempts`, a failing channel deferred for the rest of a run, a `notification_channel_failing` alert after three failures, 30-day history.
+- [x] API under `/notifications` with permission `notification.manage` (ADMIN, SUPER_ADMIN); test send; audited create, update, delete and test. Alerts page: channels, recent notifications, add/edit form. Metric `ai_platform_notifications_total`.
+- [x] Migration `c4e8a1f2d6b9` upgrades and downgrades cleanly. Doc: [docs/notifications.md](../notifications.md).
+- [ ] No digests or quiet hours, per-team routing, PagerDuty native API, HTML email or SMS.
 
 ## Phase acceptance (applies to each)
 
