@@ -73,6 +73,14 @@ def _http_base_url(value: Any) -> None:
         raise ValueError("must not carry credentials, a query or a fragment")
 
 
+def _one_of(*choices: str) -> Callable[[Any], None]:
+    def check(value: Any) -> None:
+        if value not in choices:
+            raise ValueError("must be one of: " + ", ".join(choices))
+
+    return check
+
+
 def _bounded(low: int, high: int) -> Callable[[Any], None]:
     def check(value: Any) -> None:
         if not low <= value <= high:
@@ -216,6 +224,17 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Three-letter code (ISO 4217) that cost rates and chargeback reports are shown "
         "in. A label only: changing it converts nothing. Read by every cost report.",
         "Next cost report",
+    ),
+    RuntimeSetting(
+        "auth.mfa_required",
+        "security",
+        "Two-factor authentication required for",
+        "off: anyone may turn it on for themselves. admins: superusers and the ADMIN "
+        "and SUPER_ADMIN roles must use it. all: every local account must. Someone "
+        "required but not set up does it at their next sign-in. Directory and single "
+        "sign-on accounts are left to their provider. Read at every sign-in.",
+        "Next sign-in",
+        _one_of("off", "admins", "all"),
     ),
 )
 BY_KEY = {s.key: s for s in RUNTIME_SETTINGS}

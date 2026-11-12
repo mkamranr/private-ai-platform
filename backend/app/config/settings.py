@@ -231,6 +231,17 @@ class AuthSettings(BaseModel):
     #: and signs the account out everywhere.
     refresh_reuse_grace_seconds: int = Field(default=10, ge=0, le=300)
 
+    # -- E15: two-factor authentication ------------------------------------------
+    #: Who must use an authenticator app: ``off`` (anyone may opt in), ``admins``
+    #: (superusers and the ADMIN and SUPER_ADMIN roles) or ``all`` local accounts.
+    #: Someone required but not enrolled sets it up at their next sign-in. Accounts
+    #: from a directory or single sign-on are left to that provider's own MFA.
+    mfa_required: Literal["off", "admins", "all"] = "off"
+    #: The name authenticator apps show next to the code.
+    mfa_issuer: str = Field(default="Private AI Platform", min_length=1, max_length=64)
+    #: How long the step between password and code may take.
+    mfa_challenge_ttl_seconds: int = Field(default=300, ge=60, le=1800)
+
     bootstrap_admin_username: str = "admin"
     bootstrap_admin_email: str = "admin@ai-platform.local"
     # Blank/absent means "do not create a bootstrap admin".

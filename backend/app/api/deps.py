@@ -140,6 +140,7 @@ from app.services.knowledge import KnowledgeService
 from app.services.login_guard import LoginGuard, RunnerGuard
 from app.services.media_provider import ResolvingOcrEngine
 from app.services.memory import MemoryService
+from app.services.mfa import MfaService
 from app.services.model_registry import ModelRegistryService
 from app.services.monitoring import MonitoringService, TraceService
 from app.services.node_enrollment import NodeEnrollmentService
@@ -315,6 +316,15 @@ def get_runner_guard(request: Request, settings: SettingsDep) -> RunnerGuard:
 RunnerGuardDep = Annotated[RunnerGuard, Depends(get_runner_guard)]
 
 
+def get_mfa_service(
+    session: SessionDep, cipher: CipherDep, audit: AuditDep, settings: SettingsDep
+) -> MfaService:
+    return MfaService(session, cipher, audit, settings.auth)
+
+
+MfaServiceDep = Annotated[MfaService, Depends(get_mfa_service)]
+
+
 def get_auth_service(
     session: SessionDep,
     hasher: HasherDep,
@@ -323,6 +333,8 @@ def get_auth_service(
     providers: AuthProvidersDep,
     federation: FederationServiceDep,
     guard: LoginGuardDep,
+    mfa: MfaServiceDep,
+    effective: EffectiveSettingsDep,
 ) -> AuthService:
     return AuthService(
         UserRepository(session),
@@ -337,6 +349,10 @@ def get_auth_service(
         federation=federation,
         revocations=RevokedTokenRepository(session),
         guard=guard,
+        mfa=mfa,
+        # A runtime setting (E15), so turning the policy on needs no restart.
+        mfa_policy=effective.auth.mfa_required,
+        mfa_challenge_ttl=effective.auth.mfa_challenge_ttl_seconds,
     )
 
 

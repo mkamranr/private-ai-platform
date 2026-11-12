@@ -38,6 +38,10 @@ PUBLIC: set[tuple[str, str]] = {
     ("GET", "/api/v1/auth/providers"),
     ("GET", "/api/v1/auth/oidc/authorize"),
     ("GET", "/api/v1/auth/oidc/callback"),
+    # E15: the second sign-in step. The MFA step token in the body is the credential.
+    ("POST", "/api/v1/auth/mfa/verify"),
+    ("POST", "/api/v1/auth/mfa/enrol/start"),
+    ("POST", "/api/v1/auth/mfa/enrol/finish"),
     # E6: the workflow webhook. Its token is the credential; a bad one is 401 all the same.
     ("POST", "/api/v1/workflow-hooks/{workflow_id}"),
     # The host ops runner authenticates with X-Ops-Runner-Token, not a user (E7).
@@ -60,6 +64,12 @@ ANY_AUTHENTICATED: set[tuple[str, str]] = {
     ("GET", "/api/v1/whoami"),
     ("POST", "/api/v1/auth/logout"),
     ("POST", "/api/v1/auth/logout-all"),  # signs the caller out: their own sessions only
+    # E15: anyone manages their own authenticator (the password or a code is re-checked).
+    ("GET", "/api/v1/auth/mfa"),
+    ("POST", "/api/v1/auth/mfa/setup"),
+    ("POST", "/api/v1/auth/mfa/enable"),
+    ("POST", "/api/v1/auth/mfa/disable"),
+    ("POST", "/api/v1/auth/mfa/recovery-codes"),
     ("POST", "/api/v1/users/me/password"),
     ("GET", "/api/v1/teams/mine"),
     # Checks the permission for the *kind* of resource being moved, which is only known

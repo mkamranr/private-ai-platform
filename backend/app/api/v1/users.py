@@ -15,6 +15,7 @@ from fastapi import APIRouter, Query, status
 from app.api.deps import (
     AlertServiceDep,
     CurrentUserDep,
+    MfaServiceDep,
     UserServiceDep,
     require_permission,
 )
@@ -155,6 +156,23 @@ async def revoke_user_sessions(
 ) -> UserRead:
     """Every token issued to the user stops working. Audited (E14)."""
     return UserRead.model_validate(await service.revoke_sessions(user_id, actor=actor))
+
+
+@router.post(
+    "/users/{user_id}/mfa/reset",
+    response_model=UserRead,
+    summary="Remove two-factor authentication from a user",
+)
+async def reset_user_mfa(
+    user_id: uuid.UUID,
+    service: UserServiceDep,
+    mfa: MfaServiceDep,
+    actor: Annotated[User, require_permission(Perm.USER_MANAGE)],
+) -> UserRead:
+    """For a lost phone. Signs the user out everywhere; they set MFA up again. Audited (E15)."""
+    user = await service.get_user(user_id)
+    await mfa.reset(user, actor=actor)
+    return UserRead.model_validate(user)
 
 
 @router.post(

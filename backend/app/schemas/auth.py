@@ -23,6 +23,74 @@ class TokenResponse(BaseModel):
     expires_in: int = Field(description="Access token lifetime in seconds")
 
 
+class MfaChallengeResponse(BaseModel):
+    """``/auth/login`` when the password was right and a second step is needed (E15).
+
+    ``enrolment_required``: the platform's policy obliges this account to use an
+    authenticator app and it has none yet. Set one up with ``/auth/mfa/enrol/start`` and
+    ``/auth/mfa/enrol/finish``. Otherwise send a code to ``/auth/mfa/verify``.
+    """
+
+    mfa_required: bool = True
+    mfa_token: str
+    enrolment_required: bool = False
+    expires_in: int = Field(description="Seconds left to complete this step")
+
+
+class MfaVerifyRequest(BaseModel):
+    mfa_token: str = Field(min_length=1, max_length=4096)
+    #: Six digits from the authenticator app, or one unused recovery code.
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaTokenRequest(BaseModel):
+    mfa_token: str = Field(min_length=1, max_length=4096)
+
+
+class MfaPasswordRequest(BaseModel):
+    """Setting up MFA on a signed-in session asks for the password again."""
+
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class MfaCodeRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaDisableRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaSetupResponse(BaseModel):
+    """What the authenticator app needs. The secret is shown for typing in by hand."""
+
+    secret: str
+    otpauth_uri: str
+    qr_svg: str
+
+
+class RecoveryCodesResponse(BaseModel):
+    """Single-use codes for when the phone is lost. Shown once and never again."""
+
+    recovery_codes: list[str]
+
+
+class MfaEnabledResponse(TokenResponse):
+    """MFA is on: new tokens (other sessions were signed out) and the recovery codes."""
+
+    recovery_codes: list[str]
+
+
+class MfaStatusResponse(BaseModel):
+    available: bool
+    enabled: bool
+    enabled_at: dt.datetime | None = None
+    recovery_codes_left: int = 0
+    #: The platform's policy requires it for this account (so it cannot be turned off).
+    required: bool = False
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
@@ -73,6 +141,8 @@ class UserRead(ORMModel):
     #: E14: wrong passwords since the last sign-in, and the lock they caused, if any.
     failed_login_count: int = 0
     locked_until: dt.datetime | None = None
+    #: E15: whether sign-in asks this user for an authenticator code.
+    mfa_enabled: bool = False
     # Never a password hash. Serialising one would leak it into every log,
     # response cache and browser history that touches this endpoint.
 

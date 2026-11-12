@@ -29,7 +29,7 @@ async function api(path, options = {}) {
     // A 401 from the login endpoint is a wrong password, not an expired session — there
     // was no session. Reporting it as one sends someone to sign in again with the same
     // credentials that just failed, and tells them nothing.
-    const signingIn = path.startsWith('/auth/login');
+    const signingIn = path.startsWith('/auth/login') || path.startsWith('/auth/mfa/verify');
     if (!signingIn) {
       // Expired or revoked. Bounce to login rather than leaving the UI in a state
       // where every request silently fails.
@@ -278,11 +278,35 @@ async function showApp() {
   await render();
 }
 
+let mfaToken = null;  // E15: set between the password and the code
+
+function resetMfa() {
+  mfaToken = null;
+  document.getElementById('mfa-row').classList.add('d-none');
+  document.getElementById('mfa-code').value = '';
+  document.getElementById('password').disabled = false;
+  document.getElementById('username').disabled = false;
+  document.getElementById('login-submit').textContent = 'Sign in';
+}
+
 document.getElementById('login-form').onsubmit = async (event) => {
   event.preventDefault();
   const error = document.getElementById('login-error');
   error.classList.add('d-none');
   try {
+    if (mfaToken) {
+      const pair = await api('/auth/mfa/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          mfa_token: mfaToken,
+          code: document.getElementById('mfa-code').value.trim(),
+        }),
+      });
+      resetMfa();
+      token.set(pair.access_token);
+      await showApp();
+      return;
+    }
     const result = await api('/auth/login', {
       method: 'POST',
       body: JSON.stringify({
@@ -290,9 +314,22 @@ document.getElementById('login-form').onsubmit = async (event) => {
         password: document.getElementById('password').value,
       }),
     });
+    if (result.mfa_required) {
+      document.getElementById('password').value = '';
+      if (result.enrolment_required) throw new Error('Your account must set up two-factor authentication before it can sign in here. Sign in to the admin console once (at the main address of this site) to set it up, then come back.');
+      mfaToken = result.mfa_token;
+      document.getElementById('mfa-row').classList.remove('d-none');
+      document.getElementById('password').disabled = true;
+      document.getElementById('username').disabled = true;
+      document.getElementById('login-submit').textContent = 'Verify';
+      document.getElementById('mfa-code').focus();
+      return;
+    }
     token.set(result.access_token);
     await showApp();
   } catch (err) {
+    // A spent or expired step: start again from the password.
+    if (/sign in again|expired/i.test(err.message)) resetMfa();
     error.textContent = err.message;
     error.classList.remove('d-none');
   }

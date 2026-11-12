@@ -60,6 +60,10 @@ cryptography==50.0.0
 # where a maintained pure-Python alternative existed. See docs/security.md.
 ldap3==2.9.1
 
+# QR codes for two-factor enrolment (E15), rendered as SVG on the server so no browser
+# library and no network is involved. Pure Python, no dependencies.
+segno==1.6.6
+
 # --- Scheduling (M22; workers land in Phase 1) ---
 APScheduler==3.11.3
 

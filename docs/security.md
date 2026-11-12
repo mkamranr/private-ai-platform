@@ -469,6 +469,64 @@ model item 12's "no rate limit on failed runner-token attempts".
 Alerts from sign-in use source `auth`, so a notification channel (E13) can be set to
 send only those to the SOC.
 
+## Two-factor authentication (E15)
+
+Local accounts can require a six-digit code from an authenticator app (TOTP, RFC 6238:
+HMAC-SHA1, 6 digits, 30-second steps) as well as the password. Any standard app works:
+Microsoft Authenticator, Google Authenticator, FreeOTP, or a password manager. Nothing
+needs the internet. The QR code is drawn on the server as an SVG (`segno`, pure Python),
+and the phone app works offline.
+
+**Signing in.** For an account with MFA on, a correct password returns
+`{"mfa_required": true, "mfa_token": …}` instead of tokens. The `mfa_token` is a JWT of
+its own type (`typ: mfa`), valid for `AUTH__MFA_CHALLENGE_TTL_SECONDS` (default 300). It is
+refused wherever an access or refresh token is expected, and the reverse is also true.
+`POST /auth/mfa/verify` exchanges it with a code for the usual token pair. The step token
+works for one completed sign-in.
+
+* **Wrong codes count toward the lockout** (E14) and the per-address throttle, like wrong
+  passwords. A correct password does *not* reset the failure count while a code is still
+  owed. Otherwise "password, nine guesses, password again" would give unlimited guesses.
+* **A code works once.** A code is accepted for its 30-second step and one step either
+  side, to allow for clock drift on an air-gapped host. The last accepted step is stored,
+  and that step and earlier ones are refused afterwards. The check is a conditional
+  `UPDATE`, so two requests racing with the same code cannot both succeed.
+* **Recovery codes.** Turning MFA on issues ten single-use codes (`abcde-fghjk`) and shows
+  them once. They are stored as SHA-256 hashes. Each one is accepted in place of a code,
+  is audited (`USER_MFA_RECOVERY_CODE_USED`), and the console warns when three or fewer
+  remain. The user can replace them all with a current code.
+
+**Turning it on.** On the account dialog (click your name in the top bar):
+
+1. Confirm your password.
+2. Scan the QR code, or type the key.
+3. Enter the first code.
+
+The secret is stored Fernet-encrypted (`SECURITY__ENCRYPTION_KEY`). Enabling MFA signs out
+every other session, because they never gave a code. Turning it off needs both the
+password and a current code.
+
+**Policy.** The runtime setting `auth.mfa_required` (Settings page, no restart) is one of:
+
+- `off`: anyone may opt in;
+- `admins`: superusers and holders of the ADMIN or SUPER_ADMIN role must use it;
+- `all`: every local account must use it.
+
+Someone required but not yet enrolled gets `enrolment_required: true` at sign-in. The
+console then walks them through set-up before they can do anything else
+(`/auth/mfa/enrol/start`, `/auth/mfa/enrol/finish`). The developer portal and the voice
+assistant send them to the console for that one-time step. While the policy requires MFA,
+it cannot be turned off.
+
+**Lost phone.** An administrator with `user.manage` removes MFA with *Reset 2FA* on the
+Users page (`POST /users/{id}/mfa/reset`). This is audited (`USER_MFA_RESET`) and signs the
+user out everywhere. Confirm the request comes from the account holder: a reset is exactly
+what someone impersonating them would ask for.
+
+**Directory and single sign-on accounts** are not asked for a platform code. Their
+provider owns their second factor. Requiring a second, unrelated enrolment would add
+friction without adding a factor the provider does not already enforce.
+
 ## What is not built yet
 
 * **LDAP is unverified against a real directory.** The escaping, the empty-password guard
@@ -478,6 +536,8 @@ send only those to the SOC.
   The per-address throttle still applies.
 * **No CAPTCHA or progressive delay.** Lockout and the per-address throttle are the only
   brute-force defences.
+* **TOTP only.** No WebAuthn/passkeys, push approval or SMS. The platform asks for no
+  code from directory or single sign-on accounts.
 * **The per-address throttle fails open** while Valkey is down.
 
 
