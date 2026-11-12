@@ -46,6 +46,7 @@ from app.repositories.agents import (
     ToolRepository,
 )
 from app.repositories.audit import AuditRepository
+from app.repositories.auth_tokens import RevokedTokenRepository
 from app.repositories.chargeback import (
     ChargebackRepository,
     CostBudgetRepository,
@@ -136,6 +137,7 @@ from app.services.identity import resolve_forwarded_identity
 from app.services.inference_backends import InferenceBackendService
 from app.services.infrastructure import GpuService, NodeService
 from app.services.knowledge import KnowledgeService
+from app.services.login_guard import LoginGuard, RunnerGuard
 from app.services.media_provider import ResolvingOcrEngine
 from app.services.memory import MemoryService
 from app.services.model_registry import ModelRegistryService
@@ -293,6 +295,26 @@ def get_federation_service(
 FederationServiceDep = Annotated[FederationService, Depends(get_federation_service)]
 
 
+def _app_redis(request: Request) -> Any:
+    """The Valkey client, or None where the app has none (some unit wiring)."""
+    holder = getattr(request.app.state, "redis", None)
+    return holder.client if holder is not None else None
+
+
+def get_login_guard(request: Request, settings: SettingsDep) -> LoginGuard:
+    return LoginGuard(settings.auth, _app_redis(request), request.app.state.database.sessionmaker)
+
+
+LoginGuardDep = Annotated[LoginGuard, Depends(get_login_guard)]
+
+
+def get_runner_guard(request: Request, settings: SettingsDep) -> RunnerGuard:
+    return RunnerGuard(settings.ops, _app_redis(request), request.app.state.database.sessionmaker)
+
+
+RunnerGuardDep = Annotated[RunnerGuard, Depends(get_runner_guard)]
+
+
 def get_auth_service(
     session: SessionDep,
     hasher: HasherDep,
@@ -300,6 +322,7 @@ def get_auth_service(
     audit: AuditDep,
     providers: AuthProvidersDep,
     federation: FederationServiceDep,
+    guard: LoginGuardDep,
 ) -> AuthService:
     return AuthService(
         UserRepository(session),
@@ -312,6 +335,8 @@ def get_auth_service(
             p for p in providers if isinstance(p, PasswordAuthProvider) and p.name != "local"
         ],
         federation=federation,
+        revocations=RevokedTokenRepository(session),
+        guard=guard,
     )
 
 

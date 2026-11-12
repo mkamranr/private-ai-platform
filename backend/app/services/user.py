@@ -118,6 +118,9 @@ class UserService:
             # Cheap guard against an admin locking themselves out of the platform.
             raise ValidationError("You cannot disable your own account.")
         user.is_active = active
+        if not active:
+            # Disabled accounts are refused anyway; this also ends sessions for good.
+            user.session_version += 1
         await self._audit.record(
             AuditAction.USER_UPDATED,
             user_id=actor.id,
@@ -148,6 +151,9 @@ class UserService:
         # Reset so an administrator's help does not leave the account near a lockout
         # threshold from the failures that prompted the call.
         user.failed_login_count = 0
+        user.locked_until = None
+        # Whoever knew the old password is signed out (E14).
+        user.session_version += 1
 
         await self._audit.record(
             AuditAction.USER_UPDATED,
@@ -193,6 +199,9 @@ class UserService:
             )
         self._validate_password(new_password)
         user.hashed_password = self._hasher.hash(new_password)
+        # Every session signs out, including this one: a password change after a
+        # suspected compromise must also end the intruder's session (E14).
+        user.session_version += 1
 
         await self._audit.record(
             AuditAction.USER_UPDATED,
@@ -201,6 +210,39 @@ class UserService:
             resource_type="user",
             resource_id=str(user.id),
             metadata={"password_changed_by_self": True},
+        )
+        return user
+
+    async def unlock(self, user_id: uuid.UUID, *, actor: User) -> User:
+        """Lift a lockout before it expires and reset the failure count (E14)."""
+        user = await self.get_user(user_id)
+        was_locked = user.locked_until
+        user.locked_until = None
+        user.failed_login_count = 0
+        await self._audit.record(
+            AuditAction.USER_UNLOCKED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="user",
+            resource_id=str(user.id),
+            metadata={
+                "subject": user.username,
+                "was_locked_until": was_locked.isoformat() if was_locked else None,
+            },
+        )
+        return user
+
+    async def revoke_sessions(self, user_id: uuid.UUID, *, actor: User) -> User:
+        """Sign the user out everywhere: every token issued so far stops working (E14)."""
+        user = await self.get_user(user_id)
+        user.session_version += 1
+        await self._audit.record(
+            AuditAction.USER_SESSIONS_REVOKED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="user",
+            resource_id=str(user.id),
+            metadata={"subject": user.username, "by": "administrator"},
         )
         return user
 

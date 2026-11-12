@@ -185,6 +185,7 @@ Release-specific steps are in [upgrade-0.2.md](docs/upgrade-0.2.md).
 | **Budget alerts (E12)** | Alerts at 80% and 100% of token quotas, plus monthly cost budgets per team, key or platform. They alert but never block |
 | **Scheduled backups (E12)** | Backups every N hours through the ops runner, retention that keeps the newest N, and alerts when a backup fails or is overdue |
 | **Alert notifications (E13)** | Alerts sent to chat and ticketing webhooks and to email, once when raised, escalated and resolved, with retries, signing and a delivery history |
+| **Auth hardening (E14)** | Account lockout, a per-address sign-in throttle, real sign-out and *sign out everywhere*, refresh token rotation with theft detection, and a throttle on the ops runner token |
 
 ## It also runs without much GPU, or none at all
 

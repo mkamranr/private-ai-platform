@@ -21,7 +21,8 @@ import pytest
 import pytest_asyncio
 from fastapi import Request
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event, select
+from sqlalchemy import String, event, select
+from sqlalchemy import cast as sa_cast
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.deps import get_session
@@ -137,6 +138,10 @@ async def app(settings: Settings, database: Database, session: AsyncSession):
     # paths rather than a stub. The gateway's rate limiter needs Redis specifically.
     redis_client = RedisClient(settings)
     application.state.redis = redis_client
+    # E14 counts failed sign-ins and runner tokens per client address in Valkey, and
+    # every test client has the same address. Start each test from zero so the
+    # suite's many deliberate wrong passwords never add up to a throttle.
+    await _clear_failure_counters(redis_client)
     # Qdrant and MinIO, as the lifespan would build them. Knowledge and memory (Phase 5)
     # resolve them from app.state, so they must be present even for tests that never touch
     # a vector — the dependency is constructed before the route body runs.
@@ -160,6 +165,15 @@ async def app(settings: Settings, database: Database, session: AsyncSession):
     application.dependency_overrides[get_session] = _override_session
     yield application
     application.dependency_overrides.clear()
+
+
+async def _clear_failure_counters(redis_client: RedisClient) -> None:
+    try:
+        for pattern in ("auth:login-fail:*", "ops:runner-fail:*"):
+            async for key in redis_client.client.scan_iter(match=pattern):
+                await redis_client.client.delete(key)
+    except Exception:  # noqa: S110 — Valkey down: the throttle fails open anyway
+        pass
 
 
 @pytest.fixture
@@ -316,6 +330,7 @@ async def _sweep_committed_fixtures(settings: Settings) -> AsyncIterator[None]:
         ModelDeployment,
         UsageRecord,
     )
+    from app.models.operations import Alert
 
     committed = f"{COMMITTED_FIXTURE_PREFIX}%"
 
@@ -357,6 +372,16 @@ async def _sweep_committed_fixtures(settings: Settings) -> AsyncIterator[None]:
                 )
                 await session.execute(Model.__table__.delete().where(Model.name.like(committed)))
                 await session.execute(Node.__table__.delete().where(Node.name.like(committed)))
+                # E14 alerts about committed fixture users and the test client address.
+                await session.execute(
+                    Alert.__table__.delete().where(
+                        Alert.source.in_(("auth", "ops_runner")),
+                        Alert.resource_id.in_(
+                            select(sa_cast(User.id, String)).where(User.username.like(committed))
+                        )
+                        | Alert.fingerprint.like("%:127.0.0.1"),
+                    )
+                )
                 await session.execute(User.__table__.delete().where(User.username.like(committed)))
                 await session.commit()
         finally:

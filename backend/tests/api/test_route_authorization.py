@@ -59,6 +59,7 @@ ANY_AUTHENTICATED: set[tuple[str, str]] = {
     ("GET", "/api/v1/auth/me"),
     ("GET", "/api/v1/whoami"),
     ("POST", "/api/v1/auth/logout"),
+    ("POST", "/api/v1/auth/logout-all"),  # signs the caller out: their own sessions only
     ("POST", "/api/v1/users/me/password"),
     ("GET", "/api/v1/teams/mine"),
     # Checks the permission for the *kind* of resource being moved, which is only known

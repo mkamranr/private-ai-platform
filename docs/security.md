@@ -413,14 +413,72 @@ ignored **scoped to that one module**, so any other deprecation still fails the 
 Pinning pyasn1 back to 0.4.x would have silenced it, at the cost of shipping a 2019 ASN.1
 parser — the worse trade.
 
+## Sign-in hardening (E14)
+
+**Account lockout.** `AUTH__LOCKOUT_THRESHOLD` (default 10) wrong passwords in a row lock a
+local account for `AUTH__LOCKOUT_MINUTES` (default 15). `0` turns lockout off. While an
+account is locked:
+
+- sign-in is refused with the same message as a wrong password;
+- the password is not checked, so the lock cannot tell a guesser that a guess was right;
+- a hash is still computed, so the timing gives nothing away.
+
+A lock is audited (`USER_LOCKED`) and raises a WARNING alert. An administrator can lift it
+early on the Users page (`POST /users/{id}/unlock`, audited as `USER_UNLOCKED`). Setting a
+new password lifts it too, and a correct sign-in after the lock expires clears it.
+
+The counter is updated with one atomic `UPDATE` in its own transaction. The failed request
+rolls back, so counting inside it would count nothing. Before E14 that was exactly what
+happened: `failed_login_count` existed, and rolled back with every failure.
+
+**Per-address throttle.** `AUTH__LOGIN_IP_MAX_FAILURES` (default 30) failed sign-ins from
+one client address within `AUTH__LOGIN_IP_WINDOW_SECONDS` (default 900) refuse that
+address with `429` until the window ends. This catches password spraying (one guess
+against many accounts), which a per-account lock never sees. It also covers directory
+accounts, which the platform cannot lock. When the limit is reached, the platform writes
+an audit record (`LOGIN_THROTTLED`) and raises a WARNING alert. The counter lives in
+Valkey and **fails open**: a cache outage must not lock everyone out of the console. The
+per-account lock is in Postgres and keeps working. Behind a reverse proxy, set
+`SECURITY__TRUSTED_PROXY_CIDRS`, otherwise every client looks like the proxy.
+
+**Signing out.** Every token carries a `jti` and a session version, `sv`.
+
+- `POST /auth/logout` revokes this access token, and the refresh token too if the body
+  carries it. They are refused from then on (`revoked_tokens`).
+- `POST /auth/logout-all`, *Sign out everywhere* on the Users page
+  (`POST /users/{id}/sessions/revoke`), a password change, a password reset and disabling
+  an account all raise `users.session_version`. Every token issued before then is refused.
+- Tokens issued before E14 have no `sv` and count as version 0, so an upgrade signs nobody
+  out.
+
+**Refresh rotation and theft detection.** Each refresh token works once. Exchanging it
+records its `jti`. If it is presented again within `AUTH__REFRESH_REUSE_GRACE_SECONDS`
+(default 10), it is refused quietly; that is two browser tabs refreshing at once. If it is
+presented later, someone copied it. The account is then signed out everywhere, the event
+is audited (`USER_TOKEN_REUSE_DETECTED`), and a CRITICAL alert is raised.
+
+Revoked `jti`s are kept only until the token would have expired anyway. The worker prunes
+them hourly.
+
+**Ops runner token.** `OPS__RUNNER_MAX_FAILURES` (default 10) wrong runner tokens from one
+address within `OPS__RUNNER_FAILURE_WINDOW_SECONDS` (default 600) refuse that address with
+`429` for the rest of the window. Every wrong token is audited (`OPS_RUNNER_AUTH_FAILED`).
+Reaching the limit raises a WARNING alert with source `ops_runner`. This closes threat
+model item 12's "no rate limit on failed runner-token attempts".
+
+Alerts from sign-in use source `auth`, so a notification channel (E13) can be set to
+send only those to the SOC.
+
 ## What is not built yet
 
 * **LDAP is unverified against a real directory.** The escaping, the empty-password guard
   and the bind mode are tested; the bind itself has never met an Active Directory. Same
   status as the LDAP MCP server.
-* **No token revocation store.** `logout` is an audit event; a stolen access token stays
-  valid until it expires. The `jti` claim is issued and unused.
-* **No account lockout.** `failed_login_count` is maintained but nothing acts on it.
+* **No lockout for directory accounts.** Their password policy belongs to the directory.
+  The per-address throttle still applies.
+* **No CAPTCHA or progressive delay.** Lockout and the per-address throttle are the only
+  brute-force defences.
+* **The per-address throttle fails open** while Valkey is down.
 
 
 ---

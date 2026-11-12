@@ -6,6 +6,15 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Auth hardening (E14)
+- **Account lockout.** 10 wrong passwords in a row lock a local account for 15 minutes (`AUTH__LOCKOUT_THRESHOLD`, `AUTH__LOCKOUT_MINUTES`). A locked account gets the same message as a wrong password, and its password is not checked. The lock is audited, raises an alert, and can be lifted early on the Users page.
+- **Per-address throttle.** 30 failed sign-ins from one address in 15 minutes refuse it with `429` (`AUTH__LOGIN_IP_*`). This catches password spraying, and covers directory accounts too. It is audited and raises an alert. It fails open while Valkey is down.
+- **Real sign-out.** `POST /auth/logout` revokes the session's tokens. *Sign out everywhere* is available as `POST /auth/logout-all` and as a Users page action. Password changes, password resets and disabling an account sign the user out everywhere.
+- **Refresh rotation.** Each refresh token works once. One reused after it was exchanged signs the account out everywhere and raises a CRITICAL alert.
+- **Ops runner.** Wrong runner tokens are audited and throttled per address (`OPS__RUNNER_MAX_FAILURES`, `OPS__RUNNER_FAILURE_WINDOW_SECONDS`), which closes threat model item 12's gap.
+- **Failed sign-ins are finally counted.** `failed_login_count` used to roll back with each failed request.
+- **Upgrade.** One migration (`d5f9b2a3e7c1`). Existing tokens keep working. Alert sources `auth` and `ops_runner` can be picked in notification channels. See [docs/security.md](docs/security.md#sign-in-hardening-e14).
+
 ### Alert notifications (E13)
 - **Notification channels.** Send alerts to webhooks (Mattermost, Slack, Teams, Rocket.Chat, ticketing, SOC) and to email lists on the site's own mail server. Managed on the Alerts page with the new `notification.manage` permission (ADMIN and SUPER_ADMIN).
 - **Once per change.** Each alert is announced when raised, when it escalates, and when it is resolved. Repeats are not resent. Each channel has a minimum severity and a source filter.

@@ -74,6 +74,8 @@ KNOWN_SOURCES = (
     "cost_budget",
     "backup_schedule",
     "notifications",
+    "auth",
+    "ops_runner",
 )
 ALERT_SOURCE = "notifications"
 #: Seconds to wait before retry N (1-based, by attempts made so far).

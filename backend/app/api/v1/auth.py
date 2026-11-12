@@ -7,9 +7,11 @@ discovery and the OIDC redirect flow.
 from __future__ import annotations
 
 import secrets
+from typing import Annotated
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.deps import (
     AuthProvidersDep,
@@ -26,6 +28,7 @@ from app.schemas.auth import (
     AuthProviderRead,
     CurrentUserRead,
     LoginRequest,
+    LogoutRequest,
     RefreshRequest,
     TokenResponse,
 )
@@ -76,15 +79,33 @@ async def refresh(payload: RefreshRequest, auth: AuthServiceDep) -> TokenRespons
     )
 
 
-@router.post("/logout", response_model=MessageResponse, summary="Record a logout")
-async def logout(user: CurrentUserDep, auth: AuthServiceDep) -> MessageResponse:
-    """Audit the logout and instruct the client to discard its tokens.
+_bearer = HTTPBearer(auto_error=False)
 
-    Server-side invalidation needs a revocation store keyed on the token's ``jti``
-    claim, which Phase 6 adds along with the rest of the enterprise auth work.
+
+@router.post("/logout", response_model=MessageResponse, summary="Sign out this session")
+async def logout(
+    user: CurrentUserDep,
+    auth: AuthServiceDep,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    payload: LogoutRequest | None = None,
+) -> MessageResponse:
+    """Revoke this access token, and the refresh token if the body carries it (E14).
+
+    Both are refused from now on, even though they have not expired. Audited.
     """
-    await auth.logout(user)
-    return MessageResponse(message="Logged out. Discard your tokens.")
+    await auth.logout(
+        user,
+        access_token=credentials.credentials if credentials else None,
+        refresh_token=payload.refresh_token if payload else None,
+    )
+    return MessageResponse(message="Signed out. This session's tokens no longer work.")
+
+
+@router.post("/logout-all", response_model=MessageResponse, summary="Sign out every session")
+async def logout_all(user: CurrentUserDep, auth: AuthServiceDep) -> MessageResponse:
+    """Every token issued to this account stops working, including this one (E14)."""
+    await auth.logout_everywhere(user)
+    return MessageResponse(message="Signed out everywhere. Sign in again to continue.")
 
 
 @router.get("/me", response_model=CurrentUserRead, summary="The authenticated user")

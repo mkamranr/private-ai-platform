@@ -16,9 +16,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Path, Query, Response, status
 
-from app.api.deps import BackupSchedulerDep, OpsServiceDep, require_permission
+from app.api.deps import (
+    AuditDep,
+    BackupSchedulerDep,
+    OpsServiceDep,
+    RunnerGuardDep,
+    require_permission,
+)
 from app.api.routing import CommittingRoute
+from app.core.errors import AuthenticationError
 from app.core.permissions import Permission as Perm
+from app.core.request_context import get_client_ip
 from app.models.auth import User
 from app.models.ops import OpsJob
 from app.schemas.common import Page
@@ -45,6 +53,8 @@ from app.schemas.ops import (
     RunnerStatus,
     UpgradeRequest,
 )
+from app.services.audit import AuditService
+from app.services.login_guard import RunnerGuard
 from app.services.ops import OpsService
 
 router = APIRouter(prefix="/ops", tags=["operations"], route_class=CommittingRoute)
@@ -77,15 +87,32 @@ def _runner(service: OpsService, runner) -> RunnerRead:  # type: ignore[no-untyp
 
 
 # -- runner protocol -------------------------------------------------------------------
+async def _authenticate_runner(
+    service: OpsService, guard: RunnerGuard, audit: AuditService, token: str | None
+) -> None:
+    """The runner token check, refusing an address after repeated wrong tokens (E14)."""
+    address = get_client_ip() or "unknown"
+    await guard.check(address)
+    try:
+        service.authenticate_runner(token)
+    except AuthenticationError:
+        await guard.failed(address, audit=audit)
+        raise
+
+
 @router.post(
     "/runner/heartbeat",
     response_model=RunnerHeartbeatAck,
     summary="Runner: report liveness and what the host holds",
 )
 async def runner_heartbeat(
-    body: RunnerHeartbeat, service: OpsServiceDep, token: RunnerToken = None
+    body: RunnerHeartbeat,
+    service: OpsServiceDep,
+    guard: RunnerGuardDep,
+    audit: AuditDep,
+    token: RunnerToken = None,
 ) -> RunnerHeartbeatAck:
-    service.authenticate_runner(token)
+    await _authenticate_runner(service, guard, audit, token)
     queued = await service.heartbeat(body)
     await service.commit()
     return RunnerHeartbeatAck(server_time=dt.datetime.now(dt.UTC), queued=queued)
@@ -98,9 +125,14 @@ async def runner_heartbeat(
     responses={204: {"description": "Nothing to do"}},
 )
 async def runner_claim(
-    body: RunnerClaim, service: OpsServiceDep, response: Response, token: RunnerToken = None
+    body: RunnerClaim,
+    service: OpsServiceDep,
+    response: Response,
+    guard: RunnerGuardDep,
+    audit: AuditDep,
+    token: RunnerToken = None,
 ) -> RunnerJobSpec | None:
-    service.authenticate_runner(token)
+    await _authenticate_runner(service, guard, audit, token)
     job = await service.claim(body.name)
     await service.commit()
     if job is None:
@@ -125,10 +157,12 @@ async def runner_claim(
 async def runner_report(
     body: RunnerReport,
     service: OpsServiceDep,
+    guard: RunnerGuardDep,
+    audit: AuditDep,
     job_id: uuid.UUID = Path(...),
     token: RunnerToken = None,
 ) -> OpsJobRead:
-    service.authenticate_runner(token)
+    await _authenticate_runner(service, guard, audit, token)
     job = await service.report(job_id, body)
     await service.commit()
     return _read(job)
