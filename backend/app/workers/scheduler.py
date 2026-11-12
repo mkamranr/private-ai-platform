@@ -43,6 +43,7 @@ from app.core.logging import get_logger
 from app.core.security import SecretCipher
 from app.models.infrastructure import NodeStatus
 from app.repositories.audit import AuditRepository
+from app.repositories.auth_tokens import RevokedTokenRepository
 from app.repositories.chargeback import (
     ChargebackRepository,
     CostBudgetRepository,
@@ -175,6 +176,17 @@ class InfrastructureWorker:
                 # A worker that dies takes all monitoring with it, so the sweep logs
                 # and returns rather than propagating into the scheduler.
                 log.exception("node_sync_failed")
+
+    async def prune_revoked_tokens(self) -> None:
+        """Forget revoked tokens that have expired anyway (E14). Never raises."""
+        try:
+            async with self._session_factory() as session:
+                deleted = await RevokedTokenRepository(session).prune(now=dt.datetime.now(dt.UTC))
+                await session.commit()
+            if deleted:
+                log.info("revoked_tokens_pruned", deleted=deleted)
+        except Exception:
+            log.exception("revoked_token_prune_failed")
 
     async def purge_metrics(self) -> None:
         try:
@@ -412,6 +424,16 @@ class InfrastructureWorker:
             coalesce=True,
             max_instances=1,
             misfire_grace_time=notify_interval,
+        )
+
+        self._scheduler.add_job(
+            self.prune_revoked_tokens,
+            IntervalTrigger(hours=1),
+            id="revoked_token_prune",
+            name="Forget expired revoked tokens",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
         )
 
         self._scheduler.start()

@@ -21,6 +21,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Table,
     Text,
@@ -116,8 +117,18 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-    # Supports lockout policy in Phase 6; counted from Phase 0 so the data exists.
+    #: Consecutive wrong passwords since the last successful sign-in or lockout. Written
+    #: in its own transaction, because the failed request itself rolls back (E14).
     failed_login_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    #: Set when ``failed_login_count`` reaches ``auth.lockout_threshold`` (E14). Sign-in
+    #: is refused until then, with the same message as a wrong password.
+    locked_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Every token carries the version it was issued under (claim ``sv``). Raising it
+    #: signs out every session at once: password changes, "sign out everywhere", an
+    #: administrator revoking sessions, and refresh-token theft (E14).
+    session_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles,
@@ -176,6 +187,34 @@ class Permission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return f"<Permission {self.name}>"
+
+
+class RevokedToken(Base):
+    """A token refused before it expires (E14).
+
+    Written when someone signs out (their access and refresh tokens) and when a refresh
+    token is exchanged (it is single-use). Rows are only needed until the token would
+    have expired anyway, so a worker deletes them after ``expires_at``.
+    """
+
+    __tablename__ = "revoked_tokens"
+    __table_args__ = (Index("ix_revoked_tokens_expires_at", "expires_at"),)
+
+    #: The token's ``jti`` claim.
+    jti: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: ``logout`` or ``rotated`` (a refresh token that was exchanged).
+    reason: Mapped[str] = mapped_column(String(16), nullable=False)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<RevokedToken {self.token_type} {self.reason}>"
 
 
 def permission_uuid() -> uuid.UUID:

@@ -89,6 +89,9 @@ and history page. `ops_runners` holds each runner's heartbeat and inventory (mig
    - Run it as a dedicated account that nobody logs in as.
    - That account needs Docker access, which is root-equivalent. This is the same access an
      operator running `make backup` has. The threat model (#12) records it as residual risk.
+   - Wrong runner tokens are audited. After `OPS__RUNNER_MAX_FAILURES` (default 10) in
+     `OPS__RUNNER_FAILURE_WINDOW_SECONDS` (default 600), the address gets `429` until
+     the window ends (E14).
 
 Options: `--api` (default `http://127.0.0.1:$PLATFORM_HTTP_PORT/api/v1`), `--import-dir`
 (default `<root>/updates`), `--ca-file` for an `https` API, `--name`, `--interval`.
@@ -272,7 +275,6 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 
 - Retention is by count only. There is no age-based policy and no off-host copy.
 - No partial restore (one team or knowledge base), and no automatic Qdrant snapshot restore.
-- No rate limit on failed runner-token attempts (threat model #12).
 - Bundle import is a copy on the host. There is no streaming upload through the console.
 - One runner per site is the tested shape. Several are tolerated, but the pages show the
   most recently seen runner's inventory.

@@ -24,7 +24,7 @@ from app.models.agents import (
     ToolExecution,
 )
 from app.models.audit import AuditAction, AuditLog, AuditResult
-from app.models.auth import Permission, Role, User, role_permissions, user_roles
+from app.models.auth import Permission, RevokedToken, Role, User, role_permissions, user_roles
 from app.models.chargeback import DEFAULT_RATE_MODEL, CostBudget, CostBudgetScope, CostRate
 from app.models.infrastructure import (
     Container,
@@ -192,6 +192,7 @@ __all__ = [
     "RagEvalCase",
     "RagEvalRun",
     "RagEvalSet",
+    "RevokedToken",
     "Role",
     "RunState",
     "Skill",

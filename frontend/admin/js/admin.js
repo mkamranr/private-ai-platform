@@ -2479,16 +2479,51 @@ async function renderUsers() {
     button.onclick = () => guard(button, async () => {
       const password = prompt(
         `Set a new password for ${button.dataset.userName}.\n\n` +
-        'At least 12 characters. Their existing tokens stay valid until they expire — ' +
-        'the platform has no revocation store yet.');
+        'At least 12 characters. Every session they have open is signed out, and a ' +
+        'lockout is lifted.');
       if (!password) return;
       const result = await api(`/users/${button.dataset.userPassword}/password`, {
         method: 'PUT',
         body: JSON.stringify({ password }),
       });
       alert(result.message, 'success');
+      await renderUsers();
     });
   });
+
+  document.querySelectorAll('[data-user-unlock]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      await api(`/users/${button.dataset.userUnlock}/unlock`, { method: 'POST' });
+      alert(`${button.dataset.userName} unlocked. They can sign in again.`, 'success');
+      await renderUsers();
+    });
+  });
+
+  document.querySelectorAll('[data-user-signout]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      const self = button.dataset.userSignout === currentUserId();
+      if (!confirm(
+        `Sign ${button.dataset.userName} out everywhere?\n\n` +
+        'Every token issued to the account stops working at once' +
+        (self ? ', including this console session.' : '. They can sign in again.'))) return;
+      await api(`/users/${button.dataset.userSignout}/sessions/revoke`, { method: 'POST' });
+      if (self) { token.clear(); showLogin(); return; }
+      alert(`${button.dataset.userName} is signed out everywhere.`, 'success');
+    });
+  });
+}
+
+/** The signed-in user's id, from the access token (display only; never trusted). */
+function currentUserId() {
+  try {
+    const part = (token.get() || '').split('.')[1] || '';
+    return JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/'))).sub || null;
+  } catch { return null; }
+}
+
+/** True while a lockout is in force (it lapses on its own at `locked_until`). */
+function isLocked(user) {
+  return Boolean(user.locked_until) && new Date(user.locked_until) > new Date();
 }
 
 /**
@@ -2582,14 +2617,27 @@ function userRow(user) {
     <td class="small text-secondary">${user.last_login_at ? ago(user.last_login_at) : 'never'}</td>
     <td class="small">${user.is_active
       ? '<span class="text-success">active</span>'
-      : '<span class="text-secondary">disabled</span>'}</td>
-    <td class="text-end">
+      : '<span class="text-secondary">disabled</span>'}
+      ${isLocked(user)
+        ? `<span class="badge text-bg-warning ms-1"
+                 title="Too many wrong passwords. Lifts by itself at ${esc(new Date(user.locked_until).toLocaleString())}."
+                 >locked until ${esc(new Date(user.locked_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span>`
+        : (user.failed_login_count
+          ? `<div class="text-secondary">${user.failed_login_count} wrong password(s)</div>`
+          : '')}</td>
+    <td class="text-end text-nowrap">
+      ${isLocked(user) ? `<button class="btn btn-sm btn-warning me-1"
+              data-user-unlock="${esc(user.id)}"
+              data-user-name="${esc(user.username)}">Unlock</button>` : ''}
       <button class="btn btn-sm btn-outline-secondary" data-user-roles="${esc(user.id)}"
               data-user-name="${esc(user.username)}" data-user-provider="${esc(user.auth_provider)}"
               data-user-current="${esc(user.roles.map((r) => r.name).join(','))}">Roles</button>
       ${federated ? '' : `<button class="btn btn-sm btn-outline-secondary ms-1"
               data-user-password="${esc(user.id)}"
               data-user-name="${esc(user.username)}">Password</button>`}
+      <button class="btn btn-sm btn-outline-secondary ms-1"
+              data-user-signout="${esc(user.id)}" data-user-name="${esc(user.username)}"
+              title="Every token issued to this account stops working">Sign out everywhere</button>
       <button class="btn btn-sm btn-outline-${user.is_active ? 'danger' : 'success'} ms-1"
               data-user-toggle="${esc(user.id)}" data-user-state="${user.is_active}"
               data-user-name="${esc(user.username)}"

@@ -13,6 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from app.api.deps import (
+    AlertServiceDep,
     CurrentUserDep,
     UserServiceDep,
     require_permission,
@@ -31,6 +32,7 @@ from app.schemas.auth import (
     UserRolesUpdateRequest,
 )
 from app.schemas.common import MessageResponse, Page
+from app.services.login_guard import account_locked_fingerprint
 
 router = APIRouter(tags=["administration"], route_class=CommittingRoute)
 
@@ -124,9 +126,35 @@ async def set_user_password(
     """Refused for federated accounts — see :meth:`UserService.set_password`."""
     user = await service.set_password(user_id, payload.password, actor=actor)
     return MessageResponse(
-        message=f"Password set for {user.username}. Their existing tokens stay valid until "
-        "they expire — the platform has no revocation store yet."
+        message=f"Password set for {user.username}. Their existing sessions are signed out."
     )
+
+
+@router.post("/users/{user_id}/unlock", response_model=UserRead, summary="Unlock a locked account")
+async def unlock_user(
+    user_id: uuid.UUID,
+    service: UserServiceDep,
+    alerts: AlertServiceDep,
+    actor: Annotated[User, require_permission(Perm.USER_MANAGE)],
+) -> UserRead:
+    """Lift a lockout early and reset the failure count. Audited (E14)."""
+    user = await service.unlock(user_id, actor=actor)
+    await alerts.clear(account_locked_fingerprint(user.id))
+    return UserRead.model_validate(user)
+
+
+@router.post(
+    "/users/{user_id}/sessions/revoke",
+    response_model=UserRead,
+    summary="Sign a user out everywhere",
+)
+async def revoke_user_sessions(
+    user_id: uuid.UUID,
+    service: UserServiceDep,
+    actor: Annotated[User, require_permission(Perm.USER_MANAGE)],
+) -> UserRead:
+    """Every token issued to the user stops working. Audited (E14)."""
+    return UserRead.model_validate(await service.revoke_sessions(user_id, actor=actor))
 
 
 @router.post(
@@ -147,7 +175,9 @@ async def change_own_password(
     await service.change_own_password(
         user, current_password=payload.current_password, new_password=payload.new_password
     )
-    return MessageResponse(message="Password changed.")
+    return MessageResponse(
+        message="Password changed. Every session, including this one, is signed out."
+    )
 
 
 @router.get("/roles", response_model=list[RoleRead], summary="List roles and their permissions")

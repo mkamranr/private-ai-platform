@@ -216,6 +216,21 @@ class AuthSettings(BaseModel):
     refresh_token_ttl_seconds: int = 604800  # 7 days
     jwt_issuer: str = "private-ai-platform"
 
+    # -- E14: sign-in hardening ------------------------------------------------
+    #: Consecutive wrong passwords that lock a local account. 0 turns lockout off.
+    lockout_threshold: int = Field(default=10, ge=0, le=100)
+    #: How long a locked account stays locked. An administrator can unlock it sooner.
+    lockout_minutes: int = Field(default=15, ge=1, le=1440)
+    #: Failed sign-ins from one client address within the window before that address
+    #: is refused for the rest of it, whichever accounts it tried. 0 turns it off.
+    #: Counted in Valkey; while Valkey is down the limit is not enforced.
+    login_ip_max_failures: int = Field(default=30, ge=0, le=10000)
+    login_ip_window_seconds: int = Field(default=900, ge=60, le=86400)
+    #: A refresh token used again within this many seconds of being exchanged is
+    #: refused quietly (two tabs refreshing at once). Later reuse is treated as theft
+    #: and signs the account out everywhere.
+    refresh_reuse_grace_seconds: int = Field(default=10, ge=0, le=300)
+
     bootstrap_admin_username: str = "admin"
     bootstrap_admin_email: str = "admin@ai-platform.local"
     # Blank/absent means "do not create a bootstrap admin".
@@ -654,6 +669,10 @@ class OpsSettings(BaseModel):
     runner_token: SecretStr | None = None
     #: A runner not heard from for this long is shown as offline, and new jobs say so.
     runner_stale_seconds: int = Field(default=120, ge=30, le=3600)
+    #: E14: wrong runner tokens from one address within the window before that address
+    #: is refused for the rest of it. 0 turns it off. Counted in Valkey.
+    runner_max_failures: int = Field(default=10, ge=0, le=10000)
+    runner_failure_window_seconds: int = Field(default=600, ge=60, le=86400)
     #: Lines of job output kept per job; older lines are dropped from the front.
     max_log_lines: int = Field(default=2000, ge=100, le=20000)
     #: Loki, for the recent platform logs in a support bundle. Loki runs only in the

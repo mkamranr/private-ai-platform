@@ -156,6 +156,17 @@ dashboard real signals.
 - [x] Migration `c4e8a1f2d6b9` upgrades and downgrades cleanly. Doc: [docs/notifications.md](../notifications.md).
 - [ ] No digests or quiet hours, per-team routing, PagerDuty native API, HTML email or SMS.
 
+## E14: Auth hardening
+
+- [x] Account lockout: `auth.lockout_threshold` wrong passwords (default 10, 0 = off) lock a local account for `auth.lockout_minutes`. Counted atomically in its own transaction (it used to roll back). A locked account gets the generic message, and its password is not checked. Audited `USER_LOCKED`/`USER_UNLOCKED`, WARNING alert, admin unlock.
+- [x] Per-address throttle in Valkey (`auth.login_ip_max_failures` in `auth.login_ip_window_seconds`, 429 with `retry_after_seconds`). Fails open. Audited `LOGIN_THROTTLED`, WARNING alert.
+- [x] Revocation: `revoked_tokens` keyed by `jti` (logout, refresh rotation), pruned hourly. `users.session_version` copied into tokens as `sv`; raised by logout-all, admin sign-out, password change or reset, and disable. Tokens without `sv` count as version 0.
+- [x] Refresh rotation with reuse detection: reuse within `auth.refresh_reuse_grace_seconds` refused quietly, later reuse signs out everywhere, audited `USER_TOKEN_REUSE_DETECTED`, CRITICAL alert.
+- [x] Ops runner: wrong tokens audited (`OPS_RUNNER_AUTH_FAILED`) and throttled per address (`ops.runner_max_failures` in `ops.runner_failure_window_seconds`), WARNING alert (threat model #12).
+- [x] API: `POST /auth/logout` (optional `refresh_token`), `POST /auth/logout-all`, `POST /users/{id}/unlock`, `POST /users/{id}/sessions/revoke`. Users page: locked pill, Unlock, Sign out everywhere. Alert sources `auth`, `ops_runner` for notification filters.
+- [x] Migration `d5f9b2a3e7c1` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#sign-in-hardening-e14).
+- [ ] No lockout for directory accounts, no CAPTCHA, no MFA.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

@@ -91,8 +91,9 @@ credential exists. Responses carry no hostnames, DSNs or stack traces.
 | method | path | permission | notes |
 |---|---|---|---|
 | POST | `/auth/login` | — | `{username, password}` → token pair. Success and failure both audited |
-| POST | `/auth/refresh` | — | `{refresh_token}` → new pair. An access token is rejected here |
-| POST | `/auth/logout` | authenticated | Audit event; the client discards its tokens |
+| POST | `/auth/refresh` | — | `{refresh_token}` → new pair. Each refresh token works once (E14) |
+| POST | `/auth/logout` | authenticated | Revokes this access token, and `{refresh_token}` if given (E14) |
+| POST | `/auth/logout-all` | authenticated | Every token for this account stops working (E14) |
 | GET | `/auth/me` | authenticated | Identity + resolved permission list |
 
 Login failures return one message regardless of cause — distinguishing "no such user"
@@ -101,8 +102,12 @@ from "wrong password" would make this endpoint a user-enumeration oracle.
 `/auth/me` returns `permissions` so the admin UI can hide controls the user cannot
 use. Presentation only; every endpoint re-checks server-side.
 
-Logout cannot invalidate a stateless JWT server-side. Phase 6 adds a revocation store
-keyed on the `jti` claim that `TokenService` already issues.
+Sign-in is refused with `429` after too many failures from one address, and a local
+account locks after too many wrong passwords. A locked account gets the same `401`
+message as a wrong password. Logout revokes tokens by their `jti`, and a session
+version claim (`sv`) lets one change sign out every session. A refresh token presented
+again after it was exchanged signs the account out everywhere. See
+[security.md](security.md#sign-in-hardening-e14).
 
 ---
 
@@ -492,8 +497,10 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 
 | method | path | permission |
 |---|---|---|
-| PUT | `/users/{id}/password` | `user.manage` — refused for a federated account |
-| POST | `/users/me/password` | **none** — anyone may change their own, and requires the current one |
+| PUT | `/users/{id}/password` | `user.manage` — refused for a federated account. Signs the user out and lifts a lock (E14) |
+| POST | `/users/{id}/unlock` | `user.manage` — lifts a lockout early, clears its alert (E14) |
+| POST | `/users/{id}/sessions/revoke` | `user.manage` — signs the user out everywhere (E14) |
+| POST | `/users/me/password` | **none** — anyone may change their own, and requires the current one. Signs out every session (E14) |
 
 ### API keys (M20)
 

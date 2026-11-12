@@ -66,8 +66,14 @@ Migration `20260807_1705_phase0_identity_rbac_audit_and_system_settings`.
 | `is_active` | bool | disabling is preferred to deletion; it preserves the audit trail |
 | `is_superuser` | bool | bypasses permission checks entirely |
 | `last_login_at` | timestamptz | nullable |
-| `failed_login_count` | int | supports P6 lockout policy; counted from P0 so the data exists |
+| `failed_login_count` | int | wrong passwords in a row; reset by a sign-in or a lock (E14) |
+| `locked_until` | timestamptz | nullable; set when the count reaches `auth.lockout_threshold` (E14) |
+| `session_version` | int | copied into tokens as `sv`; raising it signs the user out everywhere (E14) |
 | `created_at`, `updated_at` | timestamptz | |
+
+### `revoked_tokens` (E14)
+`jti` (PK), `user_id` (FK, cascade), `token_type`, `reason` (`logout` or `rotated`),
+`expires_at` (indexed; rows are pruned hourly once past it), `revoked_at`.
 
 ### `roles`
 `id`, `name` (unique), `description`, `is_system` (seeded roles the API must not

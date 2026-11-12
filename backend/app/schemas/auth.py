@@ -27,6 +27,12 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    """Optional: the session's refresh token, so it is revoked too (E14)."""
+
+    refresh_token: str | None = None
+
+
 class PermissionRead(ORMModel):
     name: str
     resource: str
@@ -64,6 +70,9 @@ class UserRead(ORMModel):
     #: operationally load-bearing: a federated account's roles are overwritten from the
     #: directory on every sign-in, so editing them here is undone at the next login.
     auth_provider: str = "local"
+    #: E14: wrong passwords since the last sign-in, and the lock they caused, if any.
+    failed_login_count: int = 0
+    locked_until: dt.datetime | None = None
     # Never a password hash. Serialising one would leak it into every log,
     # response cache and browser history that touches this endpoint.
 
