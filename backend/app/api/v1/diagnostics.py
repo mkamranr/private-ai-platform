@@ -7,11 +7,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query, Response
 
 from app.api.deps import DiagnosticsServiceDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.ops import RedactedConfig, VersionInventory
 
-router = APIRouter(prefix="/diagnostics", tags=["diagnostics"])
+router = APIRouter(prefix="/diagnostics", tags=["diagnostics"], route_class=CommittingRoute)
 
 
 @router.get("/health", summary="Dependency health with latencies")

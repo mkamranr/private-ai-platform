@@ -72,7 +72,7 @@ credential exists. Responses carry no hostnames, DSNs or stack traces.
 ```json
 {
   "status": "ok",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "environment": "development",
   "dependencies": [
     {"name": "postgres", "state": "ok", "latency_ms": 10.0, "detail": null, "required": true},

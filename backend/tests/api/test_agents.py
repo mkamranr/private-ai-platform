@@ -380,6 +380,37 @@ class TestToolPipeline:
 # Registry (M10-M13)
 # ---------------------------------------------------------------------------
 class TestRegistry:
+    async def test_skill_create_and_delete_are_audited(
+        self, client: AsyncClient, tokens, agent_admin: User, session: AsyncSession
+    ) -> None:
+        """E11. A skill's instructions reach every agent's prompt that uses it."""
+        from sqlalchemy import select
+
+        from app.models.audit import AuditLog
+
+        created = await client.post(
+            "/api/v1/skills",
+            headers=auth_header(tokens, agent_admin),
+            json={
+                "name": "audited-skill",
+                "display_name": "Audited",
+                "description": "d",
+                "instructions": "Be brief.",
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill_id = created.json()["id"]
+        deleted = await client.delete(
+            f"/api/v1/skills/{skill_id}", headers=auth_header(tokens, agent_admin)
+        )
+        assert deleted.status_code == 200
+
+        rows = (
+            await session.scalars(select(AuditLog).where(AuditLog.resource_id == skill_id))
+        ).all()
+        assert sorted(r.action for r in rows) == ["SKILL_CREATED", "SKILL_DELETED"]
+        assert all(r.meta["name"] == "audited-skill" for r in rows)
+
     async def test_tool_needs_a_permission(
         self, client: AsyncClient, tokens, agent_admin: User
     ) -> None:

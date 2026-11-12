@@ -149,7 +149,7 @@ def compose_images() -> dict[str, str]:
     """``service -> image reference``, resolved by Compose itself.
 
     ``docker compose config`` is used rather than reading the YAML, because the compose
-    file interpolates ``${PLATFORM_VERSION:-0.1.0}`` and reads ``.env``. Parsing the raw
+    file interpolates ``${PLATFORM_VERSION:-0.2.0}`` and reads ``.env``. Parsing the raw
     file gives an image tag with an unexpanded variable in it, which then fails to save
     with an error about an invalid reference.
     """
@@ -504,7 +504,7 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args()
-    platform_version = os.environ.get("PLATFORM_VERSION", "0.1.0")
+    platform_version = os.environ.get("PLATFORM_VERSION", "0.2.0")
 
     if options.sbom_only:
         options.output.mkdir(parents=True, exist_ok=True)

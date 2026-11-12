@@ -129,6 +129,15 @@ dashboard real signals.
 - [x] Connector Catalogue page: state, network, writes, pinned package, configuration variables, problems, tool counts with "awaiting review", install and apply suggested risk.
 - [ ] No first-party connectors (read-only SQL, HTTP/OpenAPI with an allow-list); no container state in the catalogue (the control plane has no Docker socket).
 
+## E11: Release readiness (0.2.0)
+
+- [x] Commit before the response. `CommittingRoute` (`app/api/routing.py`) commits the request session once the endpoint returns, before anything is sent. A failed commit is now an error, not a 200 for a change that was then lost. Streaming responses are excluded and still commit when the stream ends. A test checks that every route (all 238) uses it.
+- [x] Upgrades grant new permissions. `cli seed --rbac-only` (`make seed-rbac`) reconciles permissions and system-role grants and never touches accounts. The console upgrade job runs it after migrating, and `upgrade.sh` prints it as a step.
+- [x] Audit coverage, measured. A probe recorded audit writes during the API test run. Skill create and delete, operator GPU reserve and release, and model import were unaudited; they are now audited. Evaluation-set questions are left unaudited (scoring data).
+- [x] Telemetry: Alloy `--disable-reporting`; Open WebUI's opt-outs stated in compose. Pins: images by digest, requirements with hashes (`make airgap` passes). Migrations: an empty database goes head → base → head with no leftover tables or types, and `alembic check` is clean.
+- [x] Version 0.2.0, [CHANGELOG.md](../../CHANGELOG.md), [upgrade guide](../upgrade-0.2.md), [release checklist](../release-checklist.md).
+- [ ] Not exercised here: building images, the air-gapped rehearsal (`make gate-phase8`) and the connector images (no Docker on this machine).
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

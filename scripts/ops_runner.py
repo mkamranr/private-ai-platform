@@ -463,6 +463,19 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
                 time.sleep(10)
             else:
                 return "FAILED", "Upgraded, but migrations did not apply. Run them by hand."
+            # A release that adds permissions needs them granted to the system roles,
+            # or its new pages answer 403 even for administrators. Accounts untouched.
+            code = run_command(
+                ["docker", "compose", "exec", "-T", "backend",
+                 "python", "-m", "app.utils.cli", "seed", "--rbac-only"],
+                reporter, cwd=root,
+            )
+            if code != 0:
+                return "FAILED", (
+                    "Upgraded and migrated, but permissions were not reconciled. Run "
+                    "`docker compose exec backend python -m app.utils.cli seed --rbac-only`."
+                )
+            reporter.result["rbac_reconciled"] = True
         return "SUCCEEDED", None
 
     if kind == "rollback":

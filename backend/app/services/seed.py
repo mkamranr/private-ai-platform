@@ -145,6 +145,19 @@ class SeedService:
             note="Change this password immediately after first login.",
         )
 
+    async def run_rbac(self) -> SeedResult:
+        """Permissions and system-role grants, no accounts. Safe after every upgrade."""
+        result = SeedResult()
+        permissions = await self.seed_permissions(result)
+        await self.seed_roles(permissions, result)
+        log.info(
+            "rbac_reconciled",
+            permissions_created=result.permissions_created,
+            roles_created=result.roles_created,
+            role_grants_updated=result.role_grants_updated,
+        )
+        return result
+
     async def run(
         self, *, admin_username: str, admin_email: str, admin_password: str | None
     ) -> SeedResult:

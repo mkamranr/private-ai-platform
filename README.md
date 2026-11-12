@@ -169,6 +169,7 @@ all**, then migrates, seeds, signs in, upgrades and rolls back.
 | [chargeback.md](docs/chargeback.md) | Cost rates, cost reports and CSV export |
 | [observability.md](docs/observability.md) · [api.md](docs/api.md) | Metrics, logs, traces; the HTTP surface |
 | [troubleshooting.md](docs/troubleshooting.md) | Failures that have actually happened |
+| [CHANGELOG.md](CHANGELOG.md) · [upgrade-0.2.md](docs/upgrade-0.2.md) · [release-checklist.md](docs/release-checklist.md) | What changed, upgrading from 0.1.0, cutting a release |
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Security policy: [SECURITY.md](SECURITY.md)
 

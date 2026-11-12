@@ -20,6 +20,7 @@ from app.api.deps import (
     TeamServiceDep,
     require_permission,
 )
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.core.scope import Scope
 from app.models.auth import User
@@ -37,7 +38,7 @@ from app.schemas.teams import (
     TeamUpdateRequest,
 )
 
-router = APIRouter(tags=["teams"])
+router = APIRouter(tags=["teams"], route_class=CommittingRoute)
 
 
 @router.get("/teams", response_model=list[TeamRead], summary="List teams")

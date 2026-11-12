@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query, Response, status
 
 from app.api.deps import ChargebackServiceDep, ScopeDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.chargeback import (
@@ -20,7 +21,7 @@ from app.schemas.chargeback import (
     GroupBy,
 )
 
-router = APIRouter(prefix="/chargeback", tags=["chargeback"])
+router = APIRouter(prefix="/chargeback", tags=["chargeback"], route_class=CommittingRoute)
 
 
 def _default_start() -> dt.date:

@@ -9,6 +9,7 @@ All 28 modules' routers are registered here.
 
 from fastapi import APIRouter
 
+from app.api.routing import CommittingRoute
 from app.api.v1 import (
     agents,
     alerts,
@@ -34,7 +35,7 @@ from app.api.v1 import (
     workflows,
 )
 
-api_router = APIRouter()
+api_router = APIRouter(route_class=CommittingRoute)
 
 # Health first — it must resolve even if a later router fails to import.
 api_router.include_router(health.router)

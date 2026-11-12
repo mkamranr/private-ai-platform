@@ -110,7 +110,7 @@ class PlatformSettings(BaseModel):
     name: str = "Private AI Platform"
     environment: Environment = "development"
     debug: bool = False
-    version: str = "0.1.0"
+    version: str = "0.2.0"
     api_prefix: str = "/api/v1"
     # The OpenAI-compatible surface. Its own root, not a sub-path of api_prefix: the
     # stock SDK derives every path from base_url, so `GET {base}/models` would otherwise
@@ -397,7 +397,7 @@ class ModelsSettings(BaseModel):
     # Images must already be present on the node; the platform never pulls (Rule 4).
     runtime_images: dict[str, str] = Field(
         default_factory=lambda: {
-            "mock": "ai-platform/mock-vllm:0.1.0",
+            "mock": "ai-platform/mock-vllm:0.2.0",
             "vllm": "vllm/vllm-openai:v0.11.0",
             # Digests are pinned by the site when it builds its offline bundle; these
             # tags are the upstream names to pull on a connected build machine. Not

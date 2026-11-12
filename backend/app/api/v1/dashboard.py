@@ -7,11 +7,12 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.api.deps import DashboardServiceDep, ScopeDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.dashboard import DashboardResponse
 
-router = APIRouter(tags=["dashboard"])
+router = APIRouter(tags=["dashboard"], route_class=CommittingRoute)
 
 
 @router.get("/dashboard", response_model=DashboardResponse, summary="Platform dashboard")

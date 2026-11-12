@@ -17,6 +17,7 @@ from typing import Annotated
 from fastapi import APIRouter, Header, Path, Query, Response, status
 
 from app.api.deps import OpsServiceDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.models.ops import OpsJob
@@ -45,7 +46,7 @@ from app.schemas.ops import (
 )
 from app.services.ops import OpsService
 
-router = APIRouter(prefix="/ops", tags=["operations"])
+router = APIRouter(prefix="/ops", tags=["operations"], route_class=CommittingRoute)
 
 NamePath = Annotated[str, Path(pattern=NAME_PATTERN)]
 RunnerToken = Annotated[str | None, Header(alias="X-Ops-Runner-Token")]

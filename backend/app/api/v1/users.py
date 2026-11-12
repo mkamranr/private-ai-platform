@@ -17,6 +17,7 @@ from app.api.deps import (
     UserServiceDep,
     require_permission,
 )
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.auth import (
@@ -31,7 +32,7 @@ from app.schemas.auth import (
 )
 from app.schemas.common import MessageResponse, Page
 
-router = APIRouter(tags=["administration"])
+router = APIRouter(tags=["administration"], route_class=CommittingRoute)
 
 
 @router.get("/users", response_model=Page[UserRead], summary="List users")

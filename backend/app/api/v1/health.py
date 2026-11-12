@@ -10,13 +10,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Response, status
 
 from app.api.deps import HealthServiceDep, SettingsDep
+from app.api.routing import CommittingRoute
 from app.schemas.health import (
     HealthResponse,
     LivenessResponse,
     VersionResponse,
 )
 
-router = APIRouter(tags=["health"])
+router = APIRouter(tags=["health"], route_class=CommittingRoute)
 
 
 @router.get(

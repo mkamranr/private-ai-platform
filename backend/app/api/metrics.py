@@ -19,13 +19,14 @@ import asyncio
 from fastapi import APIRouter, Response
 
 from app.api.deps import SessionDep
+from app.api.routing import CommittingRoute
 from app.core import metrics
 from app.core.logging import get_logger
 from app.services.monitoring import collect_fleet_state
 
 log = get_logger(__name__)
 
-router = APIRouter(tags=["monitoring"])
+router = APIRouter(tags=["monitoring"], route_class=CommittingRoute)
 
 #: A scrape that hangs is worse than a scrape that misses gauges: Prometheus blocks its
 #: scrape slot, the target goes stale, and the alert that fires says "target down" about

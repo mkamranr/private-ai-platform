@@ -137,7 +137,7 @@ services:
     build:
       context: ./backend
       target: runtime
-    image: ai-platform/backend:${PLATFORM_VERSION:-0.1.0}
+    image: ai-platform/backend:${PLATFORM_VERSION:-0.2.0}
     profiles: [core]
     <<: [*restart, *logging]
     env_file: [.env]
@@ -204,7 +204,7 @@ services:
     build:
       context: ./node-agent
       target: runtime
-    image: ai-platform/node-agent:${PLATFORM_VERSION:-0.1.0}
+    image: ai-platform/node-agent:${PLATFORM_VERSION:-0.2.0}
     profiles: [core]
     <<: [*restart, *logging]
     environment:
@@ -252,7 +252,7 @@ services:
     build:
       context: ./mock-vllm
       target: runtime
-    image: ai-platform/mock-vllm:${PLATFORM_VERSION:-0.1.0}
+    image: ai-platform/mock-vllm:${PLATFORM_VERSION:-0.2.0}
     profiles: [development]
     <<: [*restart, *logging]
     environment:
@@ -316,7 +316,7 @@ services:
     build:
       context: ./mcp/ldap
       target: runtime
-    image: ai-platform/ldap-mcp:${PLATFORM_VERSION:-0.1.0}
+    image: ai-platform/ldap-mcp:${PLATFORM_VERSION:-0.2.0}
     profiles: [agents]
     <<: [*restart, *logging]
     environment:
@@ -340,7 +340,7 @@ services:
     build:
       context: ./fixtures/oidc
       target: runtime
-    image: ai-platform/oidc-fixture:${PLATFORM_VERSION:-0.1.0}
+    image: ai-platform/oidc-fixture:${PLATFORM_VERSION:-0.2.0}
     profiles: [development]
     <<: [*restart, *logging]
     networks: [ai-platform]
@@ -391,6 +391,10 @@ services:
       # Sets HF_HUB_OFFLINE=1 and stops the version check phoning home.
       OFFLINE_MODE: "true"
       ENABLE_VERSION_UPDATE_CHECK: "false"
+      # The image sets these already; stated here so an image bump cannot turn them on.
+      SCARF_NO_ANALYTICS: "true"
+      DO_NOT_TRACK: "true"
+      ANONYMIZED_TELEMETRY: "false"
       # Embeddings go through the gateway too, so document upload never reaches for a
       # sentence-transformers model from HuggingFace. Needs an EMBEDDING model deployed.
       RAG_EMBEDDING_ENGINE: openai
@@ -536,6 +540,8 @@ services:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
+      # Alloy sends anonymous usage stats to stats.grafana.org unless told not to (Rule 4).
+      - --disable-reporting
       - /etc/alloy/config.alloy
     volumes:
       - ./docker/alloy/config.alloy:/etc/alloy/config.alloy:ro

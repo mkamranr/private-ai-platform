@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import Permission as Perm
+from app.models.audit import AuditLog
 from app.models.auth import Permission, User
 from app.models.infrastructure import Gpu, GpuAllocation, GpuMetric, Node, NodeStatus
 from app.services.node_agent_client import (
@@ -679,7 +680,12 @@ class TestSync:
 # ---------------------------------------------------------------------------
 class TestGpuAllocation:
     async def test_reserve_and_release(
-        self, infra_client: AsyncClient, tokens, infra_admin: User, registered_node: dict
+        self,
+        infra_client: AsyncClient,
+        tokens,
+        infra_admin: User,
+        registered_node: dict,
+        session: AsyncSession,
     ) -> None:
         node_id = registered_node["node"]["id"]
         reserved = await infra_client.post(
@@ -706,6 +712,13 @@ class TestGpuAllocation:
             f"/api/v1/nodes/{node_id}/capacity", headers=auth_header(tokens, infra_admin)
         )
         assert capacity.json()["free_gpu_indices"] == [0, 1]
+
+        # E11: an operator's reservation and its release are both audited.
+        rows = (
+            await session.scalars(select(AuditLog).where(AuditLog.resource_id == reservation_id))
+        ).all()
+        assert sorted(r.action for r in rows) == ["GPU_RELEASED", "GPU_RESERVED"]
+        assert all(r.username == infra_admin.username for r in rows)
 
     async def test_double_claim_is_rejected(
         self, infra_client: AsyncClient, tokens, infra_admin: User, registered_node: dict

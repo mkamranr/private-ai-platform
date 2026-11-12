@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from app.api.deps import (
     AgentRegistryDep,
     AgentRunServiceDep,
+    AuditDep,
     DefinitionImporterDep,
     McpRegistryDep,
     ScopeDep,
@@ -21,9 +22,11 @@ from app.api.deps import (
     ToolRegistryDep,
     require_permission,
 )
+from app.api.routing import CommittingRoute
 from app.config.settings import get_settings
 from app.core.permissions import Permission as Perm
 from app.models.agents import Tool
+from app.models.audit import AuditAction
 from app.models.auth import User
 from app.schemas.agents import (
     AgentCreateRequest,
@@ -50,7 +53,7 @@ from app.schemas.agents import (
 )
 from app.schemas.common import MessageResponse
 
-router = APIRouter(tags=["agents"])
+router = APIRouter(tags=["agents"], route_class=CommittingRoute)
 
 
 # ---------------------------------------------------------------------------
@@ -304,30 +307,50 @@ async def list_skills(
 async def create_skill(
     payload: SkillCreateRequest,
     service: SkillRegistryDep,
-    _actor: Annotated[User, require_permission(Perm.SKILL_MANAGE)],
+    audit: AuditDep,
+    actor: Annotated[User, require_permission(Perm.SKILL_MANAGE)],
 ) -> SkillRead:
-    return SkillRead.model_validate(
-        await service.create_skill(
-            name=payload.name,
-            display_name=payload.display_name,
-            description=payload.description,
-            instructions=payload.instructions,
-            version=payload.version,
-            required_tools=payload.required_tools,
-            required_knowledge=payload.required_knowledge,
-            parameters=payload.parameters,
-            required_permission=payload.required_permission,
-        )
+    # Recorded: a skill's instructions go into the prompt of every agent that uses it.
+    skill = await service.create_skill(
+        name=payload.name,
+        display_name=payload.display_name,
+        description=payload.description,
+        instructions=payload.instructions,
+        version=payload.version,
+        required_tools=payload.required_tools,
+        required_knowledge=payload.required_knowledge,
+        parameters=payload.parameters,
+        required_permission=payload.required_permission,
     )
+    await audit.record(
+        AuditAction.SKILL_CREATED,
+        user_id=actor.id,
+        username=actor.username,
+        resource_type="skill",
+        resource_id=str(skill.id),
+        metadata={"name": skill.name, "version": skill.version},
+    )
+    return SkillRead.model_validate(skill)
 
 
 @router.delete("/skills/{skill_id}", response_model=MessageResponse, summary="Delete a skill")
 async def delete_skill(
     service: SkillRegistryDep,
-    _actor: Annotated[User, require_permission(Perm.SKILL_MANAGE)],
+    audit: AuditDep,
+    actor: Annotated[User, require_permission(Perm.SKILL_MANAGE)],
     skill_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
+    skill = await service.get_skill(skill_id)
+    name = skill.name
     await service.delete_skill(skill_id)
+    await audit.record(
+        AuditAction.SKILL_DELETED,
+        user_id=actor.id,
+        username=actor.username,
+        resource_type="skill",
+        resource_id=str(skill_id),
+        metadata={"name": name},
+    )
     return MessageResponse(message="Skill deleted.")
 
 

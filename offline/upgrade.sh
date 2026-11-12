@@ -125,6 +125,8 @@ printf '\n'
 printf '  Migrations are NOT applied automatically. Apply them, then check:\n'
 printf '    cd %s\n' "$TARGET"
 printf '    docker compose exec backend alembic upgrade head\n'
+printf '  Then grant any permissions this release adds to the system roles:\n'
+printf '    docker compose exec backend python -m app.utils.cli seed --rbac-only\n'
 printf '\n'
 printf '  If this upgrade is wrong, go back with:\n'
 printf '    ./offline/rollback.sh %s %s --yes\n' "$TARGET" "$FROM_STAMP"

@@ -14,13 +14,16 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import (
     ApiKeyServiceDep,
+    AuditDep,
     DeploymentServiceDep,
     ModelRegistryDep,
     ScopeDep,
     ScopeGuardDep,
     require_permission,
 )
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
+from app.models.audit import AuditAction
 from app.models.auth import User
 from app.models.models_registry import ApiClient, UsageRecord
 from app.models.models_registry import Model as ModelRow
@@ -63,7 +66,7 @@ from app.schemas.models_registry import (
 from app.services.deployment import DeploymentRequestSpec, RevisionChange, follow_logs
 from app.services.model_registry import UNSET
 
-router = APIRouter(tags=["models"])
+router = APIRouter(tags=["models"], route_class=CommittingRoute)
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +209,7 @@ async def get_model(
 )
 async def import_model(
     service: ModelRegistryDep,
+    audit: AuditDep,
     actor: Annotated[User, require_permission(Perm.MODEL_REGISTER)],
     guard: ScopeGuardDep,
     model_id: uuid.UUID = Path(...),
@@ -221,7 +225,16 @@ async def import_model(
     result = await service.import_from_disk(
         model_id, verify_checksums=verify_checksums, actor=actor
     )
-    return ModelImportResponse(**asdict(result))
+    response = ModelImportResponse(**asdict(result))
+    await audit.record(
+        AuditAction.MODEL_IMPORTED,
+        user_id=actor.id,
+        username=actor.username,
+        resource_type="model",
+        resource_id=str(model_id),
+        metadata={"status": str(response.status), "verify_checksums": verify_checksums},
+    )
+    return response
 
 
 @router.post(

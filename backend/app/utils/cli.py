@@ -4,6 +4,7 @@ Operational entrypoints that must work without the HTTP API — an air-gapped
 installer runs these before anyone can reach a browser.
 
     python -m app.utils.cli seed        # roles, permissions, bootstrap admin, bucket
+    python -m app.utils.cli seed --rbac-only  # roles and permissions only (upgrades)
     python -m app.utils.cli chat-key    # provision Open WebUI's gateway credentials
     python -m app.utils.cli reconcile   # find model containers no deployment claims
     python -m app.utils.cli mcp-import  # register MCP servers from mcp/manifests/
@@ -43,6 +44,35 @@ log = get_logger("app.cli")
 _EXIT_OK = 0
 _EXIT_FAILURE = 1
 _EXIT_USAGE = 2
+
+
+async def _seed_rbac() -> int:
+    """Permissions and system-role grants only: what an upgrade needs (E11).
+
+    Leaves accounts, the bucket and companion databases alone. In particular it never
+    creates the bootstrap admin, so an upgrade cannot bring back an account a site
+    deliberately deleted while its password is still in ``.env``.
+    """
+    settings = get_settings()
+    database = Database(settings)
+    try:
+        async with database.sessionmaker() as session:
+            service = SeedService(
+                UserRepository(session),
+                RoleRepository(session),
+                PermissionRepository(session),
+                PasswordHasherService(settings.security),
+            )
+            result = await service.run_rbac()
+            await session.commit()
+        print(
+            f"RBAC reconciled: {result.permissions_created} permissions created, "
+            f"{result.roles_created} roles created, "
+            f"{result.role_grants_updated} role grants reconciled"
+        )
+        return _EXIT_OK
+    finally:
+        await database.dispose()
 
 
 async def _seed() -> int:
@@ -783,7 +813,7 @@ def main(argv: list[str] | None = None) -> int:
     command = args[0]
 
     if command == "seed":
-        return asyncio.run(_seed())
+        return asyncio.run(_seed_rbac() if "--rbac-only" in args else _seed())
     if command == "mcp-import":
         return asyncio.run(_mcp_import())
     if command == "definitions-import":

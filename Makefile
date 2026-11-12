@@ -134,6 +134,10 @@ migrate-roundtrip: .env ## Prove migrations reverse cleanly (upgrade head -> dow
 seed: .env ## Seed roles, permissions and the bootstrap admin
 	$(RUN_BACKEND) python -m app.utils.cli seed
 
+.PHONY: seed-rbac
+seed-rbac: .env ## Grant a release's new permissions to the system roles (after upgrades; no accounts)
+	$(RUN_BACKEND) python -m app.utils.cli seed --rbac-only
+
 # ---------------------------------------------------------------------------
 # Dependency locking (requires network — build machine only, never the target)
 # ---------------------------------------------------------------------------

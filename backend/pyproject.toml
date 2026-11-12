@@ -1,6 +1,6 @@
 [project]
 name = "private-ai-platform-backend"
-version = "0.1.0"
+version = "0.2.0"
 description = "Private AI Platform — control plane backend"
 requires-python = ">=3.12"
 # Runtime dependencies are declared in requirements.in / requirements.txt so the

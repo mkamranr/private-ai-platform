@@ -16,6 +16,7 @@ from app.api.deps import (
     ScopeGuardDep,
     require_permission,
 )
+from app.api.routing import CommittingRoute
 from app.core.errors import ValidationError
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
@@ -38,7 +39,7 @@ from app.schemas.knowledge import (
     SearchResultRead,
 )
 
-router = APIRouter(tags=["knowledge"])
+router = APIRouter(tags=["knowledge"], route_class=CommittingRoute)
 
 #: Upload ceiling. nginx is configured with no limit for model weights, so the guard has to
 #: live here — a 2 GB document would otherwise be read into memory before anything checked.

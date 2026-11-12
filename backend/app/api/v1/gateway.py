@@ -34,6 +34,7 @@ from app.api.deps import (
     GatewayServiceDep,
     UserRepositoryDep,
 )
+from app.api.routing import CommittingRoute
 from app.core.errors import ValidationError
 from app.core.logging import get_logger
 from app.services.agent_gateway import (
@@ -48,7 +49,7 @@ from app.services.gateway import StreamAccounting
 
 log = get_logger(__name__)
 
-router = APIRouter(tags=["gateway"])
+router = APIRouter(tags=["gateway"], route_class=CommittingRoute)
 
 
 @router.get("/models", summary="Models callable through the gateway")

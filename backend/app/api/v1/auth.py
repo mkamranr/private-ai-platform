@@ -18,6 +18,7 @@ from app.api.deps import (
     EffectiveSettingsDep,
     RedisDep,
 )
+from app.api.routing import CommittingRoute
 from app.config.settings import Settings
 from app.core.errors import AuthenticationError, NotFoundError
 from app.core.interfaces.auth_provider import AuthProvider, RedirectAuthProvider
@@ -35,7 +36,7 @@ from app.schemas.common import MessageResponse
 _STATE_PREFIX = "oidc:state:"
 _STATE_TTL_SECONDS = 600
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+router = APIRouter(prefix="/auth", tags=["authentication"], route_class=CommittingRoute)
 
 
 @router.post("/login", response_model=TokenResponse, summary="Exchange credentials for tokens")

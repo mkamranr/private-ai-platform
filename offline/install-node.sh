@@ -135,7 +135,7 @@ IMAGE_TAG=""
 if [[ -f "${BUNDLE}/manifest.json" ]]; then
   IMAGE_TAG=$(manifest_get "$BUNDLE" "m['images']['${SERVICE}']['local_tag']" 2>/dev/null || true)
 fi
-[[ -n "$IMAGE_TAG" ]] || IMAGE_TAG="ai-platform/node-agent:0.1.0"
+[[ -n "$IMAGE_TAG" ]] || IMAGE_TAG="ai-platform/node-agent:0.2.0"
 
 if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
   ok "${IMAGE_TAG} already present"

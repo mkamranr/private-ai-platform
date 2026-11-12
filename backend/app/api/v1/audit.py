@@ -20,12 +20,13 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.api.deps import AuditRepositoryDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.audit import AuditLogRead
 from app.schemas.common import Page
 
-router = APIRouter(prefix="/audit", tags=["audit"])
+router = APIRouter(prefix="/audit", tags=["audit"], route_class=CommittingRoute)
 
 
 @router.get("", response_model=Page[AuditLogRead], summary="Search the audit log")

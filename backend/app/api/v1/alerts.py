@@ -8,12 +8,13 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query
 
 from app.api.deps import AlertServiceDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.common import Page
 from app.schemas.operations import AlertRead, AlertSummary
 
-router = APIRouter(prefix="/alerts", tags=["alerts"])
+router = APIRouter(prefix="/alerts", tags=["alerts"], route_class=CommittingRoute)
 
 
 @router.get("", response_model=Page[AlertRead], summary="List alerts")

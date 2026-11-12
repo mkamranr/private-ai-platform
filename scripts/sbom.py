@@ -334,7 +334,7 @@ def write(target: Path, sbom: dict) -> tuple[Path, Path]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-dir", type=Path, default=REPO_ROOT)
-    parser.add_argument("--platform-version", default="0.1.0")
+    parser.add_argument("--platform-version", default="0.2.0")
     parser.add_argument("--wheels", type=Path, action="append", default=[], help="Wheel directory (repeatable)")
     options = parser.parse_args()
     sbom = build_sbom(platform_version=options.platform_version, wheel_dirs=options.wheels)

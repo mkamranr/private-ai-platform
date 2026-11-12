@@ -22,6 +22,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routing import SESSION_STATE_KEY
 from app.config.settings import Settings, get_settings
 from app.core.errors import PermissionDeniedError, RateLimitError, TokenError
 from app.core.interfaces.auth_provider import AuthProvider, PasswordAuthProvider
@@ -163,6 +164,8 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     """One transaction per request, committed on success (see session_scope)."""
     database = request.app.state.database
     async for session in session_scope(database.sessionmaker):
+        # Found here by `CommittingRoute`, which commits before the response is sent.
+        setattr(request.state, SESSION_STATE_KEY, session)
         yield session
 
 

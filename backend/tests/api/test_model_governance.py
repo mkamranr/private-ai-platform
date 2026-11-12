@@ -71,7 +71,7 @@ async def _serving(session: AsyncSession, model: Model) -> ModelDeployment:
         node_id=node.id,
         state=DeploymentState.RUNNING,
         runtime="mock",
-        image="ai-platform/mock-vllm:0.1.0",
+        image="ai-platform/mock-vllm:0.2.0",
         internal_port=8000,
         internal_url="http://fake-runtime:8000",
         gpu_indices=[],

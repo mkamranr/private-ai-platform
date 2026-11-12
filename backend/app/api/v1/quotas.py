@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query, status
 
 from app.api.deps import ApiKeyServiceDep, QuotaServiceDep, ScopeDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.models.models_registry import UsageRecord
@@ -23,7 +24,7 @@ from app.schemas.operations import (
     QuotaUpdateRequest,
 )
 
-router = APIRouter(tags=["quotas"])
+router = APIRouter(tags=["quotas"], route_class=CommittingRoute)
 
 
 @router.get("/quotas", response_model=list[QuotaRead], summary="List gateway quotas")

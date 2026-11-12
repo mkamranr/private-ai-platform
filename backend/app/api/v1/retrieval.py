@@ -19,6 +19,7 @@ from app.api.deps import (
     ScopeGuardDep,
     require_permission,
 )
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.models.knowledge import RagEvalSet
@@ -43,7 +44,7 @@ from app.schemas.retrieval import (
 from app.services.knowledge import RERANK_DEFAULT, RetrievalTrace
 from app.services.rag_eval import RagEvalService, RunSettings
 
-router = APIRouter(tags=["retrieval"])
+router = APIRouter(tags=["retrieval"], route_class=CommittingRoute)
 
 
 def _reranker(settings: RetrievalSettings) -> str | None:

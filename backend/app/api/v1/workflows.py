@@ -21,6 +21,7 @@ from app.api.deps import (
     WorkflowServiceDep,
     require_permission,
 )
+from app.api.routing import CommittingRoute
 from app.core.errors import ValidationError
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
@@ -50,7 +51,7 @@ from app.schemas.workflows import (
 from app.services import workflow_definition as wd
 from app.services.workflows import WorkflowService, template_definition
 
-router = APIRouter(tags=["workflows"])
+router = APIRouter(tags=["workflows"], route_class=CommittingRoute)
 
 
 # ---------------------------------------------------------------------------

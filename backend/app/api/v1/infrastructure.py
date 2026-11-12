@@ -20,6 +20,7 @@ from fastapi import APIRouter, Path, Query, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import (
+    AuditDep,
     DockerServiceDep,
     EffectiveSettingsDep,
     EnrollmentContextDep,
@@ -29,10 +30,12 @@ from app.api.deps import (
     SettingsDep,
     require_permission,
 )
+from app.api.routing import CommittingRoute
 from app.config.settings import Settings
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
 from app.core.permissions import Permission as Perm
+from app.models.audit import AuditAction
 from app.models.auth import User
 from app.schemas.common import MessageResponse, Page
 from app.schemas.infrastructure import (
@@ -60,7 +63,7 @@ from app.schemas.infrastructure import (
     NodeSyncResponse,
 )
 
-router = APIRouter(tags=["infrastructure"])
+router = APIRouter(tags=["infrastructure"], route_class=CommittingRoute)
 
 log = get_logger(__name__)
 
@@ -401,6 +404,7 @@ async def list_allocations(
 async def reserve_gpus(
     payload: GpuReserveRequest,
     service: GpuServiceDep,
+    audit: AuditDep,
     actor: Annotated[User, require_permission(Perm.INFRASTRUCTURE_MANAGE)],
 ) -> GpuReserveResponse:
     """Claim GPUs atomically.
@@ -418,6 +422,18 @@ async def reserve_gpus(
         purpose=payload.purpose,
         reserved_by=actor.id,
     )
+    await audit.record(
+        AuditAction.GPU_RESERVED,
+        user_id=actor.id,
+        username=actor.username,
+        resource_type="gpu_reservation",
+        resource_id=str(reservation_id),
+        metadata={
+            "node_id": str(payload.node_id),
+            "gpu_indices": payload.gpu_indices,
+            "purpose": payload.purpose,
+        },
+    )
     return GpuReserveResponse(
         reservation_id=reservation_id,
         node_id=payload.node_id,
@@ -432,12 +448,22 @@ async def reserve_gpus(
 )
 async def release_gpus(
     service: GpuServiceDep,
-    _actor: Annotated[User, require_permission(Perm.INFRASTRUCTURE_MANAGE)],
+    audit: AuditDep,
+    actor: Annotated[User, require_permission(Perm.INFRASTRUCTURE_MANAGE)],
     reservation_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
     """Idempotent — releasing an already-released reservation is not an error, because
     cleanup paths retry."""
     released = await service.release(reservation_id)
+    if released:  # a retried release changed nothing, so it records nothing
+        await audit.record(
+            AuditAction.GPU_RELEASED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="gpu_reservation",
+            resource_id=str(reservation_id),
+            metadata={"released": released},
+        )
     return MessageResponse(message=f"Released {released} GPU allocation(s).")
 
 

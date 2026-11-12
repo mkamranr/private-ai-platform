@@ -18,11 +18,12 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.api.deps import MonitoringServiceDep, TraceServiceDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.monitoring import MonitoringOverviewResponse, TraceResponse
 
-router = APIRouter(tags=["monitoring"])
+router = APIRouter(tags=["monitoring"], route_class=CommittingRoute)
 
 
 @router.get(

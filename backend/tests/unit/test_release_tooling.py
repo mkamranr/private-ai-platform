@@ -225,3 +225,59 @@ class TestRunnerGuards:
         with pytest.raises(runner.JobError):
             site.bundle_path("20261110T020000Z")  # a backup's name is not a bundle
         assert site.rollback_name("20261001T120000Z") == "20261001T120000Z"
+
+
+class TestRunnerUpgrade:
+    """E11: an upgrade migrates, then grants the release's new permissions to the roles."""
+
+    class StubReporter:
+        def __init__(self) -> None:
+            self.result: dict = {}
+            self.lines: list[str] = []
+
+        def line(self, text: str) -> None:
+            self.lines.append(text)
+
+    @pytest.fixture
+    def runner(self):
+        return load("ops_runner")
+
+    @pytest.fixture
+    def site(self, runner, tmp_path):
+        root = tmp_path / "site"
+        (root / "offline").mkdir(parents=True)
+        (root / "offline" / "upgrade.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+        make_bundle(root / "updates")
+        return runner.Inventory(root, root / "updates", {})
+
+    def _run(self, runner, site, monkeypatch, fail_on: str | None = None):
+        commands: list[list[str]] = []
+
+        def fake_run(argv, reporter, *, cwd, env=None):
+            commands.append([str(a) for a in argv])
+            return 1 if fail_on and fail_on in argv else 0
+
+        monkeypatch.setattr(runner, "run_command", fake_run)
+        reporter = self.StubReporter()
+        spec = {"kind": "upgrade", "params": {"bundle": "20261111T090000Z"}}
+        outcome = runner.execute(spec, site, reporter, "python3")
+        return outcome, commands, reporter
+
+    def test_migrates_then_reconciles_rbac_without_touching_accounts(
+        self, runner, site, monkeypatch
+    ):
+        outcome, commands, reporter = self._run(runner, site, monkeypatch)
+        assert outcome == ("SUCCEEDED", None)
+        assert commands[1][-3:] == ["alembic", "upgrade", "head"]
+        assert commands[2][-5:] == ["python", "-m", "app.utils.cli", "seed", "--rbac-only"]
+        assert reporter.result == {
+            "bundle": "20261111T090000Z",
+            "migrated": True,
+            "rbac_reconciled": True,
+        }
+
+    def test_a_failed_reconcile_is_reported(self, runner, site, monkeypatch):
+        (status, detail), _commands, _reporter = self._run(
+            runner, site, monkeypatch, fail_on="--rbac-only"
+        )
+        assert status == "FAILED" and "seed --rbac-only" in detail

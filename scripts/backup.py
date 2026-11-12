@@ -196,7 +196,7 @@ def create(output_root: Path) -> int:
     manifest = {
         "format_version": FORMAT_VERSION,
         "created_at": stamp,
-        "platform_version": env.get("PLATFORM_VERSION", "0.1.0"),
+        "platform_version": env.get("PLATFORM_VERSION", "0.2.0"),
         "schema_revision": _schema_revision(),
         # See the module docstring: the key itself is deliberately absent.
         "encryption_key_fingerprint": _key_fingerprint(env),

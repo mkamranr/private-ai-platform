@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query, status
 
 from app.api.deps import InferenceBackendServiceDep, ModelRegistryDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.common import Page
@@ -24,7 +25,7 @@ from app.schemas.operations import (
 )
 from app.services.inference_backends import platform_model_name
 
-router = APIRouter(prefix="/backends", tags=["backends"])
+router = APIRouter(prefix="/backends", tags=["backends"], route_class=CommittingRoute)
 
 
 @router.get("", response_model=Page[BackendRead], summary="List inference backends")

@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path
 
 from app.api.deps import ConnectorCatalogueDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.connectors import (
@@ -16,7 +17,7 @@ from app.schemas.connectors import (
     ConnectorRiskResult,
 )
 
-router = APIRouter(prefix="/mcp/catalogue", tags=["mcp"])
+router = APIRouter(prefix="/mcp/catalogue", tags=["mcp"], route_class=CommittingRoute)
 
 NamePath = Annotated[str, Path(pattern=r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")]
 

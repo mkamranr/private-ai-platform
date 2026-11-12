@@ -35,6 +35,7 @@ from typing import Any
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.api.routing import CommittingRoute
 from app.core.interfaces.agent import RunEventType
 from app.core.logging import get_logger
 from app.models.voice import VoiceSessionState
@@ -42,7 +43,7 @@ from app.services.voice import Stopwatch, TurnTimings
 
 log = get_logger(__name__)
 
-router = APIRouter()
+router = APIRouter(route_class=CommittingRoute)
 
 #: Refuse an utterance larger than this rather than buffering it. At 16 kHz 16-bit mono
 #: this is about five minutes of speech — far longer than anyone says in one turn, and

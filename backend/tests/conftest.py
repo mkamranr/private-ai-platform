@@ -19,11 +19,13 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.deps import get_session
+from app.api.routing import SESSION_STATE_KEY
 from app.config.settings import Settings, get_settings
 from app.core.permissions import Permission as Perm
 from app.core.security import PasswordHasherService, SecretCipher, TokenService
@@ -149,7 +151,10 @@ async def app(settings: Settings, database: Database, session: AsyncSession):
         minio=application.state.minio,
     )
 
-    async def _override_session() -> AsyncIterator[AsyncSession]:
+    async def _override_session(request: Request) -> AsyncIterator[AsyncSession]:
+        # As get_session does, so every API test goes through CommittingRoute's early
+        # commit (here it only releases a savepoint; the outer transaction still rolls back).
+        setattr(request.state, SESSION_STATE_KEY, session)
         yield session
 
     application.dependency_overrides[get_session] = _override_session

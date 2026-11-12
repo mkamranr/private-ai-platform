@@ -18,6 +18,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, status
 
 from app.api.deps import VoiceConfigStoreDep, VoiceServiceDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.common import MessageResponse
@@ -31,7 +32,7 @@ from app.schemas.voice import (
     VoiceSessionMessageRead,
 )
 
-router = APIRouter(tags=["voice"])
+router = APIRouter(tags=["voice"], route_class=CommittingRoute)
 
 
 @router.post(

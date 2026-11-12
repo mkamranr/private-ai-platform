@@ -169,6 +169,13 @@ class AuditAction(enum.StrEnum):
     TEAM_MEMBER_UPDATED = "TEAM_MEMBER_UPDATED"
     TEAM_MEMBER_REMOVED = "TEAM_MEMBER_REMOVED"
     SCOPE_ASSIGNED = "SCOPE_ASSIGNED"
+    # Release readiness (E11): privileged changes that were not recorded before.
+    SKILL_CREATED = "SKILL_CREATED"
+    SKILL_DELETED = "SKILL_DELETED"
+    # Operator reservations only; a deployment's own reservation is in MODEL_DEPLOYED.
+    GPU_RESERVED = "GPU_RESERVED"
+    GPU_RELEASED = "GPU_RELEASED"
+    MODEL_IMPORTED = "MODEL_IMPORTED"
 
 
 class AuditLog(UUIDPrimaryKeyMixin, Base):

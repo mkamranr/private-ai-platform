@@ -7,11 +7,12 @@ from typing import Annotated
 from fastapi import APIRouter, Path, status
 
 from app.api.deps import RuntimeSettingsServiceDep, require_permission
+from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.schemas.runtime_settings import SettingReset, SettingsCatalogue, SettingUpdate
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+router = APIRouter(prefix="/settings", tags=["settings"], route_class=CommittingRoute)
 
 KeyPath = Annotated[str, Path(pattern=r"^[a-z_]+\.[a-z0-9_]+$", max_length=128)]
 
