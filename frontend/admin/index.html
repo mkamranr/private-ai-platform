@@ -1614,6 +1614,57 @@
   </div>
 </div>
 
+<!-- Chargeback: add or change a cost budget (E12) -->
+<div class="modal fade" id="budget-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="budget-form">
+        <div class="modal-header">
+          <h5 class="modal-title" id="budget-title">Add cost budget</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">A monthly limit on the estimated cost. It raises an alert at the
+            warning share and another at 100%. <strong>It never blocks traffic</strong>; token quotas on the
+            Usage &amp; Quotas page do that.</p>
+          <input type="hidden" id="budget-id">
+          <div class="row g-2 mb-3" id="budget-subject-row">
+            <div class="col-sm-5">
+              <label class="form-label small text-secondary" for="budget-scope">Applies to</label>
+              <select class="form-select" id="budget-scope">
+                <option value="global">All usage</option>
+                <option value="team">A team</option>
+                <option value="api_key">An API key</option>
+              </select>
+            </div>
+            <div class="col-sm-7">
+              <label class="form-label small text-secondary" for="budget-subject">Which</label>
+              <select class="form-select" id="budget-subject" disabled></select>
+            </div>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-sm-7">
+              <label class="form-label small text-secondary" for="budget-amount">Per month, in <span class="budget-currency">USD</span></label>
+              <input class="form-control" id="budget-amount" type="number" min="0.01" step="any" required>
+            </div>
+            <div class="col-sm-5">
+              <label class="form-label small text-secondary" for="budget-warn">Warn at (%)</label>
+              <input class="form-control" id="budget-warn" type="number" min="1" max="99" step="1" value="80" required>
+            </div>
+          </div>
+          <label class="form-label small text-secondary" for="budget-description">Note <span class="text-secondary">(optional)</span></label>
+          <input class="form-control" id="budget-description" maxlength="500" placeholder="e.g. Research team FY27 allocation">
+          <div class="alert alert-danger small py-2 mt-3 mb-0 d-none" id="budget-error"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="budget-submit">Add budget</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- Ops: one job's output (E7) -->
 <div class="modal fade" id="ops-job-modal" tabindex="-1">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">

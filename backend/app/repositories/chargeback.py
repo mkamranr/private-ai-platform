@@ -15,7 +15,7 @@ from sqlalchemy import String, cast, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth import User
-from app.models.chargeback import DEFAULT_RATE_MODEL, CostRate
+from app.models.chargeback import DEFAULT_RATE_MODEL, CostBudget, CostRate
 from app.models.infrastructure import GpuAllocation
 from app.models.models_registry import ApiClient, ApiKey, Model, UsageRecord
 from app.models.teams import Team
@@ -53,6 +53,20 @@ class CostRateRepository(BaseRepository[CostRate]):
             return True
         used = select(UsageRecord.id).where(UsageRecord.model == name).limit(1)
         return (await self.session.execute(used)).first() is not None
+
+
+class CostBudgetRepository(BaseRepository[CostBudget]):
+    model = CostBudget
+
+    async def list_all(self, *, enabled_only: bool = False) -> Sequence[CostBudget]:
+        stmt = select(CostBudget).order_by(CostBudget.scope, CostBudget.subject)
+        if enabled_only:
+            stmt = stmt.where(CostBudget.enabled.is_(True))
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def get_by_subject(self, scope: str, subject: str) -> CostBudget | None:
+        stmt = select(CostBudget).where(CostBudget.scope == scope, CostBudget.subject == subject)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
 
 class ChargebackRepository:

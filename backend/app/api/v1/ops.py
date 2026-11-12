@@ -16,7 +16,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Path, Query, Response, status
 
-from app.api.deps import OpsServiceDep, require_permission
+from app.api.deps import BackupSchedulerDep, OpsServiceDep, require_permission
 from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
@@ -26,6 +26,7 @@ from app.schemas.ops import (
     NAME_PATTERN,
     BackupItem,
     BackupList,
+    BackupScheduleStatus,
     BundleItem,
     BundleList,
     ConfirmedJobRequest,
@@ -204,6 +205,18 @@ async def list_backups(
         verify = await service.latest_job("backup.verify", "backup", item.name)
         out.append(BackupItem(**item.model_dump(), last_verify=_read(verify) if verify else None))
     return BackupList(runner_online=online, items=out)
+
+
+@router.get("/backups/schedule", response_model=BackupScheduleStatus, summary="The backup schedule")
+async def backup_schedule(
+    scheduler: BackupSchedulerDep,
+    _actor: Annotated[User, require_permission(Perm.BACKUP_MANAGE)],
+) -> BackupScheduleStatus:
+    """Interval, retention, the newest backup and when the next one is due (E12). Read
+    only: the schedule itself is the `ops.backup_interval_hours` and `ops.backup_keep`
+    runtime settings."""
+    outcome = await scheduler.status()
+    return BackupScheduleStatus.model_validate(outcome, from_attributes=True)
 
 
 @router.post(

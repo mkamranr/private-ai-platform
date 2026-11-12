@@ -15,6 +15,7 @@ Object.assign(PILL_TONE, { QUEUED: 'idle', CANCELLED: 'idle' });
 const OPS_KIND_LABEL = {
   'backup.create': 'Backup', 'backup.verify': 'Verify backup', 'backup.restore': 'Restore',
   'bundle.verify': 'Verify bundle', upgrade: 'Upgrade', rollback: 'Rollback',
+  'backup.prune': 'Retention',
 };
 const OPS_ACTIVE = new Set(['QUEUED', 'RUNNING']);
 
@@ -53,7 +54,41 @@ function duration(job) {
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-const jobTarget = (job) => job.params?.backup || job.params?.bundle || job.params?.point || job.result?.backup || '';
+const jobTarget = (job) => job.params?.backup || job.params?.bundle || job.params?.point || job.result?.backup
+  || (job.params?.delete ? `${job.params.delete.length} old backup(s)` : '');
+
+/** The backup schedule and retention (E12). Both are runtime settings. */
+function scheduleCard(sched) {
+  if (!sched) return '';
+  const settingsLink = can('settings.view')
+    ? '<a class="btn btn-sm btn-outline-secondary" href="#settings">Change on the Settings page</a>' : '';
+  if (!sched.enabled) {
+    return `<div class="card mb-4"><div class="card-body d-flex flex-wrap gap-2 align-items-center">
+      <div class="me-auto"><h6 class="mb-1">Schedule</h6>
+        <div class="small text-secondary">Scheduled backups are off. Set <em>Scheduled backup every (hours)</em>
+          and the platform queues them for the runner, with an alert if one fails or none completes.</div></div>
+      ${settingsLink}</div></div>`;
+  }
+  const due = sched.next_due_at ? new Date(sched.next_due_at) : null;
+  const dueText = !due ? '—' : due <= new Date() ? 'now, at the next check' : due.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  const last = sched.last_job;
+  const lastText = last ? `${pill(last.status)} <span class="small text-secondary">${esc(last.requested_by || '')} · ${esc(ago(last.created_at))}</span>` : '<span class="text-secondary">none yet</span>';
+  const retention = sched.keep
+    ? `keep the newest ${sched.keep}${sched.prune_candidates.length ? ` · <span class="text-warning-emphasis">${sched.prune_candidates.length} to delete at the next run</span>` : ''}`
+    : 'keep every backup';
+  return `<div class="card mb-4"><div class="card-body">
+    <div class="d-flex flex-wrap gap-2 align-items-start mb-2">
+      <div class="me-auto"><h6 class="mb-1">Schedule ${sched.overdue ? pill('WARNING', 'Overdue') : pill('HEALTHY', 'On schedule')}</h6>
+        <div class="small text-secondary">Queued for the runner as ordinary, audited jobs requested by <code>scheduler</code>.</div></div>
+      ${settingsLink}</div>
+    <dl class="ops-facts mb-0">
+      <dt>Every</dt><dd>${sched.interval_hours} h</dd>
+      <dt>Retention</dt><dd>${retention}</dd>
+      <dt>Next due</dt><dd>${esc(dueText)}${sched.runner_online ? '' : ' <span class="text-danger">(runner offline: nothing can run)</span>'}</dd>
+      <dt>Last backup job</dt><dd>${lastText}</dd>
+    </dl>${sched.note ? `<div class="small text-secondary mt-2">${esc(sched.note)}</div>` : ''}
+  </div></div>`;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Runner banner                                                              */
@@ -219,10 +254,11 @@ async function renderBackups() {
       'only SUPER_ADMIN holds it, so day-to-day admins cannot take data off the platform.');
     return;
   }
-  const [status, list, jobs] = await Promise.all([
+  const [status, list, jobs, sched] = await Promise.all([
     loadRunnerStatus().catch(() => null),
     api('/ops/backups'),
     api('/ops/jobs?limit=100').catch(() => ({ items: [] })),
+    api('/ops/backups/schedule').catch(() => null),
   ]);
   const backupJobs = jobs.items.filter((j) => j.kind.startsWith('backup.')).slice(0, 15);
   const items = list.items;
@@ -273,12 +309,12 @@ async function renderBackups() {
       </td></tr>`;
   }).join('');
 
-  body.innerHTML = runnerBanner(status) + tiles +
+  body.innerHTML = runnerBanner(status) + tiles + scheduleCard(sched) +
     sectionCard('Backups', 'Newest first. The runner lists what is in backups/ on the host.',
       items.length ? tableHtml('<th>Backup</th><th>Contents</th><th>Schema</th><th>Version</th><th class="text-end">Size</th><th>Key</th><th>Verified</th><th></th>', rows)
         : `<div class="card-body pt-0">${empty(list.runner_online ? 'No backups on the host yet. Take one now — and always before an upgrade.'
           : 'No backups reported. The runner reports what is on disk once it connects.')}</div>`) +
-    sectionCard('Recent operations', 'Backups, verifications and restores, with who asked and why.',
+    sectionCard('Recent operations', 'Backups, verifications, retention and restores, with who asked and why.',
       `<div class="${backupJobs.length ? '' : 'card-body pt-0'}">${jobsTable(backupJobs, 'Nothing has been requested yet.')}</div>`) +
     `<p class="small text-secondary">${icon('i-info')} A restore replaces the database and object storage with
       the backup's, stops the API while it runs, and is all-or-nothing. Vector collections are

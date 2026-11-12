@@ -43,6 +43,11 @@ from app.core.logging import get_logger
 from app.core.security import SecretCipher
 from app.models.infrastructure import NodeStatus
 from app.repositories.audit import AuditRepository
+from app.repositories.chargeback import (
+    ChargebackRepository,
+    CostBudgetRepository,
+    CostRateRepository,
+)
 from app.repositories.infrastructure import (
     ContainerRepository,
     GpuAllocationRepository,
@@ -52,11 +57,22 @@ from app.repositories.infrastructure import (
     GpuRepository,
     NodeRepository,
 )
-from app.repositories.operations import AlertRepository, InferenceBackendRepository
+from app.repositories.models_registry import ApiKeyRepository
+from app.repositories.operations import (
+    AlertRepository,
+    GatewayQuotaRepository,
+    InferenceBackendRepository,
+)
+from app.repositories.ops import OpsJobRepository, OpsRunnerRepository
+from app.repositories.teams import TeamRepository
 from app.services.alerts import AlertService
 from app.services.audit import AuditService
+from app.services.backup_schedule import BackupScheduler
+from app.services.budgets import BudgetWatcher, CostBudgetService
+from app.services.chargeback import ChargebackService
 from app.services.inference_backends import InferenceBackendService
 from app.services.infrastructure import GpuService, NodeService
+from app.services.ops import OpsService
 from app.services.runtime_settings import RUNTIME
 
 log = get_logger(__name__)
@@ -69,6 +85,9 @@ RETENTION_INTERVAL_SECONDS = 3600
 # A node is stale after this many missed polls. Three rather than one, so a single
 # slow response does not flap a healthy node to OFFLINE.
 STALE_POLL_MULTIPLIER = 3
+
+# The backup schedule is measured in hours; checking every five minutes is plenty (E12).
+BACKUP_SCHEDULE_CHECK_SECONDS = 300
 
 
 class InfrastructureWorker:
@@ -219,6 +238,71 @@ class InfrastructureWorker:
         except Exception:
             log.exception("backend_health_failed")
 
+    async def check_budgets(self) -> None:
+        """Token and cost budgets against usage: raise or clear alerts (E12). Never raises."""
+        try:
+            async with self._session_factory() as session:
+                settings = await RUNTIME.effective(session, self._settings)
+                audit = AuditService(
+                    AuditRepository(session), session_factory=self._session_factory
+                )
+                alert_repo = AlertRepository(session)
+                keys, teams = ApiKeyRepository(session), TeamRepository(session)
+                budgets = CostBudgetRepository(session)
+                costs = CostBudgetService(
+                    budgets,
+                    ChargebackService(
+                        CostRateRepository(session),
+                        ChargebackRepository(session),
+                        audit,
+                        currency=settings.chargeback.currency,
+                    ),
+                    keys,
+                    teams,
+                    audit,
+                )
+                watcher = BudgetWatcher(
+                    GatewayQuotaRepository(session),
+                    budgets,
+                    costs,
+                    AlertService(alert_repo, audit),
+                    alert_repo,
+                    keys,
+                    teams,
+                    warn_percent=settings.gateway.budget_warning_percent,
+                )
+                result = await watcher.run()
+                await session.commit()
+            if result.raised or result.cleared:
+                log.info(
+                    "budget_check_completed",
+                    open=len(result.open),
+                    cleared=len(result.cleared),
+                )
+        except Exception:
+            log.exception("budget_check_failed")
+
+    async def schedule_backups(self) -> None:
+        """Queue scheduled backups and retention for the ops runner (E12). Never raises."""
+        try:
+            async with self._session_factory() as session:
+                settings = await RUNTIME.effective(session, self._settings)
+                audit = AuditService(
+                    AuditRepository(session), session_factory=self._session_factory
+                )
+                ops = OpsService(
+                    settings, OpsJobRepository(session), OpsRunnerRepository(session), audit
+                )
+                scheduler = BackupScheduler(
+                    settings, ops, AlertService(AlertRepository(session), audit)
+                )
+                outcome = await scheduler.run()
+                await session.commit()
+            if outcome.queued:
+                log.info("backup_schedule_ran", queued=outcome.queued)
+        except Exception:
+            log.exception("backup_schedule_failed")
+
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
         interval = self._settings.gpu.poll_interval_seconds
@@ -260,6 +344,26 @@ class InfrastructureWorker:
             coalesce=True,
             max_instances=1,
             misfire_grace_time=backend_interval,
+        )
+
+        budget_interval = self._settings.workers.budget_check_interval_seconds
+        self._scheduler.add_job(
+            self.check_budgets,
+            IntervalTrigger(seconds=budget_interval),
+            id="budget_check",
+            name="Compare token and cost budgets with usage",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=budget_interval,
+        )
+        self._scheduler.add_job(
+            self.schedule_backups,
+            IntervalTrigger(seconds=BACKUP_SCHEDULE_CHECK_SECONDS),
+            id="backup_schedule",
+            name="Queue scheduled backups and retention",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=BACKUP_SCHEDULE_CHECK_SECONDS,
         )
 
         self._scheduler.start()

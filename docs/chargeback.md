@@ -112,20 +112,55 @@ capacity:
   `-`, `@`, a tab or a carriage return is prefixed with `'`, so a spreadsheet does not run
   `=HYPERLINK(...)` planted by a caller.
 
+## Budgets (E12)
+
+A monthly **cost budget** compares the month's estimated spend (from the 1st, 00:00 UTC)
+with an amount in the `chargeback.currency` currency. A budget belongs to one scope:
+
+| scope | subject | spend counted |
+|---|---|---|
+| `global` | none | everything, including idle GPU time |
+| `team` | the team's id | the team's row of the report by team |
+| `api_key` | the key's id | the key's row of the report by API key |
+
+There is at most one budget per subject. Each budget has a warning share (`warn_percent`,
+default 80, between 1 and 99).
+
+- **Alerts only.** A background job (`workers.budget_check_interval_seconds`, default 300)
+  raises a WARNING alert at the warning share and a CRITICAL one at 100%. Both appear on
+  the Alerts page. The alert clears itself when spend falls back, for example when a new
+  month starts, a rate changes or the budget is raised, turned off or removed. A budget
+  never refuses traffic: these are estimates, and token **quotas** are the hard limit.
+- **Unpriced usage.** If none of the subject's usage has a rate, there is no figure, so the
+  budget shows *Not priced* and raises nothing. If only some usage has a rate, the figure
+  is a **lower bound** and the alert says so.
+- **Visibility.** Team budgets follow team scope. Global and API-key budgets need
+  `scope.all`.
+- **Audited.** `COST_BUDGET_CREATED`, `COST_BUDGET_UPDATED`, `COST_BUDGET_DELETED`.
+
+The budgets card on the Chargeback page shows the amount, the spend, the share used and the
+status (within budget, near limit, exceeded, not priced or off). Anyone with `cost.manage`
+can add, change, turn off and remove budgets there.
+
+Token quotas raise the same kind of alerts. See
+[gateway-policy.md](gateway-policy.md#budget-alerts).
+
 ## Permissions
 
 | Permission | Grants | Held by default |
 |---|---|---|
-| `cost.view` | reports, rates, CSV export | ADMIN, AI_ADMIN, AUDITOR |
-| `cost.manage` | add and remove rates | ADMIN, AI_ADMIN |
+| `cost.view` | reports, rates, budgets, CSV export | ADMIN, AI_ADMIN, AUDITOR |
+| `cost.manage` | add and remove rates and budgets | ADMIN, AI_ADMIN |
 
 They are separate from `usage.view`: a cost report is a financial view of usage, and the
 rate card is a finance decision.
 
 ## Not built
 
-- **Invoices, budgets in currency, and cost alerts.** Quotas (E2) limit tokens. A currency
-  budget would need rates to be authoritative, and these are estimates.
+- **Invoices, and budgets that refuse traffic.** Budgets (E12) only alert. Refusing
+  requests on a currency figure would need rates to be authoritative, and these are
+  estimates. Quotas (E2) are the hard limit, in tokens.
+- **Notifications outside the console** (email, chat). Budget alerts are in-app only.
 - **Currency conversion.**
 - **Power or utilisation-weighted GPU cost.** GPU time is reservation time, the only GPU
   measure the platform can attribute to a model reliably.

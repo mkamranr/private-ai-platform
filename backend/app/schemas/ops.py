@@ -239,3 +239,20 @@ class VersionInventory(BaseModel):
 class RedactedConfig(BaseModel):
     config: dict[str, Any]
     redacted_fields: int
+
+
+class BackupScheduleStatus(BaseModel):
+    """The backup schedule as it stands (E12). Settings are runtime settings."""
+
+    enabled: bool
+    interval_hours: int
+    keep: int
+    runner_online: bool
+    newest_backup: str | None
+    newest_backup_at: dt.datetime | None
+    next_due_at: dt.datetime | None
+    overdue: bool
+    #: Complete backups the next retention run would delete.
+    prune_candidates: list[str]
+    last_job: dict[str, Any] | None
+    note: str | None

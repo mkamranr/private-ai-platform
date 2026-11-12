@@ -508,6 +508,10 @@ class GatewaySettings(BaseModel):
     #: replica cannot release its slots, so they lapse after this instead of shrinking
     #: the limit forever. Longer than any sane generation.
     concurrency_lease_seconds: int = Field(default=1800, ge=60, le=86_400)
+    #: E12: a daily or monthly token budget raises a WARNING alert at this share of its
+    #: limit and a CRITICAL one when it is used up. The gateway refuses at 100% either way;
+    #: the alert is the notice before that happens.
+    budget_warning_percent: int = Field(default=80, ge=1, le=99)
 
 
 class KnowledgeSettings(BaseModel):
@@ -627,6 +631,9 @@ class WorkersSettings(BaseModel):
     #: one cheap request per backend; a minute means an outage raises an alert within a
     #: minute without polling anybody's server hard.
     backend_health_interval_seconds: int = Field(default=60, ge=10, le=3600)
+    #: How often token budgets and cost budgets are compared with usage (E12). Usage is
+    #: summed from usage_records, so this is a few aggregate queries per run.
+    budget_check_interval_seconds: int = Field(default=300, ge=60, le=3600)
 
 
 class OpsSettings(BaseModel):
@@ -651,6 +658,12 @@ class OpsSettings(BaseModel):
     #: How far back a support bundle's logs reach, and how many lines it keeps.
     support_log_hours: int = Field(default=6, ge=1, le=72)
     support_log_lines: int = Field(default=5000, ge=100, le=50000)
+    #: E12: queue a backup this often, in hours. 0 turns scheduled backups off. The runner
+    #: must be online; while it is not, the schedule waits and raises an overdue alert.
+    backup_interval_hours: int = Field(default=0, ge=0, le=720)
+    #: E12: keep this many complete backups and delete older ones after each scheduled
+    #: backup. 0 keeps every backup. The newest complete backup is never deleted.
+    backup_keep: int = Field(default=0, ge=0, le=1000)
 
 
 class ChargebackSettings(BaseModel):

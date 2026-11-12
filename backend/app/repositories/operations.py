@@ -167,6 +167,15 @@ class AlertRepository(BaseRepository[Alert]):
         result = await self.session.execute(stmt)
         return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
+    async def open_fingerprints(self, source: str) -> set[str]:
+        """Fingerprints of the open alerts one source raised, so a check can clear the
+        ones whose condition it no longer sees."""
+        stmt = select(Alert.fingerprint).where(
+            Alert.source == source,
+            Alert.state.in_([str(s) for s in OPEN_ALERT_STATES]),
+        )
+        return set((await self.session.execute(stmt)).scalars().all())
+
 
 class GatewayQuotaRepository(BaseRepository[GatewayQuota]):
     model = GatewayQuota
@@ -235,3 +244,25 @@ class GatewayQuotaRepository(BaseRepository[GatewayQuota]):
         )
         stmt = select(column).where(condition, UsageRecord.recorded_at >= since)
         return int((await self.session.execute(stmt)).scalar_one())
+
+    async def tokens_by_subject_since(self, scope: str, since: dt.datetime) -> dict[str, int]:
+        """Tokens per subject of ``scope`` since ``since``: what a ``*`` quota governs.
+
+        Subjects are the strings quotas use: key and team ids, trusted end-user names and
+        model names. Usage with no subject in this scope (no key, no team) is left out.
+        """
+        subject: Any
+        conditions: list[Any] = [UsageRecord.recorded_at >= since]
+        if scope == QuotaScope.API_KEY:
+            subject = UsageRecord.api_key_id
+        elif scope == QuotaScope.END_USER:
+            subject = UsageRecord.end_user
+            conditions.append(UsageRecord.end_user_trusted.is_(True))
+        elif scope == QuotaScope.TEAM:
+            subject = UsageRecord.team_id
+        else:
+            subject = UsageRecord.model
+        tokens = func.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens)
+        stmt = select(subject, tokens).where(subject.is_not(None), *conditions).group_by(subject)
+        rows = (await self.session.execute(stmt)).all()
+        return {str(key): int(total or 0) for key, total in rows}

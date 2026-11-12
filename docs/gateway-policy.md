@@ -62,6 +62,24 @@ Each in-flight request holds a lease in a Valkey sorted set. A crashed replica c
 release its leases, so each one lapses after `GATEWAY__CONCURRENCY_LEASE_SECONDS`
 (default 1800) instead of permanently shrinking the limit.
 
+## Budget alerts
+
+The budget check (E12, every `workers.budget_check_interval_seconds`, default 300) raises
+an in-app alert before a daily or monthly token quota runs out:
+
+- **WARNING** at `gateway.budget_warning_percent` of the limit (default 80, a runtime
+  setting);
+- **CRITICAL** at 100%. At that point the gateway is already refusing requests.
+
+There is one alert per quota, period and subject. A `*` quota is checked for every subject
+that used tokens, except subjects with an enabled quota of their own, which are checked
+against that quota instead. Disabled quotas raise nothing. The alert clears itself when
+usage drops below the warning share, which happens when the day or month resets or the
+limit is raised. Per-minute limits and concurrency change too fast to be worth an alert.
+
+Cost budgets in currency are separate and are described in
+[chargeback.md](chargeback.md#budgets-e12).
+
 ## Circuit breakers
 
 After `GATEWAY__CIRCUIT_FAILURE_THRESHOLD` upstream failures (default 5) within

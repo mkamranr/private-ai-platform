@@ -25,7 +25,7 @@ from app.models.agents import (
 )
 from app.models.audit import AuditAction, AuditLog, AuditResult
 from app.models.auth import Permission, Role, User, role_permissions, user_roles
-from app.models.chargeback import DEFAULT_RATE_MODEL, CostRate
+from app.models.chargeback import DEFAULT_RATE_MODEL, CostBudget, CostBudgetScope, CostRate
 from app.models.infrastructure import (
     Container,
     ContainerState,
@@ -136,6 +136,8 @@ __all__ = [
     "ContainerState",
     "Conversation",
     "ConversationMessage",
+    "CostBudget",
+    "CostBudgetScope",
     "CostRate",
     "DeploymentRevision",
     "DeploymentState",

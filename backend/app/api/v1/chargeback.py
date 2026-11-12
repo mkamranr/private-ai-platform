@@ -8,18 +8,29 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Response, status
 
-from app.api.deps import ChargebackServiceDep, ScopeDep, require_permission
+from app.api.deps import (
+    ChargebackServiceDep,
+    CostBudgetServiceDep,
+    ScopeDep,
+    require_permission,
+)
 from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
+from app.core.scope import Scope
 from app.models.auth import User
 from app.schemas.chargeback import (
     ChargebackReport,
+    CostBudgetCreate,
+    CostBudgetRead,
+    CostBudgetsResponse,
+    CostBudgetUpdate,
     CostRateCreate,
     CostRateDelete,
     CostRateRead,
     CostRatesResponse,
     GroupBy,
 )
+from app.services.budgets import CostBudgetService
 
 router = APIRouter(prefix="/chargeback", tags=["chargeback"], route_class=CommittingRoute)
 
@@ -86,6 +97,88 @@ async def delete_rate(
     unpriced. Audited with the rate's values."""
     await service.delete_rate(rate_id, actor=actor, reason=payload.reason if payload else None)
     await service.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# -- cost budgets (E12) ------------------------------------------------------------
+@router.get("/budgets", response_model=CostBudgetsResponse, summary="List cost budgets")
+async def list_budgets(
+    service: CostBudgetServiceDep,
+    _actor: Annotated[User, require_permission(Perm.COST_VIEW)],
+    scope: ScopeDep,
+) -> CostBudgetsResponse:
+    """Monthly budgets with this month's estimated spend. Team budgets follow team
+    scope; global and API key budgets need `scope.all`."""
+    items = await service.list_budgets(scope=scope)
+    return CostBudgetsResponse(
+        currency=service.currency,
+        month_start=_default_start(),
+        items=[CostBudgetRead.model_validate(i) for i in items],
+    )
+
+
+async def _budget_read(
+    service: CostBudgetService, budget_id: uuid.UUID, scope: Scope
+) -> CostBudgetRead:
+    items = await service.list_budgets(scope=scope)
+    return CostBudgetRead.model_validate(next(i for i in items if i["id"] == budget_id))
+
+
+@router.post(
+    "/budgets",
+    response_model=CostBudgetRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a cost budget",
+)
+async def create_budget(
+    payload: CostBudgetCreate,
+    service: CostBudgetServiceDep,
+    actor: Annotated[User, require_permission(Perm.COST_MANAGE)],
+    scope: ScopeDep,
+) -> CostBudgetRead:
+    """Alerts at `warn_percent` and at 100% of the monthly amount. Budgets never block
+    traffic; token quotas do that. Audited."""
+    budget = await service.create(
+        actor=actor,
+        scope=scope,
+        budget_scope=payload.scope,
+        subject=payload.subject,
+        monthly_amount=payload.monthly_amount,
+        warn_percent=payload.warn_percent,
+        description=payload.description,
+        enabled=payload.enabled,
+    )
+    return await _budget_read(service, budget.id, scope)
+
+
+@router.patch("/budgets/{budget_id}", response_model=CostBudgetRead, summary="Change a budget")
+async def update_budget(
+    payload: CostBudgetUpdate,
+    service: CostBudgetServiceDep,
+    actor: Annotated[User, require_permission(Perm.COST_MANAGE)],
+    scope: ScopeDep,
+    budget_id: uuid.UUID = Path(...),
+) -> CostBudgetRead:
+    await service.update(
+        budget_id, payload.model_dump(exclude_unset=True), actor=actor, scope=scope
+    )
+    return await _budget_read(service, budget_id, scope)
+
+
+@router.delete(
+    "/budgets/{budget_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Remove a cost budget",
+)
+async def delete_budget(
+    service: CostBudgetServiceDep,
+    actor: Annotated[User, require_permission(Perm.COST_MANAGE)],
+    scope: ScopeDep,
+    budget_id: uuid.UUID = Path(...),
+) -> Response:
+    """Its open alert clears at the next budget check. Audited."""
+    await service.delete(budget_id, actor=actor, scope=scope)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

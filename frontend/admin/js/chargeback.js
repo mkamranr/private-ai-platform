@@ -1,4 +1,4 @@
-/* Private AI Platform — Chargeback (E9).
+/* Private AI Platform — Chargeback (E9) and cost budgets (E12).
  *
  * Loaded after admin.js and uses its helpers (api, esc, pill, empty, guard, alert, can,
  * icon, kpiTile, sectionCard, tableHtml, fmtInt, ago, onModalSubmit, closeModal, token, API).
@@ -8,7 +8,7 @@
  */
 'use strict';
 
-const cbState = { key: null, report: null, rates: null };
+const cbState = { key: null, report: null, rates: null, budgets: null };
 
 const CB_GROUP_HEAD = {
   team: 'Team', api_key: 'API key', user: 'Platform user', end_user: 'End user', model: 'Model',
@@ -150,6 +150,136 @@ function cbRatesCard(rates) {
      <th class="text-end">GPU-hour</th><th>From</th><th>Status</th><th></th>`, rows)}</div>`;
 }
 
+const BUDGET_STATUS = {
+  ok: ['HEALTHY', 'Within budget'],
+  warning: ['WARNING', 'Near limit'],
+  exceeded: ['CRITICAL', 'Exceeded'],
+  unpriced: ['IDLE', 'Not priced'],
+  disabled: ['IDLE', 'Off'],
+};
+
+/** Monthly cost budgets (E12): alerts only, never refusals. */
+function cbBudgetsCard(budgets) {
+  const manage = can('cost.manage');
+  const add = manage ? '<button class="btn btn-sm btn-primary" id="cb-add-budget">+ Add budget</button>' : '';
+  const header = `<div class="card-body pb-0 d-flex align-items-start gap-2">
+      <div class="me-auto"><h6 class="mb-1">Monthly budgets</h6>
+        <p class="small text-secondary mb-2">Estimated spend since ${esc(budgets.month_start)} (UTC) against each
+          budget. A budget raises an alert at its warning share and at 100%. It never blocks traffic.</p></div>${add}</div>`;
+  if (!budgets.items.length) {
+    return `<div class="card mb-4">${header}<div class="card-body pt-0">${empty(
+      'No budgets. Add one to be alerted before a team, an API key or the whole platform spends more than planned.')}</div></div>`;
+  }
+  const rows = budgets.items.map((b) => {
+    const [tone, label] = BUDGET_STATUS[b.status] || ['IDLE', b.status];
+    const pct = b.percent === null ? null : Math.min(b.percent, 100);
+    const barTone = b.status === 'exceeded' ? 'bg-danger' : b.status === 'warning' ? 'bg-warning' : '';
+    const bar = pct === null ? '' : `<div class="progress mt-1" style="height:6px" role="progressbar"
+        aria-valuenow="${b.percent}" aria-valuemin="0" aria-valuemax="100" aria-label="Share of budget used">
+        <div class="progress-bar ${barTone}" style="width:${pct}%"></div></div>`;
+    const actions = manage ? `<div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-secondary" data-budget-edit="${esc(b.id)}">Edit</button>
+        <button class="btn btn-outline-secondary" data-budget-toggle="${esc(b.id)}">${b.enabled ? 'Turn off' : 'Turn on'}</button>
+        <button class="btn btn-outline-danger" data-budget-delete="${esc(b.id)}">Remove</button></div>` : '';
+    return `<tr class="${b.enabled ? '' : 'text-secondary'}">
+      <td class="fw-medium">${esc(b.subject_label)}
+        ${b.description ? `<div class="small text-secondary">${esc(b.description)}</div>` : ''}</td>
+      <td class="text-end num">${esc(money(b.monthly_amount, b.currency))}</td>
+      <td class="text-end" style="min-width:9rem">${moneyCell(b.spend, b.currency, 'None of this usage has a rate')}
+        ${b.spend_partial && b.spend !== null ? '<span class="chip" title="Some usage had no rate, so the real figure is higher">lower bound</span>' : ''}
+        ${bar}</td>
+      <td class="text-end">${b.percent === null ? '—' : `${b.percent}%`}</td>
+      <td class="text-end">${b.warn_percent}%</td>
+      <td>${pill(tone, label)}</td>
+      <td class="text-end">${actions}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="card mb-4">${header}${tableHtml(
+    `<th>Budget</th><th class="text-end">Per month</th><th class="text-end">Spent</th>
+     <th class="text-end">Used</th><th class="text-end">Warn at</th><th>Status</th><th></th>`, rows)}</div>`;
+}
+
+async function fillBudgetSubjects(scope, selected = '') {
+  const select = document.getElementById('budget-subject');
+  select.disabled = scope === 'global';
+  if (scope === 'global') {
+    select.innerHTML = '<option value="">Everything, including idle GPU time</option>';
+    return;
+  }
+  select.innerHTML = '<option value="">Loading…</option>';
+  let options = [];
+  try {
+    if (scope === 'team') {
+      options = (await api('/teams')).map((t) => [t.id, t.name]);
+    } else {
+      options = (await api('/api-keys')).filter((k) => !k.revoked_at).map((k) => [k.id, `${k.name} (${k.prefix}…)`]);
+    }
+  } catch { /* team.view or the key listing may be missing */ }
+  select.innerHTML = options.length
+    ? options.map(([id, name]) => `<option value="${esc(id)}"${id === selected ? ' selected' : ''}>${esc(name)}</option>`).join('')
+    : '<option value="">Nothing you can see</option>';
+}
+
+async function openBudgetModal(budget = null) {
+  document.getElementById('budget-form').reset();
+  document.getElementById('budget-error').classList.add('d-none');
+  document.querySelectorAll('.budget-currency').forEach((el) => { el.textContent = cbState.budgets?.currency || ''; });
+  document.getElementById('budget-id').value = budget?.id || '';
+  document.getElementById('budget-title').textContent = budget ? `Change budget: ${budget.subject_label}` : 'Add cost budget';
+  document.getElementById('budget-submit').textContent = budget ? 'Save' : 'Add budget';
+  document.getElementById('budget-subject-row').classList.toggle('d-none', Boolean(budget));
+  if (budget) {
+    document.getElementById('budget-amount').value = budget.monthly_amount;
+    document.getElementById('budget-warn').value = budget.warn_percent;
+    document.getElementById('budget-description').value = budget.description || '';
+  } else {
+    await fillBudgetSubjects('global');
+  }
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('budget-modal')).show();
+}
+
+document.getElementById('budget-scope').addEventListener('change', (e) =>
+  fillBudgetSubjects(e.target.value).catch((err) => alert(err.message)));
+
+onModalSubmit('budget-form', 'budget-error', async () => {
+  const value = (id) => document.getElementById(id).value.trim();
+  const id = value('budget-id');
+  const common = {
+    monthly_amount: value('budget-amount'),
+    warn_percent: Number(value('budget-warn')),
+    description: value('budget-description') || null,
+  };
+  if (id) {
+    await api(`/chargeback/budgets/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(common) });
+  } else {
+    const scope = value('budget-scope');
+    const subject = value('budget-subject');
+    if (scope !== 'global' && !subject) throw new Error('Choose which team or API key the budget is for.');
+    await api('/chargeback/budgets', {
+      method: 'POST', body: JSON.stringify({ scope, subject: scope === 'global' ? null : subject, ...common }),
+    });
+  }
+  closeModal('budget-modal');
+  alert(id ? 'Budget changed.' : 'Budget added. Its alerts are checked every few minutes.', 'success');
+  await renderChargeback({ force: true });
+});
+
+async function toggleBudget(id) {
+  const budget = cbState.budgets.items.find((b) => b.id === id);
+  await api(`/chargeback/budgets/${encodeURIComponent(id)}`, {
+    method: 'PATCH', body: JSON.stringify({ enabled: !budget.enabled }),
+  });
+  await renderChargeback({ force: true });
+}
+
+async function deleteBudget(id) {
+  const budget = cbState.budgets.items.find((b) => b.id === id);
+  if (!window.confirm(`Remove the budget for ${budget?.subject_label}? Its open alert clears at the next check.`)) return;
+  await api(`/chargeback/budgets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  alert('Budget removed. The removal is recorded in the audit log.', 'success');
+  await renderChargeback({ force: true });
+}
+
 function cbKpis(report) {
   const c = report.currency; const t = report.totals;
   const unpriced = report.unpriced_models.length;
@@ -175,8 +305,10 @@ async function renderChargeback({ force = false } = {}) {
   const key = cbQuery();
   // Reports cover whole days and rates change rarely: poll only on navigation or a change.
   if (!force && cbState.key === key && cbState.report) return;
-  const [report, rates] = await Promise.all([api(`/chargeback/report?${key}`), api('/chargeback/rates')]);
-  Object.assign(cbState, { key, report, rates });
+  const [report, rates, budgets] = await Promise.all([
+    api(`/chargeback/report?${key}`), api('/chargeback/rates'), api('/chargeback/budgets'),
+  ]);
+  Object.assign(cbState, { key, report, rates, budgets });
 
   let notice = '';
   if (!report.rates_defined) {
@@ -191,9 +323,18 @@ async function renderChargeback({ force = false } = {}) {
     ? `<div class="alert alert-secondary small py-2 d-flex gap-2 align-items-start mb-4">${icon('i-info')}
        <div><strong>Idle GPU capacity</strong> is GPU time held by models nobody called in the period
        (${esc(report.idle.detail)}). It is not shared out to callers.</div></div>` : '';
-  body.innerHTML = cbKpis(report) + notice + cbReportCard(report) + idle + cbRatesCard(rates);
+  body.innerHTML = cbKpis(report) + notice + cbReportCard(report) + idle + cbBudgetsCard(budgets)
+    + cbRatesCard(rates);
 
   document.getElementById('cb-add-rate')?.addEventListener('click', openRateModal);
+  document.getElementById('cb-add-budget')?.addEventListener('click', () =>
+    openBudgetModal().catch((err) => alert(err.message)));
+  body.querySelectorAll('[data-budget-edit]').forEach((b) => b.addEventListener('click', () =>
+    openBudgetModal(cbState.budgets.items.find((x) => x.id === b.dataset.budgetEdit))));
+  body.querySelectorAll('[data-budget-toggle]').forEach((b) =>
+    b.addEventListener('click', () => guard(b, () => toggleBudget(b.dataset.budgetToggle))));
+  body.querySelectorAll('[data-budget-delete]').forEach((b) =>
+    b.addEventListener('click', () => guard(b, () => deleteBudget(b.dataset.budgetDelete))));
   body.querySelectorAll('[data-rate-delete]').forEach((b) =>
     b.addEventListener('click', () => guard(b, () => deleteRate(b.dataset.rateDelete))));
 }

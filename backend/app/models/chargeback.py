@@ -18,13 +18,16 @@ the reports say they are estimates (plan §5.14).
 from __future__ import annotations
 
 import datetime as dt
+import enum
 import uuid
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -67,6 +70,48 @@ class CostRate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: Null: GPU time is not priced for this model (as opposed to priced at zero).
     gpu_hour: Mapped[Decimal | None] = mapped_column(Numeric(*RATE_PRECISION))
     note: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
+class CostBudgetScope(enum.StrEnum):
+    """What a cost budget caps: everything, one team's usage, or one API key's."""
+
+    GLOBAL = "global"
+    TEAM = "team"
+    API_KEY = "api_key"
+
+
+#: ``subject`` of a global budget, which has no single subject.
+GLOBAL_BUDGET_SUBJECT = "*"
+
+
+class CostBudget(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A monthly spending limit that raises alerts, never refusals (E12).
+
+    Spend is the chargeback estimate for the calendar month so far (UTC), at the rates in
+    ``cost_rates``. The budget raises a WARNING alert at ``warn_percent`` and a CRITICAL
+    one at 100%. It does not stop traffic: an estimate built from operator-entered rates is
+    not a sound basis for refusing requests. Token quotas do that, with numbers the
+    gateway measures itself.
+    """
+
+    __tablename__ = "cost_budgets"
+    __table_args__ = (
+        UniqueConstraint("scope", "subject", name="uq_cost_budgets_scope_subject"),
+        CheckConstraint("scope IN ('global','team','api_key')", name="cost_budget_scope"),
+        CheckConstraint("monthly_amount > 0", name="cost_budget_positive"),
+        CheckConstraint("warn_percent BETWEEN 1 AND 99", name="cost_budget_warn_percent"),
+    )
+
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: A team id or API key id, or ``'*'`` for the global budget.
+    subject: Mapped[str] = mapped_column(String(64), nullable=False)
+    monthly_amount: Mapped[Decimal] = mapped_column(Numeric(*RATE_PRECISION), nullable=False)
+    warn_percent: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )

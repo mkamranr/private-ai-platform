@@ -38,6 +38,8 @@ class JobKind(enum.StrEnum):
     BUNDLE_VERIFY = "bundle.verify"
     UPGRADE = "upgrade"
     ROLLBACK = "rollback"
+    #: E12: delete backups beyond the retention count. Queued by the schedule only.
+    BACKUP_PRUNE = "backup.prune"
 
 
 class JobStatus(enum.StrEnum):
@@ -56,7 +58,7 @@ class OpsJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint(
             "kind IN ('backup.create','backup.verify','backup.restore','bundle.verify',"
-            "'upgrade','rollback')",
+            "'upgrade','rollback','backup.prune')",
             name="ops_job_kind",
         ),
         CheckConstraint(

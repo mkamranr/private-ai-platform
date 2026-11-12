@@ -102,6 +102,10 @@ make restart-backend
 make ops-runner                                  # keep it running, e.g. under systemd
 ```
 
+To take backups on a schedule and keep only the newest few, set *Scheduled backup every
+(hours)* and *Backups to keep* on the Settings page (Operations). See
+[backup.md](docs/backup.md#schedule-and-retention-e12).
+
 See [operations.md](docs/operations.md). Without the runner, use `make backup`,
 `make backup-verify B=...` and `make backup-restore B=...`. Verify a backup before you
 rely on it.
@@ -160,6 +164,13 @@ Release-specific steps are in [upgrade-0.2.md](docs/upgrade-0.2.md).
 | **Chargeback** | Dated cost rates, and cost reports by team, key, user and model with CSV export |
 | **Connector catalogue** | Seven MCP connectors with validated manifests. Installing one enables nothing until its tools are reviewed |
 | **Release readiness** | Writes commit before the response, upgrades grant new permissions, audit gaps closed, telemetry off everywhere |
+
+**Since 0.2.0** (on master, not yet released):
+
+| | |
+|---|---|
+| **Budget alerts (E12)** | Alerts at 80% and 100% of token quotas, plus monthly cost budgets per team, key or platform. They alert but never block |
+| **Scheduled backups (E12)** | Backups every N hours through the ops runner, retention that keeps the newest N, and alerts when a backup fails or is overdue |
 
 ## It also runs without much GPU, or none at all
 

@@ -4,6 +4,15 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 [docs/upgrade-0.2.md](docs/upgrade-0.2.md), and the release procedure is in
 [docs/release-checklist.md](docs/release-checklist.md).
 
+## Unreleased
+
+### Budget alerts and scheduled backups (E12)
+- **Token quota alerts.** In-app WARNING at 80% (`gateway.budget_warning_percent`) and CRITICAL at 100% of each daily and monthly quota, per subject. They clear themselves when usage resets.
+- **Cost budgets.** Monthly budgets in the chargeback currency, for the whole platform, a team or an API key, each with its own warning share. They raise alerts but never block traffic. New routes under `/api/v1/chargeback/budgets`, audited. Budgets card on the Chargeback page.
+- **Scheduled backups.** `ops.backup_interval_hours` makes the platform queue backups for the ops runner, as audited jobs requested by `scheduler`. Alerts appear when a backup fails or is overdue.
+- **Retention.** `ops.backup_keep` deletes the oldest complete backups beyond N through a new `backup.prune` runner job. The newest backup and anything without a manifest are never deleted.
+- **Upgrade.** One migration (`9a6f2c4e1b57`). Both features are off until configured: no budgets exist and the backup interval is 0. Restart `make ops-runner` after upgrading so it knows the new job kind.
+
 ## 0.2.0: the expansion release
 
 This release implements [the expansion plan](docs/roadmap/Private-AI-Platform-Expansion-Plan.md)
