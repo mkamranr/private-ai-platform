@@ -259,9 +259,16 @@ unverified backup is a hypothesis.
 ## Upgrading
 
 ```bash
-sudo ./upgrade.sh <new-bundle> /opt/ai-platform     # air-gapped target
-sudo ./rollback.sh /opt/ai-platform                 # if it goes wrong
+/opt/ai-platform/offline/upgrade.sh <new-bundle> /opt/ai-platform   # backs up, swaps, starts core
+cd /opt/ai-platform
+docker compose exec backend alembic upgrade head
+docker compose exec backend python -m app.utils.cli seed --rbac-only   # grant new permissions
+
+./offline/rollback.sh /opt/ai-platform   # if it goes wrong: code only, not data
 ```
+
+The console's **Offline Updates** page runs the same steps through the ops runner. Each
+release's specific steps are in its upgrade guide, for example [upgrade-0.2.md](upgrade-0.2.md).
 
 Both are rehearsed by `make gate-phase8`, which installs, migrates, seeds, signs in,
 upgrades and rolls back inside a container with `--network none`.

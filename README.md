@@ -12,7 +12,8 @@ infrastructure monitoring, a model registry and deployment state machine, an
 OpenAI-compatible gateway, an agent platform (LangGraph + MCP + skills + tools), RAG,
 chat, speech and OCR, full observability, and an offline installation bundle.
 
-Built to a 28-module specification across 10 phases. **Every phase has a passing
+Built to a 28-module specification across 10 phases, then extended by the 11-phase
+expansion plan in 0.2.0 (see [Recent changes](#recent-changes)). **Every phase has a passing
 acceptance gate that runs on a laptop with no GPU.**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -28,33 +29,137 @@ nobody re-checks. Run `make check` and the gates yourself — that is what
 ## Deploying it
 
 The intended shape is a **control plane plus one or more GPU machines**. The control
-plane holds the registry, scheduler, gateway and agent runtime; each GPU host runs only
-the node agent, which reports its cards and starts model containers on instruction.
+plane holds the registry, scheduler, gateway and agent runtime. Each GPU host runs only
+the node agent, which reports its cards and starts model containers when told to. One
+machine can play both roles.
+
+### What you need
+
+| | Control plane | GPU host |
+|---|---|---|
+| OS | Linux with Docker Engine and the Compose plugin (Docker Desktop for development) | Linux with Docker Engine |
+| GPU stack | none | NVIDIA driver and the NVIDIA Container Toolkit |
+| Resources | 4 CPU cores, 16 GB RAM, disk for `PLATFORM_DATA_ROOT` | VRAM for the models you deploy (see [deployment.md](docs/deployment.md#sizing-and-what-fits)) |
+| Tools | `make`, `python3`, `openssl` | none (the installer is fetched from the control plane) |
+
+### 1. Install the control plane
 
 ```bash
-# On the control plane
-git clone https://github.com/mkamranr/private-ai-platform.git ai-platform
-cd ai-platform
-make up                   # generates real secrets, builds, waits for healthy
-make seed                 # roles, permissions, bootstrap admin
+git clone https://github.com/mkamranr/private-ai-platform.git /opt/ai-platform
+cd /opt/ai-platform
+
+make .env                 # copies .env.example and generates every secret
+$EDITOR .env              # at least: PLATFORM_DATA_ROOT, PLATFORM__PUBLIC_BASE_URL
+make up                   # builds and starts the core stack, waits until healthy
+make seed                 # roles, permissions, bootstrap admin, storage bucket
 make definitions-import   # the shipped agents, skills and tools
 ```
 
-Sign in at **http://localhost:8080** as `admin` (the password was generated into `.env` —
-`grep AUTH__BOOTSTRAP_ADMIN_PASSWORD .env`), then **Nodes → Add node**. The console issues
-a one-time token and prints the exact command for the GPU host:
+**`.env` holds every credential**, including `SECURITY__ENCRYPTION_KEY`, which decrypts all
+stored secrets. No backup contains it, so keep a copy somewhere safe. Set
+`PLATFORM_DATA_ROOT` to real storage (it defaults to `./data`).
+
+### 2. Sign in and put TLS in front
+
+The console listens on **http://&lt;host&gt;:8080** (`PLATFORM_HTTP_PORT`). Sign in as `admin`
+with the generated password (`grep AUTH__BOOTSTRAP_ADMIN_PASSWORD .env`) and change it.
+
+The platform serves plain HTTP and expects to sit behind something that terminates TLS,
+such as your load balancer or reverse proxy. `scripts/gen_certs.sh` makes a self-signed
+pair for testing.
+
+### 3. Add GPU nodes
+
+In the console, open **Nodes → Add node**. It issues a one-time token and prints the exact
+command for the GPU host:
 
 ```bash
-# On each GPU machine — needs the NVIDIA driver and container toolkit
 sudo ./install-node.sh --server https://your-control-plane --name gpu-node-01 --token aine_...
 ```
 
-The node reports its cards within a poll interval, the control plane probes it back before
-accepting it, and its GPUs become schedulable capacity. Deploy a model from the registry
-and the scheduler places it — tensor-parallel across cards when a model needs more than one.
+The control plane probes the node back before accepting it. Its GPUs then become
+schedulable capacity. Register or import a model under **Models**, deploy it, and point
+any OpenAI client at `https://your-control-plane/v1` with an API key from the console.
 
-**[docs/deployment.md](docs/deployment.md)** covers driver requirements, VRAM sizing,
-multi-GPU placement, and the air-gapped install.
+### 4. Optional services
+
+```bash
+make chat          # Open WebUI on 8081, using the gateway
+make agents        # chat plus the LDAP MCP server
+make monitoring    # Prometheus, Loki, Tempo, Grafana, Alloy, Langfuse
+make mcp-vendor    # on a connected machine: build connector images from mcp/manifests
+make mcp           # start them, then install each from the Connector Catalogue page
+```
+
+### 5. Backups and upgrades from the console
+
+Backups, restores and upgrades need `pg_dump` and Docker. By design, the control plane
+has neither, so a small runner on the host does that work for the console:
+
+```bash
+python3 scripts/gen_secrets.py --env-file .env   # sets OPS__RUNNER_TOKEN if it is a placeholder
+make restart-backend
+make ops-runner                                  # keep it running, e.g. under systemd
+```
+
+See [operations.md](docs/operations.md). Without the runner, use `make backup`,
+`make backup-verify B=...` and `make backup-restore B=...`. Verify a backup before you
+rely on it.
+
+## Air-gapped sites
+
+When the target has no route to the Internet, the whole platform ships as one bundle.
+
+```bash
+# On a connected build machine
+make signing-key OUT=~/aip-signing     # once; keep the .key off the target
+make bundle SIGN_KEY=~/aip-signing/bundle-signing.key CHAT=1 MONITORING=1
+                                       # ~1.9 GB+: images, wheels, the tree, the installers
+
+# Carry bundle/<stamp>/ and bundle-signing.pub to the target, then
+cd <stamp>
+sudo ./install.sh . /opt/ai-platform --trust-key /media/keys/bundle-signing.pub
+cd /opt/ai-platform
+docker compose exec backend alembic upgrade head
+docker compose exec backend python -m app.utils.cli seed
+docker compose exec backend python -m app.utils.cli definitions-import
+```
+
+The target never pulls anything. A joining GPU node fetches its ~288 MB installer from the
+control plane, so the bundle does not have to be carried to every rack.
+
+### Upgrading
+
+```bash
+/opt/ai-platform/offline/upgrade.sh /media/usb/<new-stamp> /opt/ai-platform   # backs up first
+cd /opt/ai-platform
+docker compose exec backend alembic upgrade head
+docker compose exec backend python -m app.utils.cli seed --rbac-only          # grant new permissions
+```
+
+The **Offline Updates** page runs the same steps through the ops runner, after a
+preflight check. If something goes wrong, `./offline/rollback.sh /opt/ai-platform`
+restores the previous code. It does not restore data; use the backup the upgrade took.
+Release-specific steps are in [upgrade-0.2.md](docs/upgrade-0.2.md).
+
+## Recent changes
+
+**0.2.0** implements the [expansion plan](docs/roadmap/Private-AI-Platform-Expansion-Plan.md)
+(phases E1–E11). Full notes are in [CHANGELOG.md](CHANGELOG.md).
+
+| | |
+|---|---|
+| **Inference backends and alerts** | Register vLLM, Ollama and OpenAI-compatible endpoints, test them and discover their models. In-app alerts when one goes down |
+| **Gateway policy** | Token quotas per minute, day and month; concurrency limits; circuit breakers; fallback aliases |
+| **Teams** | Team-owned models, aliases, keys, agents and knowledge bases, with one visibility rule enforced everywhere, including the gateway |
+| **Model governance** | Approval status, licence and source metadata, deployment dry runs, revisions with rollback, live logs |
+| **Retrieval depth** | Reranking, document versions, a Retrieval Playground, and evaluation sets scoring hit rate, recall and MRR |
+| **Workflows** | Versioned workflows with LLM, retrieval, tool, HTTP, approval and delay steps; manual, API, cron and webhook triggers |
+| **Operations console** | Backup, restore, upgrade and rollback from the browser; signed bundles, an SBOM and diagnostics |
+| **Dashboard and settings** | One dashboard across fleet, models, gateway and agents; runtime settings that apply without a restart |
+| **Chargeback** | Dated cost rates, and cost reports by team, key, user and model with CSV export |
+| **Connector catalogue** | Seven MCP connectors with validated manifests. Installing one enables nothing until its tools are reviewed |
+| **Release readiness** | Writes commit before the response, upgrades grant new permissions, audit gaps closed, telemetry off everywhere |
 
 ## It also runs without much GPU, or none at all
 
@@ -96,20 +201,6 @@ indexed, with a retrieval preview showing exactly what an agent would be given.
 </tr>
 </table>
 
-## Air-gapped sites
-
-Where the target has no route to the Internet, the whole platform ships as one bundle:
-
-```bash
-make bundle                                   # on a connected build machine, ~1.9 GB
-# carry bundle/<stamp>/ to the target, then:
-sudo ./install.sh . /opt/ai-platform
-```
-
-The bundle carries every image, wheel and manifest. The target pulls nothing, ever — and
-a joining GPU node fetches its ~288 MB installer from the control plane rather than
-needing the bundle carried to every rack.
-
 ---
 
 ## What it actually does
@@ -137,7 +228,7 @@ scheduler, policy engine, gateway, agent runtime, and the API that ties them tog
 ## Verifying it
 
 ```bash
-make check          # ruff, mypy, layering contracts, ~592 tests across four services
+make check          # ruff, mypy, layering contracts and every service's tests
 make gate           # Phase 0 acceptance gate
 make gate-phase4    # the MVP scenario: an agent using tools, end to end
 make gate-phase8    # installs inside a container with --network none, upgrades, rolls back
@@ -206,6 +297,7 @@ docs/           the contract
 | 7 | Prometheus, Loki, Tempo, Grafana, Langfuse | ✅ |
 | 8 | Air-gap bundle, packaging, install/upgrade/rollback, docs | ✅ |
 | 9 | STT/TTS (Arabic + English), OCR, vision | ✅ |
+| E1–E11 | Expansion (0.2.0): backends, quotas, teams, governance, RAG depth, workflows, ops console, chargeback, connectors, release readiness | ✅ |
 
 Value lands early and independently: Phase 2 gives a usable private LLM platform,
 Phase 3 private chat, Phase 4 the agent platform.
