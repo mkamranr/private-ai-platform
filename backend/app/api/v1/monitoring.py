@@ -17,7 +17,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import MonitoringServiceDep, TraceServiceDep, require_permission
+from app.api.deps import MonitoringServiceDep, ScopeDep, TraceServiceDep, require_permission
 from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
@@ -34,9 +34,10 @@ router = APIRouter(tags=["monitoring"], route_class=CommittingRoute)
 async def monitoring_overview(
     service: MonitoringServiceDep,
     actor: Annotated[User, require_permission(Perm.MONITORING_VIEW)],
+    scope: ScopeDep,
     window_hours: Annotated[int, Query(ge=1, le=168)] = 24,
 ) -> MonitoringOverviewResponse:
-    overview = await service.overview(window_hours=window_hours)
+    overview = await service.overview(window_hours=window_hours, scope=scope)
     return MonitoringOverviewResponse(
         generated_at=overview.generated_at,
         window_hours=overview.window_hours,
@@ -56,6 +57,7 @@ async def get_trace(
     trace_id: str,
     service: TraceServiceDep,
     actor: Annotated[User, require_permission(Perm.TRACE_VIEW)],
+    scope: ScopeDep,
 ) -> TraceResponse:
     """The run behind a trace id, with its §11 event sequence.
 
@@ -63,4 +65,4 @@ async def get_trace(
     is a real distinction: Tempo may still hold spans for infrastructure work that
     never became an agent run.
     """
-    return await service.get(trace_id)
+    return await service.get(trace_id, scope=scope)

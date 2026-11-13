@@ -5,10 +5,13 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from collections.abc import Sequence
+from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import selectinload
 
+from app.core.scope import Scope
+from app.models.agents import Agent
 from app.models.knowledge import (
     Conversation,
     ConversationMessage,
@@ -23,6 +26,15 @@ from app.models.knowledge import (
     RagEvalSet,
 )
 from app.repositories.base import BaseRepository
+
+
+def _agent_team_clause(column: Any, teams: Scope | None) -> Any:
+    """E18: memory and conversations follow their agent's team. A row with no agent (or
+    whose agent was deleted, which sets it to NULL) is shared."""
+    clause = teams.clause(Agent.team_id) if teams is not None else None
+    if clause is None:
+        return None
+    return or_(column.is_(None), column.in_(select(Agent.id).where(clause)))
 
 
 class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
@@ -226,6 +238,7 @@ class ConversationRepository(BaseRepository[Conversation]):
         agent_id: uuid.UUID | None = None,
         user_id: uuid.UUID | None = None,
         end_user: str | None = None,
+        teams: Scope | None = None,
     ) -> Conversation | None:
         """Find a thread **within its scope**.
 
@@ -243,6 +256,8 @@ class ConversationRepository(BaseRepository[Conversation]):
             stmt = stmt.where(Conversation.user_id == user_id)
         if end_user is not None:
             stmt = stmt.where(Conversation.end_user == end_user)
+        if (clause := _agent_team_clause(Conversation.agent_id, teams)) is not None:
+            stmt = stmt.where(clause)
         return (await self.session.execute(stmt)).scalars().first()
 
     async def get_with_messages(self, conversation_id: uuid.UUID) -> Conversation | None:
@@ -311,6 +326,18 @@ class ConversationMessageRepository(BaseRepository[ConversationMessage]):
 class MemoryEntryRepository(BaseRepository[MemoryEntry]):
     model = MemoryEntry
 
+    async def hidden_agents(
+        self, agent_ids: set[uuid.UUID | None], teams: Scope | None
+    ) -> set[uuid.UUID]:
+        """E18: of these agents, the ones whose team ``teams`` cannot see."""
+        wanted = {a for a in agent_ids if a is not None}
+        if teams is None or teams.all_teams or not wanted:
+            return set()
+        rows = await self.session.execute(
+            select(Agent.id, Agent.team_id).where(Agent.id.in_(wanted))
+        )
+        return {ident for ident, team in rows.all() if not teams.can_see(team)}
+
     async def get_by_vector_ids(self, vector_ids: Sequence[str]) -> dict[str, MemoryEntry]:
         if not vector_ids:
             return {}
@@ -326,6 +353,7 @@ class MemoryEntryRepository(BaseRepository[MemoryEntry]):
         end_user: str | None = None,
         agent_id: uuid.UUID | None = None,
         limit: int = 100,
+        teams: Scope | None = None,
     ) -> Sequence[MemoryEntry]:
         stmt = (
             select(MemoryEntry)
@@ -339,6 +367,8 @@ class MemoryEntryRepository(BaseRepository[MemoryEntry]):
             stmt = stmt.where(MemoryEntry.end_user == end_user)
         if agent_id is not None:
             stmt = stmt.where(MemoryEntry.agent_id == agent_id)
+        if (clause := _agent_team_clause(MemoryEntry.agent_id, teams)) is not None:
+            stmt = stmt.where(clause)
         return (await self.session.execute(stmt)).scalars().all()
 
     async def delete_expired(self, *, now: dt.datetime | None = None) -> int:

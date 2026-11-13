@@ -246,7 +246,8 @@ different claim, and rendering them identically lies to the operator.
 E8 adds the `dependencies`, `backends`, `alerts`, `knowledge`, `agents` and `workflows`
 sections, gateway error and rate figures, `source`/`collected_at` on fleet, GPU and backend
 figures, and `unavailable`: sections the caller may see whose source failed, with a reason.
-Those are absent too, never zeroed. Knowledge, agent and workflow counts follow team scope.
+Those are absent too, never zeroed. Knowledge, agent and workflow counts follow team scope,
+and since E18 so do model and deployment counts and the gateway section.
 See [settings.md](settings.md#dashboard).
 
 E16 adds timing fields to the dashboard's `gateway` section and to each `GET /usage` row:
@@ -408,6 +409,7 @@ Memory (M16) adds `POST /memory/search`, `GET /memory/entries`,
 `GET /conversations/{external_id}`, all under `knowledge.view` / `knowledge.manage`.
 **Every one is scoped**: a memory search without a `user_id` or `end_user` is refused with
 422 rather than searching a whole tenant. See [rag.md](rag.md#scoping-m16--the-security-core).
+Since E18 they also follow the agent's team: see [teams.md](teams.md#reads-that-follow-scope-e18).
 
 `POST /deployments/reconcile?remove=true` (permission `model.stop`) finds model containers
 no deployment claims — see [rag.md](rag.md#orphaned-containers).
@@ -472,7 +474,8 @@ for services that are allowed to be absent. `/health` is where reachability belo
 `/traces/{trace_id}` answers from the platform's own records, so it works on a site with
 no Tempo: every agent run is stamped with a trace id whether or not tracing is deployed.
 `tempo_url` is present only when it is — a deep link into a Tempo that was never
-installed is a broken link. See [observability.md](observability.md).
+installed is a broken link. See [observability.md](observability.md). Another team's run
+answers 404 (E18).
 
 
 ---

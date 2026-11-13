@@ -127,7 +127,7 @@ class TestImportOrder:
                 "slug": "helper",
                 "display_name": "Helper",
                 "system_prompt": "You help.",
-                "model": "enterprise-chat",
+                "model": "definitions-test-model",
                 "tools": ["definitions-test-clock"],
                 "skills": ["grounded"],
             },
@@ -156,7 +156,7 @@ class TestImportOrder:
                 "slug": "partial",
                 "display_name": "Partial",
                 "system_prompt": "You help.",
-                "model": "enterprise-chat",
+                "model": "definitions-test-model",
                 "tools": ["ad_user_lookup"],
             },
         )
@@ -177,7 +177,7 @@ class TestReimport:
             "slug": "versioned",
             "display_name": "Versioned",
             "system_prompt": "First prompt.",
-            "model": "enterprise-chat",
+            "model": "definitions-test-model",
         }
         _write(root / "agents", "versioned.yaml", spec)
         await imp.import_all(actor=author)

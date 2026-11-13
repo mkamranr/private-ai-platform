@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from app.config.settings import VoiceSettings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.core.scope import Scope
 from app.models.auth import User
 from app.models.voice import (
     TERMINAL_VOICE_STATES,
@@ -90,6 +91,7 @@ class VoiceSessionService:
         language: str | None,
         voice: str | None,
         conversation_id: str | None = None,
+        scope: Scope | None = None,
     ) -> VoiceSession:
         """Open a session against an agent (§31).
 
@@ -111,7 +113,8 @@ class VoiceSessionService:
                 details={"field": "agent_slug"},
             )
         agent = await self._agents.get_by_slug(slug)
-        if agent is None:
+        # E18: another team's agent is reported exactly as one that does not exist.
+        if agent is None or (scope is not None and not scope.can_see(agent.team_id)):
             raise NotFoundError(f"No agent with slug {slug!r}.")
         if not agent.enabled:
             raise ConflictError(f"The agent '{agent.slug}' is disabled.")

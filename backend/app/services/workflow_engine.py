@@ -47,8 +47,10 @@ from app.models.workflows import (
     WorkflowStep,
 )
 from app.repositories.agents import ToolRepository
+from app.repositories.teams import ScopeLookupRepository
 from app.repositories.workflows import WorkflowApprovalRepository, WorkflowStepRepository
 from app.services import workflow_definition as wd
+from app.services.team_references import TeamReferences, describe
 from app.services.tool_pipeline import _definition, _truncate
 
 log = get_logger(__name__)
@@ -438,6 +440,7 @@ class WorkflowEngine:
         if self._provider_factory is None:
             raise NodeFailedError("Model calls are not available here.")
         rendered = wd.render(config, context)
+        await self._require_usable(run, models=[str(rendered["model"])])
         provider, served = await self._provider_factory(str(rendered["model"]))
         messages = []
         if rendered.get("system"):
@@ -463,6 +466,23 @@ class WorkflowEngine:
                 raise NodeFailedError("The model's reply is not valid JSON.") from exc
         return Outcome(output=output)
 
+    async def _require_usable(
+        self,
+        run: WorkflowRun,
+        *,
+        models: list[str] | None = None,
+        knowledge_bases: list[str] | None = None,
+    ) -> None:
+        """E18: a step may use only what the workflow's own team can see. Checked on the
+        rendered values, so a templated model name is judged by what it became."""
+        lookups = ScopeLookupRepository(self._steps.session)
+        _, team_id = await lookups.workflow(run.workflow_id)
+        problems = await TeamReferences(lookups).unavailable(
+            team_id, models=models or [], knowledge_bases=knowledge_bases or []
+        )
+        if problems:
+            raise NodeFailedError(describe("workflow", team_id, problems))
+
     async def _retrieval(
         self,
         run: WorkflowRun,
@@ -474,6 +494,9 @@ class WorkflowEngine:
         if self._knowledge is None:
             raise NodeFailedError("Knowledge retrieval is not available here.")
         rendered = wd.render(config, context)
+        await self._require_usable(
+            run, knowledge_bases=[str(v) for v in rendered.get("knowledge_base_ids") or []]
+        )
         bases = []
         for value in rendered.get("knowledge_base_ids") or []:
             try:

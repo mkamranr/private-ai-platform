@@ -32,17 +32,20 @@ import yaml
 from app.config.settings import Settings
 from app.core.errors import ConflictError
 from app.core.logging import get_logger
+from app.core.scope import Scope
 from app.models.auth import User
 from app.repositories.agents import (
     AgentRepository,
     SkillRepository,
     ToolRepository,
 )
+from app.repositories.teams import ScopeLookupRepository
 from app.services.agent_registry import (
     AgentRegistryService,
     SkillRegistryService,
     ToolRegistryService,
 )
+from app.services.team_references import TeamReferences, describe
 
 log = get_logger(__name__)
 
@@ -77,11 +80,14 @@ class DefinitionImporter:
         self._skills = skills
         self._agents = agents
 
-    async def import_all(self, *, actor: User) -> list[DefinitionResult]:
+    async def import_all(
+        self, *, actor: User, scope: Scope | None = None
+    ) -> list[DefinitionResult]:
+        """``scope`` is the importing person's (E18). The CLI imports as the platform."""
         results: list[DefinitionResult] = []
         results += await self._import_tools(actor=actor)
         results += await self._import_skills()
-        results += await self._import_agents(actor=actor)
+        results += await self._import_agents(actor=actor, scope=scope or Scope.everything())
         return results
 
     # -- tools -------------------------------------------------------------
@@ -173,7 +179,7 @@ class DefinitionImporter:
         return results
 
     # -- agents ------------------------------------------------------------
-    async def _import_agents(self, *, actor: User) -> list[DefinitionResult]:
+    async def _import_agents(self, *, actor: User, scope: Scope) -> list[DefinitionResult]:
         results: list[DefinitionResult] = []
         for filename, spec in await _read(self._settings.agents.agent_manifest_path):
             slug = str(spec.get("slug") or "").strip()
@@ -186,6 +192,28 @@ class DefinitionImporter:
             unresolved = unknown_tools + unknown_skills
 
             existing = await self._agents_repo.get_by_slug(slug)
+            # E18: a manifest cannot add a version to another team's agent, and an agent
+            # may use only what its own team can see (shared, for a new agent).
+            if existing is not None and not scope.can_see(existing.team_id):
+                results.append(
+                    DefinitionResult(
+                        "agent", slug, "skipped", "an agent with this slug belongs to another team"
+                    )
+                )
+                continue
+            team_id = existing.team_id if existing is not None else None
+            problems = await TeamReferences(
+                ScopeLookupRepository(self._agents_repo.session)
+            ).unavailable(
+                team_id,
+                models=[str(spec.get("model") or "enterprise-chat")],
+                knowledge_bases=[str(k) for k in spec.get("knowledge_bases") or []],
+            )
+            if problems:
+                results.append(
+                    DefinitionResult("agent", slug, "skipped", describe("agent", team_id, problems))
+                )
+                continue
             try:
                 if existing is None:
                     await self._agents.create_agent(

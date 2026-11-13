@@ -47,6 +47,32 @@ cannot see. An agent runs with the platform's reach, so this check is what stops
 agent from becoming a way around team scope. Workflow definitions get the same check,
 on save and on publish, for the knowledge bases and model names their steps use.
 
+## What an agent or workflow may use (E18)
+
+Since E18 an agent or workflow is also checked against **its own team**, because that is
+what it runs as. It may use shared resources and its own team's, never another team's,
+whoever saved it. In particular a **shared** agent or workflow may use only **shared**
+models, aliases and knowledge bases: otherwise it would offer one team's model to
+everyone. This is the rule an API key already follows.
+
+It is checked:
+
+| when | answer |
+|---|---|
+| saving an agent, or saving or publishing a workflow | 422, with `details.uses` listing what is out of reach |
+| `PUT /scope` moving an agent or workflow somewhere that cannot use what it refers to | 409; the resource is not moved |
+| every agent run (`/agents/{id}/execute`, `agent:<slug>`, voice) | 409; no run is created |
+| every workflow LLM and retrieval step, on the rendered values | the step fails with the same message |
+
+The message names the problem and the fix: *This agent uses model 'x', which belongs to
+another team. It may only use shared resources (it is shared). Move the agent into the
+same team, or make the resource shared.* A templated model name such as
+`{{ input.model }}` is judged at run time, by what it became.
+
+**Behaviour change.** A shared agent or workflow that refers to a team's model or
+knowledge base stops working at its next run after the upgrade. Move it into that team,
+or make the resource shared.
+
 ## Moving a resource between teams
 
 ```http
@@ -127,16 +153,31 @@ would silently strip people's access.
 `scope.all` is held by `SUPER_ADMIN`, `ADMIN` and `AUDITOR` only. A unit test asserts
 that no other role has it.
 
-## Not team-scoped (yet)
+## Reads that follow scope (E18)
 
-- **Memory and conversations** are scoped by tenant and end user (M16), not by team.
-- **Dashboard counts** and **monitoring** are platform-wide operator views.
+- **Traces.** `GET /traces/{trace_id}` of another team's agent run is 404, like an
+  unknown trace id.
+- **Voice sessions.** A session cannot be opened against another team's agent (404).
+- **Memory and conversations** follow their **agent's** team, on top of the tenant and
+  end-user scope of M16. Entries with no agent, or whose agent was deleted, count as
+  shared. Search, list, `GET /conversations/{id}` and deleting one entry see only those.
+  `POST /memory/forget-all` from a team-limited caller erases only those entries and
+  leaves session state alone (it is keyed by person, not agent). A `scope.all` caller
+  erases everything, as before.
+- **Dashboard.** Model and deployment counts, and the gateway section (requests, errors,
+  tokens, timings, top models, the hourly series), count what your teams can see, as
+  `GET /usage` does. The **monitoring overview** counts runs of agents and usage of keys
+  in your teams.
+- **Definitions import** (`POST /definitions/import`) does not add a version to another
+  team's agent, and skips an agent whose model or knowledge bases its team cannot use,
+  with the reason. The CLI import runs as the platform.
+
+## Not team-scoped
+
 - **Quotas and circuit breakers** are platform settings, managed with `quota.*`.
 - **Tools, skills and MCP servers** are a platform catalogue. An agent's tool grants are
   governed by `tool.*` permissions and the §10 pipeline.
-- **Agent runtime:** an agent's model and knowledge bases are checked when the agent is
-  saved, not again on every run. If a referenced model later moves to another team, the
-  agent keeps working until it is next edited.
+- **Fleet figures** (nodes, GPUs, backends, dependencies) are platform-wide.
 
 ## Verifying
 
@@ -154,3 +195,6 @@ A new route is covered the day it is added.
 - creating into a team;
 - moving resources;
 - team quotas.
+
+`tests/api/test_team_scoping_e18.py` covers the E18 checks: save, move and run-time
+references for agents and workflows, traces, voice, memory and the dashboard.

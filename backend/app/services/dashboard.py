@@ -35,7 +35,7 @@ from app.core.scope import Scope
 from app.models.agents import RunState
 from app.models.auth import User
 from app.models.infrastructure import NodeStatus
-from app.models.models_registry import DeploymentState, ModelStatus
+from app.models.models_registry import DeploymentState, ModelStatus, UsageRecord
 from app.models.operations import AlertSeverity, AlertState, BackendStatus
 from app.models.workflows import RunStatus
 from app.repositories.audit import AuditRepository
@@ -127,11 +127,11 @@ class DashboardService:
         if allowed(Perm.GPU_VIEW):
             await section("gpus", self._gpu_capacity)
         if allowed(Perm.MODEL_VIEW):
-            await section("models", self._models_and_deployments)
+            await section("models", lambda: self._models_and_deployments(scope))
         if allowed(Perm.BACKEND_VIEW):
             await section("backends", self._backends)
         if allowed(Perm.USAGE_VIEW):
-            await section("gateway", lambda: self._gateway(since, window_hours))
+            await section("gateway", lambda: self._gateway(since, window_hours, scope))
         if allowed(Perm.ALERT_VIEW):
             await section("alerts", self._alerts)
         if allowed(Perm.KNOWLEDGE_VIEW):
@@ -181,9 +181,13 @@ class DashboardService:
             "collected_at": capacity.get("collected_at"),
         }
 
-    async def _models_and_deployments(self) -> dict[str, Any]:
-        models = list(await self._models.list_models(limit=1000))
-        deployments = list(await self._deployments.list_deployments())
+    async def _models_and_deployments(self, scope: Scope) -> dict[str, Any]:
+        # E18: the models the viewer's teams can see, and their deployments.
+        models = scope.filter(await self._models.list_models(limit=1000))
+        visible = {m.id for m in models}
+        deployments = [
+            d for d in await self._deployments.list_deployments() if d.model_id in visible
+        ]
         in_progress = [
             d
             for d in deployments
@@ -199,12 +203,14 @@ class DashboardService:
             "failed": sum(1 for d in deployments if d.state == DeploymentState.FAILED),
         }
 
-    async def _gateway(self, since: dt.datetime, window_hours: int) -> dict[str, Any]:
-        by_model = await self._usage.summary(since=since)
+    async def _gateway(self, since: dt.datetime, window_hours: int, scope: Scope) -> dict[str, Any]:
+        # E18: the traffic of keys in the viewer's teams, as GET /usage counts it.
+        where = scope.clause(UsageRecord.team_id)
+        by_model = await self._usage.summary(since=since, where=where)
         requests = sum(int(row["requests"]) for row in by_model)
         errors = sum(int(row.get("errors") or 0) for row in by_model)
         series = fill_hourly_gaps(
-            await self._usage.hourly_series(since=since),
+            await self._usage.hourly_series(since=since, where=where),
             since=since,
             until=dt.datetime.now(dt.UTC),
         )
@@ -220,7 +226,7 @@ class DashboardService:
             # Weighted by request count. Averaging the per-model averages would let one
             # request against a rarely used model swing the headline number.
             "avg_latency_ms": _weighted_latency(by_model),
-            **await self._usage.timing_totals(since=since),
+            **await self._usage.timing_totals(since=since, where=where),
             "top_models": by_model[:5],
             "series": series,
             "source": "gateway usage records",

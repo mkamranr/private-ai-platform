@@ -15,25 +15,29 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationError
 from app.core.logging import get_logger
 from app.core.permissions import Permission
 from app.core.scope import Scope
-from app.models.agents import Agent
+from app.models.agents import Agent, AgentVersion
 from app.models.audit import AuditAction
 from app.models.auth import User
 from app.models.knowledge import KnowledgeBase
 from app.models.models_registry import ApiClient, Model, ModelAlias
 from app.models.teams import Team, TeamMembership, TeamRole
-from app.models.workflows import Workflow
+from app.models.workflows import Workflow, WorkflowVersion
 from app.repositories.teams import ScopeLookupRepository, TeamRepository
 from app.repositories.user import UserRepository
+from app.services import workflow_definition as wd
 from app.services.audit import AuditService
 from app.services.auth import AuthService
+from app.services.team_references import TeamReferences, describe
 
 log = get_logger(__name__)
 
@@ -403,6 +407,64 @@ class ScopeGuard:
     async def document(self, ident: uuid.UUID) -> None:
         await self._check(await self._lookups.document(ident), "document", ident)
 
+    # -- what a team-owned agent or workflow may use (E18) ---------------------------
+    async def require_usable(
+        self,
+        what: str,
+        team_id: uuid.UUID | None,
+        *,
+        models: Iterable[str] = (),
+        knowledge_bases: Iterable[str] = (),
+    ) -> None:
+        """An agent or workflow in ``team_id`` may use only shared resources and its own
+        team's, whoever saves it. See app/services/team_references.py."""
+        problems = await TeamReferences(self._lookups).unavailable(
+            team_id, models=models, knowledge_bases=knowledge_bases
+        )
+        if problems:
+            raise ValidationError(describe(what, team_id, problems), details={"uses": problems})
+
+    async def team_of(self, resource_type: str, ident: uuid.UUID) -> uuid.UUID | None:
+        found: tuple[bool, uuid.UUID | None] = await getattr(self._lookups, resource_type)(ident)
+        return found[1]
+
+    async def _references_of(self, resource_type: str, ident: uuid.UUID) -> tuple[list, list]:
+        """The models and knowledge bases an agent's current version, or a workflow's
+        draft and published version, refer to."""
+        session = self._lookups.session
+        if resource_type == "agent":
+            row = (
+                await session.execute(
+                    select(AgentVersion.model, AgentVersion.knowledge_base_ids)
+                    .join(Agent, Agent.id == AgentVersion.agent_id)
+                    .where(Agent.id == ident, AgentVersion.version == Agent.current_version)
+                )
+            ).first()
+            return ([row.model], list(row.knowledge_base_ids or [])) if row else ([], [])
+        if resource_type == "workflow":
+            workflow = await session.get(Workflow, ident)
+            if workflow is None:
+                return [], []
+            definitions = [workflow.draft or {}]
+            if workflow.published_version is not None:
+                published = (
+                    await session.execute(
+                        select(WorkflowVersion.definition).where(
+                            WorkflowVersion.workflow_id == ident,
+                            WorkflowVersion.version == workflow.published_version,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if published:
+                    definitions.append(published)
+            models: list[str] = []
+            bases: list[str] = []
+            for definition in definitions:
+                models += wd.referenced_ids(definition, "llm", "model")
+                bases += wd.referenced_ids(definition, "retrieval", "knowledge_base_ids")
+            return models, bases
+        return [], []
+
     async def assignable(self, team_id: uuid.UUID | None) -> None:
         """Validate a ``team_id`` from a create payload."""
         if team_id is not None and not await self._lookups.team_exists(team_id):
@@ -441,6 +503,16 @@ class ScopeGuard:
         # Taking a resource *out* of a team is a move too: only someone who could have
         # put it there may do it, or a team could be emptied by a non-member.
         self.scope.require_assignable(current)
+
+        # E18: an agent or workflow moved into another team must still be able to use what
+        # it refers to there. Refused now, rather than discovered at its next run.
+        if resource_type in ("agent", "workflow"):
+            models, bases = await self._references_of(resource_type, resource_id)
+            problems = await TeamReferences(self._lookups).unavailable(
+                team_id, models=models, knowledge_bases=bases
+            )
+            if problems:
+                raise ConflictError(describe(label, team_id, problems), details={"uses": problems})
 
         await self._lookups.set_team(table, resource_id, team_id)
         await self._audit.record(

@@ -32,6 +32,7 @@ from redis.asyncio import Redis
 from app.core.errors import ValidationError
 from app.core.interfaces.vector import CollectionSpec, Distance, VectorRecord, VectorStore
 from app.core.logging import get_logger
+from app.core.scope import Scope
 from app.models.knowledge import Conversation, ConversationMessage, MemoryEntry, MemoryLayer
 from app.repositories.knowledge import (
     ConversationMessageRepository,
@@ -251,7 +252,12 @@ class MemoryService:
         return message
 
     async def get_conversation(
-        self, scope: MemoryScope, *, external_id: str, limit: int = 20
+        self,
+        scope: MemoryScope,
+        *,
+        external_id: str,
+        limit: int = 20,
+        teams: Scope | None = None,
     ) -> ConversationView | None:
         """§M16's ``get_conversation()``. Scoped, like everything else here."""
         conversation = await self._conversations.find_scoped(
@@ -260,6 +266,7 @@ class MemoryService:
             agent_id=scope.agent_id,
             user_id=scope.user_id,
             end_user=scope.end_user,
+            teams=teams,
         )
         if conversation is None:
             return None
@@ -393,7 +400,13 @@ class MemoryService:
         return entry
 
     async def recall(
-        self, scope: MemoryScope, query: str, *, limit: int = 5, score_threshold: float = 0.3
+        self,
+        scope: MemoryScope,
+        query: str,
+        *,
+        limit: int = 5,
+        score_threshold: float = 0.3,
+        teams: Scope | None = None,
     ) -> list[RecalledMemory]:
         """§M16's ``search_memory()``. Similarity search, always scoped.
 
@@ -425,12 +438,16 @@ class MemoryService:
             return []
 
         rows = await self._entries.get_by_vector_ids([hit.id for hit in hits])
+        # E18: an operator searching memory sees what their teams' agents remembered.
+        hidden = await self._entries.hidden_agents({r.agent_id for r in rows.values()}, teams)
         now = dt.datetime.now(dt.UTC)
         recalled: list[RecalledMemory] = []
         for hit in hits:
             row = rows.get(hit.id)
             if row is None:
                 log.warning("orphaned_memory_vector", point=hit.id)
+                continue
+            if row.agent_id in hidden:
                 continue
             if row.expires_at is not None and row.expires_at < now:
                 # Expired but not yet swept. Skipped at read time as well as by the sweeper,
@@ -454,6 +471,7 @@ class MemoryService:
         end_user: str | None = None,
         agent_id: uuid.UUID | None = None,
         limit: int = 100,
+        teams: Scope | None = None,
     ) -> list[MemoryEntry]:
         """What the platform remembers, as text.
 
@@ -463,18 +481,25 @@ class MemoryService:
         """
         return list(
             await self._entries.list_scoped(
-                tenant_id=tenant_id, end_user=end_user, agent_id=agent_id, limit=limit
+                tenant_id=tenant_id,
+                end_user=end_user,
+                agent_id=agent_id,
+                limit=limit,
+                teams=teams,
             )
         )
 
-    async def forget(self, scope: MemoryScope, *, memory_id: uuid.UUID) -> bool:
+    async def forget(
+        self, scope: MemoryScope, *, memory_id: uuid.UUID, teams: Scope | None = None
+    ) -> bool:
         """§M16's ``delete_memory()``, for one entry.
 
         Scope-checked, not just id-checked: a bare id would let anyone holding it delete
         another tenant's memory, and deletion is not something to get wrong.
         """
         entry = await self._entries.get(memory_id)
-        if entry is None:
+        # E18: another team's agent's memory is reported exactly as one that does not exist.
+        if entry is None or await self._entries.hidden_agents({entry.agent_id}, teams):
             return False
         if entry.tenant_id != scope.tenant_id:
             raise ValidationError("That memory belongs to a different tenant.")
@@ -487,7 +512,7 @@ class MemoryService:
         await self._entries.delete(entry)
         return True
 
-    async def forget_all(self, scope: MemoryScope) -> int:
+    async def forget_all(self, scope: MemoryScope, *, teams: Scope | None = None) -> int:
         """Erase everything remembered about someone, across all three layers.
 
         The operation a subject-access or erasure request actually needs. It deletes the
@@ -507,6 +532,7 @@ class MemoryService:
             end_user=scope.end_user,
             agent_id=scope.agent_id,
             limit=10_000,
+            teams=teams,
         )
         vector_ids = [e.vector_id for e in entries if e.vector_id]
         if vector_ids:
@@ -518,6 +544,9 @@ class MemoryService:
         for entry in entries:
             await self._entries.delete(entry)
 
-        await self.clear_session(scope)
+        # Session state is keyed by person, not by agent, so only an all-teams caller may
+        # clear it (E18): a team-limited one would also clear other teams' working state.
+        if teams is None or teams.all_teams:
+            await self.clear_session(scope)
         log.info("memory_erased", scope=scope.describe(), entries=len(entries))
         return len(entries)

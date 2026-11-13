@@ -17,7 +17,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, status
 
-from app.api.deps import VoiceConfigStoreDep, VoiceServiceDep, require_permission
+from app.api.deps import ScopeDep, VoiceConfigStoreDep, VoiceServiceDep, require_permission
 from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
@@ -45,6 +45,7 @@ async def create_session(
     payload: VoiceSessionCreateRequest,
     service: VoiceServiceDep,
     actor: Annotated[User, require_permission(Perm.AGENT_EXECUTE)],
+    scope: ScopeDep,
 ) -> VoiceSessionCreatedResponse:
     """Open a session and hand back the socket to talk on (§31).
 
@@ -58,6 +59,7 @@ async def create_session(
         language=payload.language,
         voice=payload.voice,
         conversation_id=payload.conversation_id,
+        scope=scope,
     )
     return VoiceSessionCreatedResponse(
         session_id=session.id,

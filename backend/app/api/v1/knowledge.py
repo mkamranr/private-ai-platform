@@ -431,6 +431,7 @@ async def search_memory(
     payload: MemorySearchRequest,
     service: MemoryServiceDep,
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    teams: ScopeDep,
 ) -> list[RecalledMemoryRead]:
     """§M16's `search_memory()`, exposed for operators.
 
@@ -444,7 +445,7 @@ async def search_memory(
             "A memory search needs a user_id or end_user. Searching a whole tenant's "
             "memory is not supported: it would return one person's memories to another."
         )
-    recalled = await service.recall(scope, payload.query, limit=payload.limit)
+    recalled = await service.recall(scope, payload.query, limit=payload.limit, teams=teams)
     return [RecalledMemoryRead(**asdict(m)) for m in recalled]
 
 
@@ -452,6 +453,7 @@ async def search_memory(
 async def list_memory(
     service: MemoryServiceDep,
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    teams: ScopeDep,
     tenant_id: str = "default",
     end_user: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
@@ -463,7 +465,9 @@ async def list_memory(
     """
     return [
         MemoryEntryRead.model_validate(e)
-        for e in await service.list_entries(tenant_id=tenant_id, end_user=end_user, limit=limit)
+        for e in await service.list_entries(
+            tenant_id=tenant_id, end_user=end_user, limit=limit, teams=teams
+        )
     ]
 
 
@@ -473,12 +477,15 @@ async def list_memory(
 async def forget_memory(
     service: MemoryServiceDep,
     actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    teams: ScopeDep,
     memory_id: uuid.UUID = Path(...),
     tenant_id: str = "default",
 ) -> MessageResponse:
     from app.services.memory import MemoryScope
 
-    removed = await service.forget(MemoryScope(tenant_id=tenant_id), memory_id=memory_id)
+    removed = await service.forget(
+        MemoryScope(tenant_id=tenant_id), memory_id=memory_id, teams=teams
+    )
     return MessageResponse(
         message="Memory forgotten." if removed else "No such memory in that tenant."
     )
@@ -489,13 +496,20 @@ async def forget_all(
     payload: MemorySearchRequest,
     service: MemoryServiceDep,
     actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    teams: ScopeDep,
 ) -> MessageResponse:
     """Erase everything remembered about one person, across all three layers.
 
     What an erasure request actually needs. A partial erasure would be worse than none: the
     platform would report the data as deleted while still recalling it.
     """
-    count = await service.forget_all(payload.to_scope())
+    count = await service.forget_all(payload.to_scope(), teams=teams)
+    if not teams.all_teams:
+        # E18: limited to the caller's teams' agents and shared ones; session state kept.
+        return MessageResponse(
+            message=f"Erased {count} memory entries held by your teams' agents and shared "
+            "agents. An administrator can erase the rest and clear the session state."
+        )
     return MessageResponse(
         message=f"Erased {count} memory entries and cleared session state for that subject."
     )
@@ -509,6 +523,7 @@ async def forget_all(
 async def get_conversation(
     service: MemoryServiceDep,
     _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    teams: ScopeDep,
     external_id: str = Path(...),
     tenant_id: str = "default",
     end_user: str | None = None,
@@ -522,6 +537,7 @@ async def get_conversation(
         MemoryScope(tenant_id=tenant_id, end_user=end_user),
         external_id=external_id,
         limit=limit,
+        teams=teams,
     )
     if view is None:
         raise NotFoundError(f"No conversation {external_id!r} in that scope.")

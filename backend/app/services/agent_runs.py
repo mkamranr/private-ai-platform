@@ -40,8 +40,10 @@ from app.repositories.agents import (
     AgentVersionRepository,
     ToolExecutionRepository,
 )
+from app.repositories.teams import ScopeLookupRepository
 from app.services.agent_registry import AgentRegistryService
 from app.services.audit import AuditService
+from app.services.team_references import TeamReferences, describe
 
 log = get_logger(__name__)
 
@@ -89,6 +91,16 @@ class AgentRunService:
         version = await self._versions.get_current(agent.id)
         if version is None:
             raise NotFoundError(f"Agent '{agent.slug}' has no current version.")
+
+        # E18: checked on every run, not only when the agent was saved. A model or
+        # knowledge base moved to another team since then is out of this agent's reach.
+        problems = await TeamReferences(ScopeLookupRepository(self._runs.session)).unavailable(
+            agent.team_id,
+            models=[version.model],
+            knowledge_bases=version.knowledge_base_ids or [],
+        )
+        if problems:
+            raise ConflictError(describe("agent", agent.team_id, problems))
 
         spec = await self._registry.build_spec(agent, version)
 
