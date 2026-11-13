@@ -195,7 +195,7 @@ dashboard real signals.
 - [x] `agent:<slug>` gateway calls: attributed, admitted once per run against key, team, end-user and model quotas, and recorded as one usage row (`requested_model` = `agent:<slug>`, `model` = the resolved model, no timings). Streamed runs count tokens from `LLM_RESPONSE` events, so a disconnect is still accounted.
 - [x] No migration (the states existed; audit actions are strings).
 - [x] Tests: `tests/api/test_approval_expiry.py`, plus a workflow expiry test in `test_workflows.py`. Docs: [agents.md](../agents.md#expiry-e17), [workflows.md](../workflows.md), [gateway-policy.md](../gateway-policy.md#agent-calls-e17).
-- [ ] Not counted: agent runs started from the console or API, tokens spent after a console approval, workflow LLM steps, memory summaries. No reminder before an approval expires.
+- [ ] ~~Not counted: agent runs started from the console or API, tokens spent after a console approval, workflow LLM steps.~~ Closed in E19 (memory summaries have no caller). No reminder before an approval expires.
 
 ## E18: Team scoping finished (closes the E3 open item)
 
@@ -206,6 +206,14 @@ dashboard real signals.
 - [x] Definitions import: no version added to another team's agent; agents whose references their team cannot use are skipped with the reason.
 - [x] No migration. Tests: `tests/api/test_team_scoping_e18.py`. Doc: [teams.md](../teams.md#what-an-agent-or-workflow-may-use-e18).
 - [ ] Quotas, circuit breakers, tools, skills, MCP servers and fleet figures stay platform-wide by design. Agent tool grants are not team-checked.
+
+## E19: Platform model calls accounted (closes the E17 open item)
+
+- [x] `GatewayService.record_internal_usage`: one keyless usage row per platform model call, attributed to the starter and the agent's or workflow's team; model resolved like gateway calls; charged to team and model token budgets through `GatewayPolicy.account` (counted, never refused); independent session; never raises.
+- [x] Agent runs: tokens counted from `LLM_RESPONSE` events and recorded when the stream ends (completed, failed, suspended, abandoned) as `agent.run` / `agent:<slug>`. Covers console, `/agents/{id}/execute`, voice and every post-approval continuation. `/v1` `agent:` calls pass `record_usage=False` (the gateway records them, E17).
+- [x] Workflow LLM steps record `workflow.llm` / `workflow:<name>` as soon as the model answers.
+- [x] No migration. Tests: `tests/api/test_internal_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#the-platforms-own-model-calls-e19).
+- [ ] Not refused by quotas; API key and end-user quotas do not apply. Embeddings (ingestion, search, memory) are not accounted. No timings on these rows.
 
 ## Phase acceptance (applies to each)
 

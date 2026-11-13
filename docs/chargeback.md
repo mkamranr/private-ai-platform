@@ -6,7 +6,8 @@ estimates").
 
 The console's **AI Models → Chargeback** page, and `/api/v1/chargeback`, turn what the
 platform already records into estimated cost per team, API key, platform user, end user or
-model. Nothing new is collected: reports read `usage_records` (one row per gateway call)
+model. Nothing new is collected: reports read `usage_records` (one row per gateway call,
+plus, since E19, one per agent run and workflow LLM step the platform makes itself)
 and `gpu_allocations` (which GPUs each deployment held, and when).
 
 ## Rates

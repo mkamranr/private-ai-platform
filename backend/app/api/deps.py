@@ -843,6 +843,7 @@ def get_agent_run_service(
     registry: AgentRegistryDep,
     runtime: Annotated[PlatformAgentRuntime, Depends(get_agent_runtime)],
     audit: AuditDep,
+    gateway: GatewayServiceDep,
 ) -> AgentRunService:
     return AgentRunService(
         AgentRunRepository(session),
@@ -852,6 +853,7 @@ def get_agent_run_service(
         registry,
         runtime,
         audit,
+        usage=gateway.record_internal_usage,
     )
 
 
@@ -941,6 +943,7 @@ def build_agent_run_service(session: AsyncSession, app_state: Any) -> AgentRunSe
         registry,
         runtime,
         audit,
+        usage=gateway.record_internal_usage,
     )
 
 
@@ -983,6 +986,7 @@ def build_workflow_service(session: AsyncSession, app_state: Any) -> WorkflowSer
         knowledge=knowledge,
         tools=ToolRepository(session),
         tool_executors=app_state.tool_executors,
+        usage=gateway.record_internal_usage,
     )
     return WorkflowService(
         settings,

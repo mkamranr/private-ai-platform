@@ -269,18 +269,15 @@ the personal data the tool was called to look up, and `audit.view` is broader st
 
 ## Known gaps
 
-* **Agent usage is recorded only for gateway calls (E17).** An `agent:<slug>` call
-  through `/v1` writes one `usage_records` row for the whole run: `requested_model` is
-  `agent:<slug>`, `model` is the model that answered, and the tokens are the run's. It is
-  admitted against the key's, team's, end user's and model's quotas, once per run. Nothing
-  is double counted, because the runtime's own model calls never wrote usage rows.
-  Still not counted:
-  - runs started from the console or the API (`POST /agents/{id}/execute`);
-  - the part of a run that continues after a console approval;
-  - workflow LLM steps;
-  - memory summaries.
-
-  These still show only in `agent_runs.prompt_tokens`/`completion_tokens`.
+* **Every agent run is accounted (E17, E19).** An `agent:<slug>` call through `/v1`
+  writes one `usage_records` row for the whole run against the key, and is admitted
+  against its quotas (E17). Since E19, runs started from the console, the API
+  (`POST /agents/{id}/execute`) or voice, and the part of any run that continues after an
+  approval, write an `agent.run` row for the person who started the run and the agent's
+  team. Those count toward team and model budgets but are not refused by them. See
+  [gateway-policy.md](gateway-policy.md#the-platforms-own-model-calls-e19).
+* **Embeddings are not accounted.** Document ingestion, search and memory embed text
+  through the gateway's providers without writing usage rows.
 * **`DATABASE` and `OPENAPI` tools are catalogued but not executable.** They report
   themselves unimplemented rather than pretending.
 * **Conversation history is not replayed into an agent.** Each run is a fresh

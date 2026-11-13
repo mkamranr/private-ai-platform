@@ -42,6 +42,7 @@ from app.models.workflows import (
     ApprovalStatus,
     RunStatus,
     StepStatus,
+    Workflow,
     WorkflowApproval,
     WorkflowRun,
     WorkflowStep,
@@ -100,7 +101,10 @@ class WorkflowEngine:
         tools: ToolRepository | None = None,
         tool_executors: Mapping[ToolType, Any] | None = None,
         http_transport: httpx.AsyncBaseTransport | None = None,
+        usage: Any | None = None,
     ) -> None:
+        #: GatewayService.record_internal_usage in production (E19).
+        self._usage = usage
         self._settings = settings
         self._steps = steps
         self._approvals = approvals
@@ -442,6 +446,7 @@ class WorkflowEngine:
         rendered = wd.render(config, context)
         await self._require_usable(run, models=[str(rendered["model"])])
         provider, served = await self._provider_factory(str(rendered["model"]))
+        started = time.perf_counter()
         messages = []
         if rendered.get("system"):
             messages.append(ChatMessage(role="system", content=str(rendered["system"])))
@@ -459,12 +464,33 @@ class WorkflowEngine:
                 "completion_tokens": completion.usage.completion_tokens,
                 "total_tokens": completion.usage.total_tokens,
             }
+        await self._record_usage(run, str(rendered["model"]), completion, started)
         if rendered.get("parse_json"):
             try:
                 output["json"] = json.loads(output["text"])
             except ValueError as exc:
                 raise NodeFailedError("The model's reply is not valid JSON.") from exc
         return Outcome(output=output)
+
+    async def _record_usage(
+        self, run: WorkflowRun, model: str, completion: Any, started: float
+    ) -> None:
+        """E19: one usage row per LLM step, for the person who started the run and the
+        workflow's team. Recorded as soon as the model answered, so a step that then fails
+        (invalid JSON, say) is still accounted: the tokens were spent."""
+        if self._usage is None or completion.usage is None:
+            return
+        workflow = await self._steps.session.get(Workflow, run.workflow_id)
+        await self._usage(
+            endpoint="workflow.llm",
+            requested_model=f"workflow:{workflow.name if workflow else run.workflow_id}"[:128],
+            configured_model=model,
+            prompt_tokens=completion.usage.prompt_tokens,
+            completion_tokens=completion.usage.completion_tokens,
+            user_id=run.started_by,
+            team_id=workflow.team_id if workflow else None,
+            started=started,
+        )
 
     async def _require_usable(
         self,

@@ -152,6 +152,20 @@ class GatewayPolicy:
             admission.charges = [c for c in admission.charges if c.scope not in quotas]
             raise
 
+    async def account(self, admission: Admission, subjects: Sequence[tuple[str, str]]) -> None:
+        """Record which token budgets a call counts against, without checking them (E19).
+
+        For the platform's own model calls (agent runs started in the console, workflow
+        steps): they are charged like any other call, so a team's budget shows what its
+        agents spent, but they are not refused. Refusing a run halfway through a workflow
+        is a decision E19 leaves to the operator; see docs/gateway-policy.md.
+        """
+        quotas = await self._quotas.applicable(subjects)
+        subject_of = dict(subjects)
+        for scope, quota in quotas.items():
+            if quota.has_token_limits:
+                admission.charges.append(_Charge(scope, subject_of[scope], quota))
+
     async def drop_scope(self, admission: Admission, scope: str) -> None:
         """Forget one scope's charges and slots — used when a fallback model takes over,
         so the model that did not answer is neither charged nor kept busy."""
