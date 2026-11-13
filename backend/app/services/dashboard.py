@@ -220,6 +220,7 @@ class DashboardService:
             # Weighted by request count. Averaging the per-model averages would let one
             # request against a rarely used model swing the headline number.
             "avg_latency_ms": _weighted_latency(by_model),
+            **await self._usage.timing_totals(since=since),
             "top_models": by_model[:5],
             "series": series,
             "source": "gateway usage records",

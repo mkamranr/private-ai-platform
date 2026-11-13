@@ -196,6 +196,16 @@ function dashKpis(data) {
         : 'no traffic in this window',
       tone: g.errors ? 'red' : 'amber', iconId: 'i-deployments',
     });
+    // E16: measured on streamed calls only. Nothing streamed is "—", never 0 ms.
+    const timed = g.ttft_p50_ms !== null && g.ttft_p50_ms !== undefined;
+    const tps = g.output_tps_p50 == null ? '' : ` · ${fmtRate(g.output_tps_p50)} tok/s`;
+    cards.push({
+      label: 'First token (p50)', value: timed ? fmtMs(g.ttft_p50_ms) : '—',
+      note: timed
+        ? `p95 ${fmtMs(g.ttft_p95_ms)}${tps} · ${fmtInt(g.timed_streams)} streams`
+        : 'no streamed calls in this window',
+      tone: 'blue', iconId: 'i-gauge',
+    });
   }
   if (data.gpus) {
     const g = data.gpus;
@@ -3947,6 +3957,9 @@ onModalSubmit('backend-form', 'backend-error', async (form) => {
 /* Usage, quotas and circuit breakers (E2)                                    */
 /* -------------------------------------------------------------------------- */
 const fmtInt = (n) => (n == null ? '—' : Number(n).toLocaleString());
+/** Milliseconds as "840 ms" or "2.4 s"; unmeasured is "—". */
+const fmtMs = (ms) => (ms == null ? '—' : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`);
+const fmtRate = (n) => (n == null ? '—' : n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(1));
 const QUOTA_SCOPE_LABEL = { api_key: 'API key', end_user: 'End user', model: 'Model', team: 'Team' };
 
 /* -------------------------------------------------------------------------- */
@@ -4286,14 +4299,21 @@ function quotasCard(quotas) {
 
 function usageByModelCard(rows) {
   if (!rows.length) return sectionCard('By model', null, `<div class="card-body pt-0">${empty('No gateway traffic in this period.')}</div>`);
-  return sectionCard('By model', 'The model that answered, whichever alias was asked for.',
+  return sectionCard('By model',
+    'The model that answered, whichever alias was asked for. First token and tok/s are measured on streamed calls only; "—" means none in this period.',
     tableHtml('<th>Model</th><th class="text-end">Requests</th><th class="text-end">Tokens</th>' +
-              '<th class="text-end">Avg latency</th><th class="text-end">Errors</th><th class="text-end">Fallbacks</th>',
+              '<th class="text-end">Avg latency</th><th class="text-end">p95 latency</th>' +
+              '<th class="text-end" title="Time to first token, median and 95th percentile">First token p50 / p95</th>' +
+              '<th class="text-end" title="Median output tokens per second while generating">Tok/s</th>' +
+              '<th class="text-end">Errors</th><th class="text-end">Fallbacks</th>',
       rows.map((r) => `<tr>
         <td class="mono">${esc(r.model)}</td>
         <td class="text-end">${fmtInt(r.requests)}</td>
         <td class="text-end">${fmtInt(r.prompt_tokens + r.completion_tokens)}</td>
         <td class="text-end">${Math.round(r.avg_latency_ms)} ms</td>
+        <td class="text-end">${fmtMs(r.latency_p95_ms)}</td>
+        <td class="text-end" title="${fmtInt(r.timed_streams)} streamed call(s)">${r.ttft_p50_ms == null ? '—' : `${fmtMs(r.ttft_p50_ms)} / ${fmtMs(r.ttft_p95_ms)}`}</td>
+        <td class="text-end">${fmtRate(r.output_tps_p50)}</td>
         <td class="text-end ${r.errors ? 'text-danger' : ''}">${fmtInt(r.errors)}</td>
         <td class="text-end">${fmtInt(r.fallbacks)}</td>
       </tr>`).join('')));

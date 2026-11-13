@@ -6,7 +6,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 
 | # | Feature | Plan priority | Status | Where | Gap to close |
 |---|---|---|---|---|---|
-| 1 | Unified dashboard | P0 | Existing (E8) | `api/v1/dashboard.py`, `services/dashboard.py`, `repositories/dashboard.py`, `frontend/admin` | TTFT and throughput (not recorded yet) |
+| 1 | Unified dashboard | P0 | Existing (E8) | `api/v1/dashboard.py`, `services/dashboard.py`, `repositories/dashboard.py`, `frontend/admin` | TTFT and throughput recorded since E16 (streamed calls only) |
 | 2 | Backend registry | P0 | Existing (E1) | `services/inference_backends.py`, `api/v1/backends.py`, `core/url_policy.py` | Gateway use of backend API keys (E2); deploy/stop/metrics capabilities |
 | 3 | Model registry | P0 | Existing (E3, E4) | `models/models_registry.py`, `services/model_registry.py`, [model-governance.md](../model-governance.md) | Grouping is by `family`, not a `model_versions` table (deliberate) |
 | 4 | OpenAI-compatible gateway | P0 | Existing | `api/v1/gateway.py`, `services/gateway.py`, `services/gateway_policy.py` | Round-robin across replicas; mid-stream failover |

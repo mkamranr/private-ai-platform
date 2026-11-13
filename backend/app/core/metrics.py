@@ -85,6 +85,23 @@ GATEWAY_TTFT = Histogram(
     registry=REGISTRY,
 )
 
+GATEWAY_DURATION = Histogram(
+    "ai_platform_gateway_request_duration_seconds",
+    "Gateway call duration, request to last byte (E16), by the model that answered.",
+    ("model", "surface"),
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0),
+    registry=REGISTRY,
+)
+
+GATEWAY_OUTPUT_TPS = Histogram(
+    "ai_platform_gateway_output_tokens_per_second",
+    "Output tokens per second while a streamed answer was being generated (E16). "
+    "Complete, successful streams of at least two tokens only.",
+    ("model",),
+    buckets=(1, 5, 10, 20, 30, 50, 75, 100, 150, 250, 500),
+    registry=REGISTRY,
+)
+
 # Gateway policy (E2) — recorded by app.services.gateway_policy and app.services.gateway.
 GATEWAY_QUOTA_REJECTIONS = Counter(
     "ai_platform_gateway_quota_rejections_total",

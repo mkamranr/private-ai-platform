@@ -497,6 +497,13 @@ class UsageSummaryRow(BaseModel):
     errors: int = 0
     #: Calls this model answered as an alias's fallback (E2).
     fallbacks: int = 0
+    #: Timing percentiles (E16). None when nothing in range was measured: TTFT and
+    #: throughput come from streamed calls only, and `timed_streams` says how many.
+    ttft_p50_ms: float | None = None
+    ttft_p95_ms: float | None = None
+    latency_p95_ms: float | None = None
+    output_tps_p50: float | None = None
+    timed_streams: int = 0
 
 
 class UsageSummaryResponse(BaseModel):

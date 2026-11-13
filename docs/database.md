@@ -337,6 +337,10 @@ cost per request.
 
 `usage_records` — `api_key_id` FK, `user_id` FK, `endpoint`, `model`, `agent_id`,
 `prompt_tokens`, `completion_tokens`, `latency_ms`, `status_code`, `recorded_at`.
+E16 adds `ttft_ms` and `generation_ms`: nullable floats, set on streamed calls only, with
+no backfill. NULL means not measured. Output throughput is derived from them at query
+time and not stored (migration `f7b2d4a6c9e3`, see
+[gateway-policy.md](gateway-policy.md#timings-e16)).
 
 `backups` — `id`, `filename`, `size_bytes`, `sha256`, `components` jsonb,
 `status`, `created_by` FK, `verified_at`.

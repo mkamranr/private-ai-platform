@@ -156,9 +156,38 @@
       ]
     },
     {
+      "type": "timeseries",
+      "title": "Gateway call duration (p95)",
+      "description": "Request to last byte, by the model that answered (E16). Grows with answer length; read it beside time to first token.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(ai_platform_gateway_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Output tokens per second (median)",
+      "description": "Decode speed while a streamed answer is generated (E16). Complete, successful streams of two or more tokens only.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+      "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, model) (rate(ai_platform_gateway_output_tokens_per_second_bucket[5m])))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "type": "logs",
       "title": "Warnings and errors",
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 28},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 36},
       "datasource": {"type": "loki", "uid": "platform-loki"},
       "targets": [
         {

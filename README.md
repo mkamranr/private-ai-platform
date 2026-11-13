@@ -187,6 +187,7 @@ Release-specific steps are in [upgrade-0.2.md](docs/upgrade-0.2.md).
 | **Alert notifications (E13)** | Alerts sent to chat and ticketing webhooks and to email, once when raised, escalated and resolved, with retries, signing and a delivery history |
 | **Auth hardening (E14)** | Account lockout, a per-address sign-in throttle, real sign-out and *sign out everywhere*, refresh token rotation with theft detection, and a throttle on the ops runner token |
 | **Two-factor authentication (E15)** | Authenticator-app codes with recovery codes, a policy to require them for admins or everyone, and an administrator reset for lost phones |
+| **Gateway timings (E16)** | Time to first token, p95 latency and output tokens per second per model, measured on streamed calls and shown on the dashboard and Usage page |
 
 ## It also runs without much GPU, or none at all
 

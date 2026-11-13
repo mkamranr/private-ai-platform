@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Gateway timings (E16)
+- **Time to first token and throughput.** Each streamed chat call through `/v1` stores how long the first token took and how long the answer took to generate. The dashboard has a *First token (p50)* card with p95 and output tokens per second. Usage & Quotas adds First token p50/p95, p95 latency and Tok/s per model.
+- **Measured, not estimated.** Buffered calls have no first token to time, so their figures are empty, and "—" is shown when nothing was streamed. Throughput leaves out disconnects, failures and one-token answers.
+- **Prometheus.** New histograms `ai_platform_gateway_request_duration_seconds` and `ai_platform_gateway_output_tokens_per_second`, with panels on the Grafana overview.
+- **Fixed.** A runtime's role-only first chunk was counted as the first token, which made TTFT look faster than it was.
+- **Upgrade.** One migration (`f7b2d4a6c9e3`, two nullable columns, no backfill). The API changes only add fields. See [docs/gateway-policy.md](docs/gateway-policy.md#timings-e16).
+
 ### Two-factor authentication (E15)
 - **Authenticator app codes.** Local accounts can turn on TOTP (RFC 6238), which works with any standard authenticator app. The QR code is drawn on the server, so nothing loads from the internet. Ten single-use recovery codes are shown once.
 - **Two-step sign-in.** With MFA on, `/auth/login` returns `mfa_required` and a short-lived step token instead of tokens; `/auth/mfa/verify` finishes the sign-in. Wrong codes count toward the E14 lockout, and a code works only once.
