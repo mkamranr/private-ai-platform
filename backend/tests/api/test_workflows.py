@@ -590,6 +590,57 @@ class TestApprovals:
         )
         assert {AuditAction.WORKFLOW_RUN_STARTED, AuditAction.WORKFLOW_APPROVAL_GRANTED} <= actions
 
+    async def test_an_unanswered_approval_expires_and_fails_the_run(
+        self, client, tokens, builder, approver, wf, session
+    ) -> None:
+        """E17. Expiry is not a rejection: the rejected branch is not taken, the run
+        fails saying why, and a late decision is a conflict."""
+        from sqlalchemy import update
+
+        from app.models.workflows import WorkflowApproval
+        from app.services.approval_expiry import ApprovalExpiry
+        from app.services.audit import AuditService
+
+        workflow = await published(client, tokens, builder, approval_flow())
+        result = await run(client, tokens, builder, workflow["id"], {"amount": 40})
+        approval_id = result["approvals"][0]["id"]
+        await session.execute(
+            update(WorkflowApproval)
+            .where(WorkflowApproval.id == uuid.UUID(approval_id))
+            .values(requested_at=dt.datetime.now(dt.UTC) - dt.timedelta(hours=100))
+        )
+
+        expired = await ApprovalExpiry(session, AuditService(AuditRepository(session))).run(
+            ttl_hours=72
+        )
+        assert expired.workflow_steps >= 1
+
+        body = (
+            await client.get(
+                f"/api/v1/workflow-runs/{result['id']}", headers=auth_header(tokens, builder)
+            )
+        ).json()
+        assert body["status"] == RunStatus.FAILED
+        assert "expired after 72 hours" in body["error"]
+        assert body["approvals"][0]["status"] == "EXPIRED"
+        assert body["output"] != {"refunded": False}, "the rejected branch must not run"
+
+        late = await client.post(
+            f"/api/v1/workflow-approvals/{approval_id}/decide",
+            json={"approved": True},
+            headers=auth_header(tokens, approver),
+        )
+        assert late.status_code == 409
+
+        actions = set(
+            (
+                await session.execute(
+                    select(AuditLog.action).where(AuditLog.resource_id == result["id"])
+                )
+            ).scalars()
+        )
+        assert AuditAction.WORKFLOW_APPROVAL_EXPIRED in actions
+
     async def test_rejection_takes_the_rejected_branch(
         self, client, tokens, builder, approver, wf
     ) -> None:

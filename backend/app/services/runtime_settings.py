@@ -193,6 +193,15 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next support bundle",
     ),
     RuntimeSetting(
+        "agents.approval_ttl_hours",
+        "security",
+        "Approvals expire after (hours)",
+        "An agent tool call or workflow step waiting for approval longer than this "
+        "expires, and its run fails with a message saying so. Expiry is audited as the "
+        "scheduler, never as a rejection. 0 waits forever. Read by the approval expiry job.",
+        "Next expiry check (within 15 minutes)",
+    ),
+    RuntimeSetting(
         "ops.backup_interval_hours",
         "operations",
         "Scheduled backup every (hours)",

@@ -71,6 +71,7 @@ from app.repositories.operations import (
 from app.repositories.ops import OpsJobRepository, OpsRunnerRepository
 from app.repositories.teams import TeamRepository
 from app.services.alerts import AlertService
+from app.services.approval_expiry import ApprovalExpiry
 from app.services.audit import AuditService
 from app.services.backup_schedule import BackupScheduler
 from app.services.budgets import BudgetWatcher, CostBudgetService
@@ -95,6 +96,9 @@ STALE_POLL_MULTIPLIER = 3
 
 # The backup schedule is measured in hours; checking every five minutes is plenty (E12).
 BACKUP_SCHEDULE_CHECK_SECONDS = 300
+#: How often approvals are checked for expiry (E17). The TTL is in hours, so this only
+#: bounds how late past it an approval expires.
+APPROVAL_EXPIRY_CHECK_SECONDS = 900
 
 
 class InfrastructureWorker:
@@ -187,6 +191,21 @@ class InfrastructureWorker:
                 log.info("revoked_tokens_pruned", deleted=deleted)
         except Exception:
             log.exception("revoked_token_prune_failed")
+
+    async def expire_approvals(self) -> None:
+        """Expire agent and workflow approvals nobody answered (E17). Never raises."""
+        try:
+            async with self._session_factory() as session:
+                settings = await RUNTIME.effective(session, self._settings)
+                audit = AuditService(
+                    AuditRepository(session), session_factory=self._session_factory
+                )
+                await ApprovalExpiry(session, audit).run(
+                    ttl_hours=settings.agents.approval_ttl_hours
+                )
+                await session.commit()
+        except Exception:
+            log.exception("approval_expiry_failed")
 
     async def purge_metrics(self) -> None:
         try:
@@ -424,6 +443,16 @@ class InfrastructureWorker:
             coalesce=True,
             max_instances=1,
             misfire_grace_time=notify_interval,
+        )
+
+        self._scheduler.add_job(
+            self.expire_approvals,
+            IntervalTrigger(seconds=APPROVAL_EXPIRY_CHECK_SECONDS),
+            id="approval_expiry",
+            name="Expire approvals nobody answered",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=APPROVAL_EXPIRY_CHECK_SECONDS,
         )
 
         self._scheduler.add_job(

@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Approval expiry and agent usage (E17)
+- **Approvals expire.** A tool call or workflow step waiting for approval longer than `agents.approval_ttl_hours` (default 72, Settings page; 0 = never) expires, and its run fails with a message saying nobody decided. Expiry is audited as the scheduler (`TOOL_APPROVAL_EXPIRED`, `WORKFLOW_APPROVAL_EXPIRED`) and is never recorded as a rejection. A workflow does not take its rejected branch.
+- **Agent calls are accounted.** `agent:<slug>` calls through `/v1` now write a usage row (`agent:<slug>` as the requested model), so they appear on the Usage page, in chargeback and in budgets. They are admitted against API key, team, end-user and model quotas.
+- **Behaviour change.** A key over its token budget or concurrency limit now gets `429` for agent calls as well. Before this release, agent calls bypassed quotas. Runs that had been waiting for approval for more than 72 hours fail at the first check after upgrading; to keep them waiting, set `agents.approval_ttl_hours` to 0 before upgrading.
+- **Upgrade.** No migration. See [docs/agents.md](docs/agents.md#expiry-e17).
+
 ### Gateway timings (E16)
 - **Time to first token and throughput.** Each streamed chat call through `/v1` stores how long the first token took and how long the answer took to generate. The dashboard has a *First token (p50)* card with p95 and output tokens per second. Usage & Quotas adds First token p50/p95, p95 latency and Tok/s per model.
 - **Measured, not estimated.** Buffered calls have no first token to time, so their figures are empty, and "—" is shown when nothing was streamed. Throughput leaves out disconnects, failures and one-token answers.

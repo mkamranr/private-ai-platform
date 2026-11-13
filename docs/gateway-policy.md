@@ -129,6 +129,14 @@ that did not issue it. The external-runtime health probe uses the same key.
   admin). Creating, changing and deleting a quota is audited.
 - **API:** see [api.md](api.md#gateway-policy--expansion-e2).
 
+## Agent calls (E17)
+
+An `agent:<slug>` call is admitted against the same quotas as any other call (API key,
+team, trusted end user, and the model the agent answers with) once for the whole run,
+and holds one concurrency slot until the run ends. It writes one usage row with
+`requested_model` = `agent:<slug>`. Before E17, agent calls skipped every quota and
+appeared in no report. A key over its budget now gets **429** for agent calls too.
+
 ## Timings (E16)
 
 Every chat call through `/v1` stores its timings on its usage record. The dashboard and
@@ -148,7 +156,8 @@ the Usage & Quotas page report percentiles from them:
   `timed_streams` says how many calls a figure rests on.
 - **What is excluded.**
   - Throughput leaves out client disconnects, failed streams and one-token answers.
-  - `agent:<slug>` calls write no usage record (see [AGENTS.md](AGENTS.md#known-gaps)).
+  - `agent:<slug>` calls are recorded since E17, but without timings: an agent's first
+    token comes after its tool calls, and counting it would misstate the model's TTFT.
   - Voice calls are not timed.
 - **Clock.** Times are taken in the gateway process, so they include network time to the
   backend but not the client's side of the connection. The clock starts after API-key

@@ -27,10 +27,12 @@ it refused in chat is looking at that rule working.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from app.core.errors import NotFoundError, PermissionDeniedError
@@ -136,6 +138,20 @@ async def load_agent(
         ) from exc
 
 
+@dataclass(slots=True)
+class AgentStreamAccounting:
+    """Token counts from a streamed agent run, read by the background task (E17).
+
+    Counted from the run's LLM_RESPONSE events as they pass rather than read back from
+    the run afterwards: when the client hangs up, the request's transaction may never
+    commit, and the tokens were spent either way. Same reason as StreamAccounting.
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    disconnected: bool = False
+
+
 async def run_agent_buffered(
     *,
     agent: Agent,
@@ -189,6 +205,7 @@ async def run_agent_streamed(
     message: str,
     requested_model: str,
     conversation_id: str | None,
+    accounting: AgentStreamAccounting | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent, narrating progress as SSE deltas.
 
@@ -214,6 +231,27 @@ async def run_agent_streamed(
             + "\n\n"
         )
 
+    accounting = accounting if accounting is not None else AgentStreamAccounting()
+    try:
+        async for chunk in _narrate(
+            frame, agent, runs, actor, message, conversation_id, accounting
+        ):
+            yield chunk
+    except (GeneratorExit, asyncio.CancelledError):
+        # The client hung up. Only a flag: awaiting is not permitted here.
+        accounting.disconnected = True
+        raise
+
+
+async def _narrate(
+    frame: Any,
+    agent: Agent,
+    runs: AgentRunService,
+    actor: User,
+    message: str,
+    conversation_id: str | None,
+    accounting: AgentStreamAccounting,
+) -> AsyncIterator[str]:
     yield frame({"role": "assistant"})
 
     run, events = await runs.start(
@@ -222,7 +260,10 @@ async def run_agent_streamed(
 
     answered = False
     async for event in events:
-        if event.type == RunEventType.TOOL_REQUESTED:
+        if event.type == RunEventType.LLM_RESPONSE:
+            accounting.prompt_tokens += int(event.payload.get("prompt_tokens") or 0)
+            accounting.completion_tokens += int(event.payload.get("completion_tokens") or 0)
+        elif event.type == RunEventType.TOOL_REQUESTED:
             yield frame({"content": f"\n_Using {event.payload.get('tool')}…_\n"})
         elif event.type == RunEventType.TOOL_REJECTED:
             yield frame(

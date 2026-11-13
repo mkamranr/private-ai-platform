@@ -603,6 +603,9 @@ class AgentsSettings(BaseModel):
     default_temperature: float = 0.2
     # Risk levels that halt the run pending human approval (§10, §M24).
     approval_required_risk_levels: list[str] = Field(default_factory=lambda: ["HIGH", "CRITICAL"])
+    #: Hours an agent tool call or a workflow step waits for a decision before it expires
+    #: and its run fails (E17). 0 = wait forever, the behaviour before E17.
+    approval_ttl_hours: int = Field(default=72, ge=0, le=8760)
     # Tool types deliberately disabled: §M12 lists them but §25 forbids
     # unrestricted shell execution. They stay off until a hardened executor
     # exists (see docs/security.md).
