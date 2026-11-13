@@ -50,7 +50,11 @@ async def clean(session: AsyncSession) -> None:
 async def _runner(
     session: AsyncSession, backups: list[dict[str, Any]], *, online: bool = True
 ) -> None:
-    seen = NOW if online else NOW - dt.timedelta(hours=2)
+    # Liveness is judged against the real clock (OpsService.is_online), not the
+    # scheduler's fixed NOW, which is taken at import and can be minutes old by the
+    # time a full run reaches this test.
+    real_now = dt.datetime.now(dt.UTC)
+    seen = real_now if online else real_now - dt.timedelta(hours=2)
     session.add(OpsRunner(name="host-1", inventory={"backups": backups}, last_seen_at=seen))
     await session.flush()
 
