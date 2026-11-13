@@ -11,9 +11,11 @@ when things went wrong. Buffering to the end would lose exactly the interesting 
 from __future__ import annotations
 
 import datetime as dt
+import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Protocol
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.interfaces.agent import (
@@ -66,7 +68,10 @@ class AgentRunService:
         registry: AgentRegistryService,
         runtime: object,
         audit: AuditService,
+        usage: UsageRecorder | None = None,
     ) -> None:
+        #: GatewayService.record_internal_usage in production (E19); None records nothing.
+        self._usage = usage
         self._runs = runs
         self._events = events
         self._executions = executions
@@ -77,7 +82,13 @@ class AgentRunService:
 
     # -- start -------------------------------------------------------------
     async def start(
-        self, agent: Agent, *, message: str, actor: User, conversation_id: str | None = None
+        self,
+        agent: Agent,
+        *,
+        message: str,
+        actor: User,
+        conversation_id: str | None = None,
+        record_usage: bool = True,
     ) -> tuple[AgentRun, AsyncIterator[RunEvent]]:
         """Create the run record and return it with its event stream.
 
@@ -151,7 +162,10 @@ class AgentRunService:
         stream = self._runtime.execute(  # type: ignore[attr-defined]
             spec, context, [{"role": "user", "content": message}]
         )
-        return run, self._persisting(run, stream)
+        # `agent:` calls through /v1 are recorded by the gateway against the API key
+        # (E17), and pass record_usage=False so the tokens are not counted twice.
+        usage = _UsageTarget(agent, version.model) if record_usage else None
+        return run, self._persisting(run, stream, usage)
 
     # -- approve -----------------------------------------------------------
     async def approve(
@@ -200,7 +214,12 @@ class AgentRunService:
         stream = self._runtime.resume(  # type: ignore[attr-defined]
             str(run.id), approved=approved, approver_id=str(actor.id), reason=reason
         )
-        return run, self._persisting(run, stream)
+        # Always recorded, however the run started: the tokens spent after an approval
+        # were outside any `agent:` call's accounting (E19).
+        agent = await self._registry.get_agent(run.agent_id)
+        version = await self._versions.get(run.agent_version_id)
+        model = version.model if version is not None else ""
+        return run, self._persisting(run, stream, _UsageTarget(agent, model))
 
     # -- reads -------------------------------------------------------------
     async def get_run(self, run_id: uuid.UUID) -> AgentRun:
@@ -252,14 +271,43 @@ class AgentRunService:
 
     # -- event persistence -------------------------------------------------
     async def _persisting(
-        self, run: AgentRun, stream: AsyncIterator[RunEvent]
+        self, run: AgentRun, stream: AsyncIterator[RunEvent], usage: _UsageTarget | None = None
     ) -> AsyncIterator[RunEvent]:
         """Write each event as it passes, then hand it on.
 
         A generator rather than a background task: the caller streams these to a browser,
         and the UI showing a tool call it has not yet recorded would make the trace and
         the screen disagree about what happened.
+
+        Tokens are counted from LLM_RESPONSE events as they pass and recorded once, when
+        the stream ends for any reason: completed, failed, suspended for an approval, or
+        abandoned by a client that hung up (E19).
         """
+        started = time.perf_counter()
+        prompt_tokens = completion_tokens = calls = 0
+        try:
+            async for event in self._persist_each(run, stream):
+                if event.type == RunEventType.LLM_RESPONSE:
+                    calls += 1
+                    prompt_tokens += int(event.payload.get("prompt_tokens") or 0)
+                    completion_tokens += int(event.payload.get("completion_tokens") or 0)
+                yield event
+        finally:
+            if usage is not None and calls and self._usage is not None:
+                await self._usage(
+                    endpoint="agent.run",
+                    requested_model=f"agent:{usage.agent.slug}",
+                    configured_model=usage.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    user_id=run.user_id,
+                    team_id=usage.agent.team_id,
+                    started=started,
+                )
+
+    async def _persist_each(
+        self, run: AgentRun, stream: AsyncIterator[RunEvent]
+    ) -> AsyncIterator[RunEvent]:
         async for event in stream:
             self._events.add(
                 AgentRunEvent(
@@ -280,6 +328,30 @@ class AgentRunService:
                     state=run.state,
                     iterations=run.iterations,
                 )
+
+
+class UsageRecorder(Protocol):
+    async def __call__(
+        self,
+        *,
+        endpoint: str,
+        requested_model: str,
+        configured_model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        user_id: uuid.UUID | None,
+        team_id: uuid.UUID | None,
+        started: float,
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _UsageTarget:
+    """Whom a run's tokens are recorded for: the agent (slug, team) and the model its
+    version names."""
+
+    agent: Agent
+    model: str
 
 
 def _permissions_of(user: User) -> set[str]:

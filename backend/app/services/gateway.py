@@ -189,11 +189,17 @@ class GatewayContext:
     #: Budgets and concurrency slots this call was admitted against (E2).
     admission: Admission = field(default_factory=Admission)
 
+    #: The team a keyless call is made for (E19): the team of the agent or workflow
+    #: behind one of the platform's own model calls.
+    owner_team_id: uuid.UUID | None = None
+
     @property
     def team_id(self) -> uuid.UUID | None:
-        """The calling key's team (E3) — its client's. None for shared keys and for
-        internal callers (voice, agents), which carry no key."""
-        return self.api_key.client.team_id if self.api_key is not None else None
+        """The calling key's team (E3) — its client's. For a keyless platform call, the
+        team of the agent or workflow it was made for; None for shared ones."""
+        if self.api_key is not None:
+            return self.api_key.client.team_id
+        return self.owner_team_id
 
     @property
     def scope(self) -> Scope:
@@ -491,10 +497,61 @@ class GatewayService:
         ).scalar_one_or_none()
         if configured is None:
             raise NotFoundError("The agent has no current version.")
+        return await self.answering_model(configured)
+
+    async def answering_model(self, configured: str) -> str:
+        """The registry name of the model an alias or model name resolves to, as usage,
+        chargeback and model quotas name it. The configured name when nothing serves it."""
         try:
             return (await self.resolve(configured)).model.name
         except (NotFoundError, DependencyUnavailableError, PermissionDeniedError):
             return configured
+
+    # -- the platform's own model calls (E19) ------------------------------------------
+    async def record_internal_usage(
+        self,
+        *,
+        endpoint: str,
+        requested_model: str,
+        configured_model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        user_id: uuid.UUID | None,
+        team_id: uuid.UUID | None,
+        started: float,
+    ) -> None:
+        """One usage row for model calls the platform made itself (E19).
+
+        Before E19 only `/v1` traffic was recorded, so an agent run started in the console
+        or through `/agents/{id}/execute`, the rest of a run after an approval, a voice
+        turn and a workflow LLM step spent tokens no report, budget or chargeback saw.
+
+        Attributed to the person who started the work and to the team of the agent or
+        workflow (no API key). Charged to that team's and that model's token budgets, but
+        never refused by them (see GatewayPolicy.account). Written on an independent
+        session like every usage row, and never raises: accounting must not fail a run.
+        """
+        try:
+            model = await self.answering_model(configured_model)
+            context = GatewayContext(user_id=user_id, started=started, owner_team_id=team_id)
+            subjects: list[tuple[str, str]] = []
+            if team_id is not None:
+                subjects.append((QuotaScope.TEAM, str(team_id)))
+            subjects.append((QuotaScope.MODEL, model))
+            await self._policy.account(context.admission, subjects)
+            await self._write_usage(
+                context,
+                requested_model=requested_model,
+                model=model,
+                deployment_id=None,
+                fallback_from=None,
+                streamed=False,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                endpoint=endpoint,
+            )
+        except Exception:
+            log.exception("internal_usage_failed", endpoint=endpoint, model=configured_model)
 
     async def admit_agent(self, context: GatewayContext, model_name: str) -> None:
         """Admit an `agent:` call against the key's, team's, end user's and model's

@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Platform model calls accounted (E19)
+- **Agent runs everywhere.** Agent runs started in the console, through `POST /agents/{id}/execute` or by voice now write a usage row (`endpoint` `agent.run`, `requested_model` `agent:<slug>`), as do the tokens a run spends after an approval. They appear on the Usage page, in chargeback and in budgets, attributed to the person who started the run and the agent's team.
+- **Workflow LLM steps.** Each LLM step writes a usage row (`workflow.llm`, `workflow:<name>`) for the run's starter and the workflow's team.
+- **Not double counted.** `agent:<slug>` calls through `/v1` are still recorded once, by the gateway, against the API key.
+- **Quotas.** These tokens count toward team and model token budgets, so later `/v1` calls see them, but agent runs and workflow steps are not refused by a budget.
+- **Upgrade.** No migration. Usage totals, chargeback and the dashboard's gateway figures rise by what agents and workflows had been spending unrecorded. See [docs/gateway-policy.md](docs/gateway-policy.md#the-platforms-own-model-calls-e19).
+
 ### Team scoping finished (E18)
 - **Agents and workflows use what their own team can see.** An agent's or workflow's model and knowledge bases are now checked against the resource's own team, not only against the person saving it. A shared agent or workflow may use only shared models and knowledge bases. It is checked on save (422), on `PUT /scope` moves (409), when an agent run starts (409, no run created) and in every workflow LLM and retrieval step. Before, an agent saved earlier kept using a model after the model moved to another team.
 - **Reads follow scope.** `/traces/{id}`, voice sessions, memory search, memory entries, `/conversations/{id}`, the dashboard's model, deployment and gateway figures, and the monitoring overview count only what the caller's teams can see. Memory follows its agent's team. Definitions import respects the importer's teams.

@@ -163,7 +163,11 @@ async def run_agent_buffered(
 ) -> dict[str, Any]:
     """Run to completion and answer in chat-completion shape."""
     run, events = await runs.start(
-        agent, message=message, actor=actor, conversation_id=conversation_id
+        agent,
+        message=message,
+        actor=actor,
+        conversation_id=conversation_id,
+        record_usage=False,  # the gateway records it against the key (E17)
     )
     async for _ in events:
         pass
@@ -255,7 +259,11 @@ async def _narrate(
     yield frame({"role": "assistant"})
 
     run, events = await runs.start(
-        agent, message=message, actor=actor, conversation_id=conversation_id
+        agent,
+        message=message,
+        actor=actor,
+        conversation_id=conversation_id,
+        record_usage=False,  # the gateway records it against the key (E17)
     )
 
     answered = False

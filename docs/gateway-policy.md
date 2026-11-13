@@ -137,6 +137,34 @@ and holds one concurrency slot until the run ends. It writes one usage row with
 `requested_model` = `agent:<slug>`. Before E17, agent calls skipped every quota and
 appeared in no report. A key over its budget now gets **429** for agent calls too.
 
+## The platform's own model calls (E19)
+
+The platform also calls models itself, not through `/v1`. Since E19 those calls write
+usage rows too, so they appear on the Usage page, in chargeback and in budgets:
+
+| `endpoint` | `requested_model` | when |
+|---|---|---|
+| `agent.run` | `agent:<slug>` | an agent run started in the console, through `POST /agents/{id}/execute` or by voice: one row per run. Also the part of **any** run that continues after an approval (one row per continuation). |
+| `workflow.llm` | `workflow:<name>` | each workflow LLM step that got an answer. A step that then fails (invalid JSON, say) is still recorded: the tokens were spent. |
+
+`model` is the registry model the configured alias or name resolved to, as for gateway
+calls. These rows have no API key. They are attributed to the person who started the run
+(`user_id`; for schedule and webhook workflow runs, the publisher) and to the **team of
+the agent or workflow** (`team_id`, empty for shared ones). They carry no timings.
+
+An `agent:<slug>` call through `/v1` is still recorded once, by the gateway, against the
+key (E17); the run does not record it a second time.
+
+Tokens are counted from the run's model responses as they happen, and recorded when the
+run's stream ends for any reason: completed, failed, suspended for an approval, or a
+client that hung up.
+
+**Quotas count these calls but do not refuse them.** The tokens are charged to the
+team's and the model's token budgets, so the next `/v1` call sees them, but an agent run
+or workflow step is not stopped by a budget. Stopping a workflow halfway through because
+a budget ran out is a decision we have not made for you. API key and end-user quotas do
+not apply (there is no key).
+
 ## Timings (E16)
 
 Every chat call through `/v1` stores its timings on its usage record. The dashboard and
