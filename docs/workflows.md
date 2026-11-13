@@ -167,6 +167,10 @@ is `HIGH` or `CRITICAL` risk does the same before calling it. The risk levels co
   superuser can always decide.
 - Every decision is audited as `WORKFLOW_APPROVAL_GRANTED` or `WORKFLOW_APPROVAL_DENIED`,
   with the reason.
+- **Expiry (E17):** after `agents.approval_ttl_hours` (default 72, 0 = never) without a
+  decision, the approval becomes `EXPIRED` and the run fails. The `rejected` branch is not
+  taken. Audited as `WORKFLOW_APPROVAL_EXPIRED` by `scheduler`. See
+  [agents.md](agents.md#expiry-e17).
 
 ## Triggers
 

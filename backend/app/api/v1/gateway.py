@@ -38,6 +38,7 @@ from app.api.routing import CommittingRoute
 from app.core.errors import ValidationError
 from app.core.logging import get_logger
 from app.services.agent_gateway import (
+    AgentStreamAccounting,
     agent_catalogue,
     is_agent_model,
     load_agent,
@@ -111,6 +112,7 @@ async def chat_completions(
             model=str(model),
             body=body,
             context=context,
+            service=service,
             agents=agents,
             runs=runs,
             users=users,
@@ -267,6 +269,7 @@ async def _run_agent(
     model: str,
     body: dict[str, Any],
     context: GatewayContextDep,
+    service: GatewayServiceDep,
     agents: AgentRegistryDep,
     runs: AgentRunServiceDep,
     users: UserRepositoryDep,
@@ -289,9 +292,18 @@ async def _run_agent(
     if not str(prompt).strip():
         raise ValidationError("The last user message is empty.")
 
+    # Taken before attribution: memory is keyed by conversation, and a self-reported
+    # `user` field must not start keying it where a trusted identity did not.
     conversation_id = body.get("conversation_id") or context.end_user
 
+    # E17: an agent call is accounted like any other gateway call. Attributed, admitted
+    # once for the whole run against the same quotas, and recorded as one usage row.
+    service.attribute(context, body)
+    answering_model = await service.agent_model_name(agent.id, agent.current_version)
+    await service.admit_agent(context, answering_model)
+
     if body.get("stream"):
+        accounting = AgentStreamAccounting()
         return StreamingResponse(
             run_agent_streamed(
                 agent=agent,
@@ -300,6 +312,7 @@ async def _run_agent(
                 message=str(prompt),
                 requested_model=model,
                 conversation_id=conversation_id,
+                accounting=accounting,
             ),
             media_type="text/event-stream",
             headers={
@@ -307,13 +320,28 @@ async def _run_agent(
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
+            background=BackgroundTask(
+                service.finalise_agent_stream, context, model, answering_model, accounting
+            ),
         )
 
-    return await run_agent_buffered(
-        agent=agent,
-        runs=runs,
-        actor=actor,
-        message=str(prompt),
+    try:
+        result = await run_agent_buffered(
+            agent=agent,
+            runs=runs,
+            actor=actor,
+            message=str(prompt),
+            requested_model=model,
+            conversation_id=conversation_id,
+        )
+    finally:
+        await service.release(context)
+    await service.record_agent_usage(
+        context,
         requested_model=model,
-        conversation_id=conversation_id,
+        model=answering_model,
+        prompt_tokens=int(result["usage"]["prompt_tokens"]),
+        completion_tokens=int(result["usage"]["completion_tokens"]),
+        streamed=False,
     )
+    return result

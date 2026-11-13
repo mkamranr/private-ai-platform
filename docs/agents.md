@@ -102,6 +102,25 @@ Four approval outcomes, kept distinct: `APPROVED`, `REJECTED` (a human refused),
 `EXPIRED` (nobody answered), `NOT_REQUIRED`. Conflating expiry with rejection would
 attribute a timeout to a person who never saw it.
 
+### Expiry (E17)
+
+An approval nobody answers expires after `agents.approval_ttl_hours` (default 72, a
+runtime setting on the Settings page; 0 waits forever). The `approval_expiry` job checks
+every 15 minutes.
+
+- The approval becomes `EXPIRED`, never `REJECTED`, and is audited as
+  `TOOL_APPROVAL_EXPIRED` or `WORKFLOW_APPROVAL_EXPIRED` by `scheduler`, not by a person.
+- The run **fails** with an error saying the approval expired and nobody decided. An agent
+  run gets a final `RUN_FAILED` event in its trace.
+- The run is not continued as though someone had refused. An agent is not resumed with
+  "permission refused", which would spend model time on a refusal nobody made. A workflow
+  does not take its `rejected` branch, because that branch was designed for a real
+  rejection.
+- A decision that arrives after expiry gets the usual 409 ("not waiting for approval").
+  Both sides change the run with a conditional update, so a decision at the same moment
+  either wins outright or is refused.
+- Start the run again if it is still needed.
+
 ---
 
 ## The runtime, and why it is not LangGraph
@@ -240,15 +259,18 @@ the personal data the tool was called to look up, and `audit.view` is broader st
 
 ## Known gaps
 
-* **Agent token usage is not in `usage_records`.** An agent's model calls go through
-  `provider_for_model`, which bypasses the gateway's usage recording, so agent traffic is
-  counted in `agent_runs.prompt_tokens`/`completion_tokens` but is invisible in
-  `GET /api/v1/usage` and the dashboard's gateway panel. Two accounting systems for the
-  same GPU time. Deliberately not half-fixed: whether agent tokens should also appear as
-  gateway usage (and risk double-counting) is a reporting decision, not an implementation
-  detail.
-* **No approval expiry worker.** `expire_older_than` exists and is tested, but nothing
-  calls it on a schedule yet, so a run nobody answers waits indefinitely.
+* **Agent usage is recorded only for gateway calls (E17).** An `agent:<slug>` call
+  through `/v1` writes one `usage_records` row for the whole run: `requested_model` is
+  `agent:<slug>`, `model` is the model that answered, and the tokens are the run's. It is
+  admitted against the key's, team's, end user's and model's quotas, once per run. Nothing
+  is double counted, because the runtime's own model calls never wrote usage rows.
+  Still not counted:
+  - runs started from the console or the API (`POST /agents/{id}/execute`);
+  - the part of a run that continues after a console approval;
+  - workflow LLM steps;
+  - memory summaries.
+
+  These still show only in `agent_runs.prompt_tokens`/`completion_tokens`.
 * **`DATABASE` and `OPENAPI` tools are catalogued but not executable.** They report
   themselves unimplemented rather than pretending.
 * **Conversation history is not replayed into an agent.** Each run is a fresh

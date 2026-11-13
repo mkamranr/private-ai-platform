@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import Settings, external_key_for
@@ -451,9 +452,14 @@ class GatewayService:
         """Check budgets and take concurrency slots for this call, or refuse with 429.
 
         Called by the gateway's own call methods, so `/v1` and the voice assistant are
-        admitted (voice carries no key, so only model limits apply to it). Agents and
-        ingestion reach a model through `provider_for_model` and are not admitted.
+        admitted (voice carries no key, so only model limits apply to it). `agent:` calls
+        are admitted once per run by `admit_agent` (E17). Ingestion and the agent
+        runtime's own model calls reach a model through `provider_for_model` and are not
+        admitted again.
         """
+        await self._admit_model(context, target.model.name)
+
+    async def _admit_model(self, context: GatewayContext, model_name: str) -> None:
         subjects: list[tuple[str, str]] = []
         if context.api_key is not None:
             subjects.append((QuotaScope.API_KEY, str(context.api_key.id)))
@@ -461,8 +467,81 @@ class GatewayService:
             subjects.append((QuotaScope.END_USER, context.end_user))
         if context.team_id is not None:
             subjects.append((QuotaScope.TEAM, str(context.team_id)))
-        subjects.append((QuotaScope.MODEL, target.model.name))
+        subjects.append((QuotaScope.MODEL, model_name))
         await self._policy.admit(context.admission, subjects)
+
+    # -- agent calls (E17) -------------------------------------------------
+    async def agent_model_name(self, agent_id: uuid.UUID, version: int) -> str:
+        """The model an agent version answers with, as usage and quotas name it.
+
+        The version names an alias or a model; it is resolved the way the runtime will
+        resolve it, so the usage row and the model quota name the model that actually
+        answers. If nothing is serving, the run is about to fail with that same error;
+        the configured name is returned so the attempt is still accounted.
+        """
+        from app.models.agents import AgentVersion
+
+        # The request's session: the agent was just loaded through it.
+        configured = (
+            await self._models.session.execute(
+                select(AgentVersion.model).where(
+                    AgentVersion.agent_id == agent_id, AgentVersion.version == version
+                )
+            )
+        ).scalar_one_or_none()
+        if configured is None:
+            raise NotFoundError("The agent has no current version.")
+        try:
+            return (await self.resolve(configured)).model.name
+        except (NotFoundError, DependencyUnavailableError, PermissionDeniedError):
+            return configured
+
+    async def admit_agent(self, context: GatewayContext, model_name: str) -> None:
+        """Admit an `agent:` call against the key's, team's, end user's and model's
+        quotas, once for the whole run. Before E17 agent calls skipped every quota."""
+        await self._admit_model(context, model_name)
+
+    async def record_agent_usage(
+        self,
+        context: GatewayContext,
+        *,
+        requested_model: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        streamed: bool,
+        client_disconnected: bool = False,
+    ) -> None:
+        """One usage row for a whole `agent:` run (E17), however many model calls it
+        made. `requested_model` is `agent:<slug>`, so agent traffic is reported apart from
+        direct calls to the same model. No timings: an agent's first token comes after its
+        tool calls, and mixing that into the model's TTFT would misstate the model."""
+        await self._write_usage(
+            context,
+            requested_model=requested_model,
+            model=model,
+            deployment_id=None,
+            fallback_from=None,
+            streamed=streamed,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            client_disconnected=client_disconnected,
+        )
+
+    async def finalise_agent_stream(
+        self, context: GatewayContext, requested_model: str, model: str, accounting: Any
+    ) -> None:
+        """Background task for a streamed `agent:` call: release slots, then record."""
+        await self.release(context)
+        await self.record_agent_usage(
+            context,
+            requested_model=requested_model,
+            model=model,
+            prompt_tokens=accounting.prompt_tokens,
+            completion_tokens=accounting.completion_tokens,
+            streamed=True,
+            client_disconnected=accounting.disconnected,
+        )
 
     async def release(self, context: GatewayContext) -> None:
         await self._policy.release(context.admission)
@@ -1047,14 +1126,47 @@ class GatewayService:
         alias changes the second without the first, and usage reporting has to be able
         to show either view.
         """
+        await self._write_usage(
+            context,
+            requested_model=target.requested_model,
+            model=target.model.name,
+            deployment_id=target.deployment.id,
+            fallback_from=target.fallback_from,
+            streamed=streamed,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            status_code=status_code,
+            client_disconnected=client_disconnected,
+            endpoint=endpoint,
+            ttft_ms=ttft_ms,
+            generation_ms=generation_ms,
+        )
+
+    async def _write_usage(
+        self,
+        context: GatewayContext,
+        *,
+        requested_model: str,
+        model: str,
+        deployment_id: uuid.UUID | None,
+        fallback_from: str | None,
+        streamed: bool,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        status_code: int = 200,
+        client_disconnected: bool = False,
+        endpoint: str = "chat.completions",
+        ttft_ms: float | None = None,
+        generation_ms: float | None = None,
+    ) -> None:
         elapsed = time.perf_counter() - context.started
         record = UsageRecord(
             api_key_id=context.api_key.id if context.api_key else None,
             user_id=context.user_id,
             endpoint=endpoint,
-            requested_model=target.requested_model,
-            model=target.model.name,
-            deployment_id=target.deployment.id,
+            requested_model=requested_model,
+            model=model,
+            deployment_id=deployment_id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             latency_ms=round(elapsed * 1000, 2),
@@ -1065,7 +1177,7 @@ class GatewayService:
             generation_ms=generation_ms,
             end_user=context.end_user,
             end_user_trusted=context.end_user_trusted,
-            fallback_from=target.fallback_from,
+            fallback_from=fallback_from,
             team_id=context.team_id,
         )
 
@@ -1074,7 +1186,7 @@ class GatewayService:
         # what a graph and an alert read. Labelled by the model that ANSWERED rather
         # than the alias asked for, so repointing an alias does not silently split one
         # model's series in two.
-        model_label = target.model.name
+        model_label = model
         metrics.GATEWAY_REQUESTS.labels(
             model_label, endpoint, metrics.status_class(status_code)
         ).inc()
@@ -1103,7 +1215,7 @@ class GatewayService:
             # so a persistent failure is visible rather than a slow drift in the numbers.
             log.exception(
                 "usage_record_failed",
-                model=target.model.name,
+                model=model,
                 streamed=streamed,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,

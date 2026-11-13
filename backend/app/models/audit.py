@@ -102,6 +102,8 @@ class AuditAction(enum.StrEnum):
     TOOL_APPROVAL_REQUESTED = "TOOL_APPROVAL_REQUESTED"
     TOOL_APPROVAL_GRANTED = "TOOL_APPROVAL_GRANTED"
     TOOL_APPROVAL_DENIED = "TOOL_APPROVAL_DENIED"
+    #: Nobody decided within agents.approval_ttl_hours (E17). Recorded as the scheduler.
+    TOOL_APPROVAL_EXPIRED = "TOOL_APPROVAL_EXPIRED"
     # A call the §10 pipeline refused. Distinct from a rejected approval: no human was
     # ever asked, so this is the platform's own decision and reads that way in an audit.
     TOOL_DENIED = "TOOL_DENIED"
@@ -130,6 +132,7 @@ class AuditAction(enum.StrEnum):
     WORKFLOW_RUN_CANCELLED = "WORKFLOW_RUN_CANCELLED"
     WORKFLOW_APPROVAL_GRANTED = "WORKFLOW_APPROVAL_GRANTED"
     WORKFLOW_APPROVAL_DENIED = "WORKFLOW_APPROVAL_DENIED"
+    WORKFLOW_APPROVAL_EXPIRED = "WORKFLOW_APPROVAL_EXPIRED"
     # Operations (E7)
     OPS_JOB_REQUESTED = "OPS_JOB_REQUESTED"
     OPS_JOB_CANCELLED = "OPS_JOB_CANCELLED"

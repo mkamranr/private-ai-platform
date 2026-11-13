@@ -36,6 +36,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `gateway.budget_warning_percent` | Gateway | warning share for token quota alerts (E12) | next budget check |
 | `chargeback.currency` | Chargeback | every cost report (E9, [chargeback.md](chargeback.md)) | next report |
 | `auth.mfa_required` | Security | who must use two-factor authentication: `off`, `admins`, `all` (E15, [security.md](security.md#two-factor-authentication-e15)) | next sign-in |
+| `agents.approval_ttl_hours` | Security | hours an agent or workflow approval waits before it expires and its run fails; 0 = never (E17, [agents.md](agents.md#expiry-e17)) | next expiry check (15 min) |
 
 **Deliberately not editable:**
 

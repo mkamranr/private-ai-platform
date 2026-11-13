@@ -188,6 +188,15 @@ dashboard real signals.
 - [x] Tests: `tests/api/test_gateway_timings.py` (stored timings, role-only chunk, exclusions, exact percentiles, null with buffered-only traffic). Doc: [gateway-policy.md](../gateway-policy.md#timings-e16).
 - [ ] `agent:` and voice calls are not timed (agent calls write no usage record). No buffered TTFT. Timings are not in chargeback exports.
 
+## E17: Approval expiry and agent usage (closes two agents.md known gaps)
+
+- [x] Runtime setting `agents.approval_ttl_hours` (default 72, 0 = never) and scheduler job `approval_expiry` (15 min). `app/services/approval_expiry.py` expires agent tool calls and workflow approvals: `EXPIRED`, never `REJECTED`; the run fails with a stated reason (agent runs get a final `RUN_FAILED` event); the rejected branch is not taken; a late decision is 409. Conditional updates against a concurrent decision; batches of 200.
+- [x] Audit actions `TOOL_APPROVAL_EXPIRED`, `WORKFLOW_APPROVAL_EXPIRED`, recorded as `scheduler`.
+- [x] `agent:<slug>` gateway calls: attributed, admitted once per run against key, team, end-user and model quotas, and recorded as one usage row (`requested_model` = `agent:<slug>`, `model` = the resolved model, no timings). Streamed runs count tokens from `LLM_RESPONSE` events, so a disconnect is still accounted.
+- [x] No migration (the states existed; audit actions are strings).
+- [x] Tests: `tests/api/test_approval_expiry.py`, plus a workflow expiry test in `test_workflows.py`. Docs: [agents.md](../agents.md#expiry-e17), [workflows.md](../workflows.md), [gateway-policy.md](../gateway-policy.md#agent-calls-e17).
+- [ ] Not counted: agent runs started from the console or API, tokens spent after a console approval, workflow LLM steps, memory summaries. No reminder before an approval expires.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and
