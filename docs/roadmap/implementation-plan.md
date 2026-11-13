@@ -108,7 +108,7 @@ dashboard real signals.
 - [x] Runtime settings registry (`services/runtime_settings.py`): 10 settings that are read per request or per run, validated by the same pydantic models as the environment, stored in the existing `system_settings` table (no migration), cached per process for at most 10 s, audited (`SETTING_UPDATED`, `SETTING_RESET`). `GET/PUT/DELETE /settings`.
 - [x] Settings page: runtime settings with their effective, deployment and default values, and a curated, redacted, read-only list of deployment settings by category. Doc: [docs/settings.md](../settings.md).
 - [x] Fixed: the E7 redaction allowlist named token-lifetime fields that do not exist, so the real ones were over-redacted in Diagnostics.
-- [ ] No TTFT or throughput (the gateway does not record TTFT); no range beyond 7 days; no per-team preferences.
+- [ ] No range beyond 7 days; no per-team preferences. (TTFT and throughput arrived in E16.)
 
 ## E9: Chargeback (closes plan §14 "Advanced chargeback")
 
@@ -177,6 +177,16 @@ dashboard real signals.
 - [x] UI: console code step, forced enrolment, account dialog behind the user badge, 2FA marker and Reset 2FA on the Users page. The developer portal and voice assistant ask for the code.
 - [x] Migration `e6a1c3f5b8d2` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#two-factor-authentication-e15).
 - [ ] No WebAuthn/passkeys, no remembered devices. The portal and voice assistant send people who must enrol to the console.
+
+## E16: Gateway timings (closes the E8 TTFT/throughput gap)
+
+- [x] Migration `f7b2d4a6c9e3`: nullable `usage_records.ttft_ms` and `generation_ms`, no backfill (not measured is NULL).
+- [x] Gateway stamps the first and last chunk carrying content or a tool call. A role-only first chunk no longer counts as the first token. Stored by `finalise_stream`; buffered calls store NULL.
+- [x] Output tok/s derived in SQL as `(completion_tokens - 1) / generation time`, for complete, successful streams of at least two tokens. `percentile_cont` p50/p95 for TTFT, p95 latency, median tok/s and `timed_streams`, per model (`GET /usage`) and over all calls (dashboard).
+- [x] Prometheus histograms `ai_platform_gateway_request_duration_seconds` and `ai_platform_gateway_output_tokens_per_second`, with Grafana panels beside the existing TTFT one.
+- [x] Console: a "First token (p50)" dashboard card (p95, tok/s, stream count); First token, p95 latency and Tok/s columns on Usage & Quotas. "—" when unmeasured.
+- [x] Tests: `tests/api/test_gateway_timings.py` (stored timings, role-only chunk, exclusions, exact percentiles, null with buffered-only traffic). Doc: [gateway-policy.md](../gateway-policy.md#timings-e16).
+- [ ] `agent:` and voice calls are not timed (agent calls write no usage record). No buffered TTFT. Timings are not in chargeback exports.
 
 ## Phase acceptance (applies to each)
 

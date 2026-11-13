@@ -129,8 +129,39 @@ that did not issue it. The external-runtime health probe uses the same key.
   admin). Creating, changing and deleting a quota is audited.
 - **API:** see [api.md](api.md#gateway-policy--expansion-e2).
 
+## Timings (E16)
+
+Every chat call through `/v1` stores its timings on its usage record. The dashboard and
+the Usage & Quotas page report percentiles from them:
+
+| Figure | What it measures | Measured on |
+|---|---|---|
+| **First token** (`ttft_ms`) | From when the call was admitted to the first chunk carrying content or a tool call. A role-only or empty first chunk does not count. | Streamed calls |
+| **Generation time** (`generation_ms`) | From the first content chunk to the last. | Streamed calls |
+| **Output tok/s** | `(completion_tokens - 1) / generation time`. The first token arrives at the start of the window, so it is left out. Computed at query time from the stored columns. | Complete, successful streams of at least two tokens |
+| **Latency** (`latency_ms`, existing) | Whole call, mean and p95. | All calls |
+
+- **Unmeasured is null, not zero.** A buffered call has no visible first token, because
+  its "first token" is the whole answer. Its `ttft_ms` and `generation_ms` are NULL, as
+  they are for every row written before E16. Percentiles skip NULLs, so with no streamed
+  traffic in a period the figures are `null` and the console shows "—".
+  `timed_streams` says how many calls a figure rests on.
+- **What is excluded.**
+  - Throughput leaves out client disconnects, failed streams and one-token answers.
+  - `agent:<slug>` calls write no usage record (see [AGENTS.md](AGENTS.md#known-gaps)).
+  - Voice calls are not timed.
+- **Clock.** Times are taken in the gateway process, so they include network time to the
+  backend but not the client's side of the connection. The clock starts after API-key
+  checks and rate limits.
+- **Percentiles, not averages of averages.** The dashboard figure is computed over every
+  call in the window, not from the per-model rows.
+
 ## Metrics
 
+- `ai_platform_gateway_time_to_first_token_seconds{model}` (histogram; streamed calls)
+- `ai_platform_gateway_request_duration_seconds{model,surface}` (histogram, E16)
+- `ai_platform_gateway_output_tokens_per_second{model}` (histogram, E16; same rule as the
+  table above)
 - `ai_platform_gateway_quota_rejections_total{scope,quota}`
 - `ai_platform_gateway_circuit_opens_total`
 - `ai_platform_gateway_fallbacks_total{reason}`, where `reason` is `unavailable` or

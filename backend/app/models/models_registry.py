@@ -567,6 +567,10 @@ class UsageRecord(Base):
     # True when a streamed response ended early. Its token counts are a lower bound,
     # and a report that silently mixed those with complete ones would understate usage.
     client_disconnected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Streamed calls only (E16): request to the first chunk carrying content, and first
+    #: to last content chunk. NULL means not measured (buffered calls, older rows), never 0.
+    ttft_ms: Mapped[float | None] = mapped_column(Float)
+    generation_ms: Mapped[float | None] = mapped_column(Float)
     #: The alias that could not serve this call, when its fallback answered instead (E2).
     #: `requested_model` stays what the caller asked for and `model` what answered.
     fallback_from: Mapped[str | None] = mapped_column(String(128))

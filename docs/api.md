@@ -249,6 +249,11 @@ figures, and `unavailable`: sections the caller may see whose source failed, wit
 Those are absent too, never zeroed. Knowledge, agent and workflow counts follow team scope.
 See [settings.md](settings.md#dashboard).
 
+E16 adds timing fields to the dashboard's `gateway` section and to each `GET /usage` row:
+`ttft_p50_ms`, `ttft_p95_ms`, `latency_p95_ms`, `output_tps_p50` and `timed_streams`.
+They are `null` when nothing in the period was measured, never 0. TTFT and throughput
+come from streamed calls only. See [gateway-policy.md](gateway-policy.md#timings-e16).
+
 `POST /models/{id}/deploy` → **202** with the deployment id. Poll
 `GET /deployments/{id}` for the §M08 state machine
 (`REQUESTED → VALIDATING → SCHEDULING → CREATING → STARTING → HEALTH_CHECK → RUNNING`,

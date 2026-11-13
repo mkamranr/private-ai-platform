@@ -141,6 +141,34 @@ class StreamAccounting:
     #: `time.perf_counter()` at the first content chunk, or None if the stream produced
     #: nothing. Read by `finalise_stream` to observe time-to-first-token (M19).
     first_token_at: float | None = None
+    #: `time.perf_counter()` at the latest content chunk (E16). With `first_token_at` it
+    #: gives the generation time that output throughput is measured over.
+    last_token_at: float | None = None
+
+    def timings_ms(self, started: float) -> tuple[float | None, float | None]:
+        """Time to first token and generation time in milliseconds, None if unmeasured."""
+        if self.first_token_at is None:
+            return None, None
+        ttft = round((self.first_token_at - started) * 1000, 2)
+        last = self.last_token_at if self.last_token_at is not None else self.first_token_at
+        return ttft, round((last - self.first_token_at) * 1000, 2)
+
+    def output_tokens_per_second(self) -> float | None:
+        """Decode throughput, or None when it cannot be measured honestly.
+
+        The first token is excluded: it arrives at `first_token_at`, so the generation
+        window holds ``n - 1`` tokens. Partial, failed and one-token streams give None.
+        """
+        if (
+            self.first_token_at is None
+            or self.last_token_at is None
+            or self.disconnected
+            or self.status_code >= 400
+            or self.completion_tokens < 2
+        ):
+            return None
+        seconds = self.last_token_at - self.first_token_at
+        return (self.completion_tokens - 1) / seconds if seconds > 0 else None
 
 
 @dataclass(slots=True)
@@ -883,11 +911,15 @@ class GatewayService:
 
                 # Time to first token (M19). Stamped on the first chunk carrying
                 # content, because that is the moment a chat user stops waiting —
-                # total duration is dominated by how long the answer runs. Only the
-                # timestamp is taken here; `finalise_stream` turns it into an
-                # observation, for the same reason usage is recorded there.
-                if accounting.first_token_at is None:
-                    accounting.first_token_at = time.perf_counter()
+                # total duration is dominated by how long the answer runs. A role-only
+                # or empty chunk does not count (E16): runtimes send one before any
+                # token exists. Only timestamps are taken here; `finalise_stream` turns
+                # them into observations, for the same reason usage is recorded there.
+                if delta:
+                    now = time.perf_counter()
+                    if accounting.first_token_at is None:
+                        accounting.first_token_at = now
+                    accounting.last_token_at = now
 
                 yield _sse(
                     {
@@ -934,7 +966,11 @@ class GatewayService:
             metrics.GATEWAY_TTFT.labels(target.model.name).observe(
                 accounting.first_token_at - context.started
             )
+        tokens_per_second = accounting.output_tokens_per_second()
+        if tokens_per_second is not None:
+            metrics.GATEWAY_OUTPUT_TPS.labels(target.model.name).observe(tokens_per_second)
 
+        ttft_ms, generation_ms = accounting.timings_ms(context.started)
         await self._record(
             context,
             target,
@@ -943,6 +979,8 @@ class GatewayService:
             completion_tokens=accounting.completion_tokens,
             status_code=accounting.status_code,
             client_disconnected=accounting.disconnected,
+            ttft_ms=ttft_ms,
+            generation_ms=generation_ms,
         )
 
     async def embeddings(self, body: dict[str, Any], context: GatewayContext) -> dict[str, Any]:
@@ -1000,6 +1038,8 @@ class GatewayService:
         status_code: int = 200,
         client_disconnected: bool = False,
         endpoint: str = "chat.completions",
+        ttft_ms: float | None = None,
+        generation_ms: float | None = None,
     ) -> None:
         """Write one usage record.
 
@@ -1007,6 +1047,7 @@ class GatewayService:
         alias changes the second without the first, and usage reporting has to be able
         to show either view.
         """
+        elapsed = time.perf_counter() - context.started
         record = UsageRecord(
             api_key_id=context.api_key.id if context.api_key else None,
             user_id=context.user_id,
@@ -1016,10 +1057,12 @@ class GatewayService:
             deployment_id=target.deployment.id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            latency_ms=round((time.perf_counter() - context.started) * 1000, 2),
+            latency_ms=round(elapsed * 1000, 2),
             status_code=status_code,
             streamed=streamed,
             client_disconnected=client_disconnected,
+            ttft_ms=ttft_ms,
+            generation_ms=generation_ms,
             end_user=context.end_user,
             end_user_trusted=context.end_user_trusted,
             fallback_from=target.fallback_from,
@@ -1039,6 +1082,7 @@ class GatewayService:
             metrics.GATEWAY_TOKENS.labels(model_label, "prompt").inc(prompt_tokens)
         if completion_tokens:
             metrics.GATEWAY_TOKENS.labels(model_label, "completion").inc(completion_tokens)
+        metrics.GATEWAY_DURATION.labels(model_label, endpoint).observe(elapsed)
 
         # Written on an independent session, always.
         #

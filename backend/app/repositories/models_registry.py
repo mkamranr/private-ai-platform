@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, case, delete, func, select
 from sqlalchemy.orm import selectinload
 
 from app.models.models_registry import (
@@ -278,6 +278,58 @@ class ApiClientRepository(BaseRepository[ApiClient]):
         return (await self.session.execute(stmt)).scalars().all()
 
 
+def _percentile(fraction: float, column: Any) -> Any:
+    return func.percentile_cont(fraction).within_group(column.asc())
+
+
+def output_tps_expression() -> Any:
+    """Per-call decode throughput (E16), NULL where it cannot be measured honestly.
+
+    Computed, not stored, so it can never disagree with the token counts. Same rule as
+    `StreamAccounting.output_tokens_per_second`: complete, successful streams with at
+    least two output tokens and a measured generation time. The first token is excluded
+    because it arrives at the start of the generation window.
+    """
+    eligible = and_(
+        UsageRecord.streamed.is_(True),
+        UsageRecord.client_disconnected.is_(False),
+        UsageRecord.status_code < 400,
+        UsageRecord.completion_tokens >= 2,
+        UsageRecord.generation_ms > 0,
+    )
+    return case(
+        (eligible, (UsageRecord.completion_tokens - 1) * 1000.0 / UsageRecord.generation_ms),
+        else_=None,
+    )
+
+
+def timing_columns() -> list[Any]:
+    """p50/p95 timing aggregates (E16). Percentiles skip NULLs, so buffered calls and
+    rows from before E16 drop out of the TTFT and throughput figures instead of reading
+    as zero."""
+    tps = output_tps_expression()
+    return [
+        _percentile(0.5, UsageRecord.ttft_ms).label("ttft_p50_ms"),
+        _percentile(0.95, UsageRecord.ttft_ms).label("ttft_p95_ms"),
+        _percentile(0.95, UsageRecord.latency_ms).label("latency_p95_ms"),
+        _percentile(0.5, tps).label("output_tps_p50"),
+        func.count(UsageRecord.ttft_ms).label("timed_streams"),
+    ]
+
+
+def timing_values(row: Any) -> dict[str, Any]:
+    def rounded(value: Any) -> float | None:
+        return None if value is None else round(float(value), 2)
+
+    return {
+        "ttft_p50_ms": rounded(row.ttft_p50_ms),
+        "ttft_p95_ms": rounded(row.ttft_p95_ms),
+        "latency_p95_ms": rounded(row.latency_p95_ms),
+        "output_tps_p50": rounded(row.output_tps_p50),
+        "timed_streams": int(row.timed_streams or 0),
+    }
+
+
 class UsageRepository(BaseRepository[UsageRecord]):
     model = UsageRecord
 
@@ -298,6 +350,7 @@ class UsageRepository(BaseRepository[UsageRecord]):
                 func.avg(UsageRecord.latency_ms).label("avg_latency_ms"),
                 func.count().filter(UsageRecord.status_code >= 400).label("errors"),
                 func.count().filter(UsageRecord.fallback_from.isnot(None)).label("fallbacks"),
+                *timing_columns(),
             )
             .where(UsageRecord.recorded_at >= since)
             .group_by(UsageRecord.model)
@@ -317,9 +370,21 @@ class UsageRepository(BaseRepository[UsageRecord]):
                 "avg_latency_ms": round(float(row.avg_latency_ms or 0), 2),
                 "errors": int(row.errors or 0),
                 "fallbacks": int(row.fallbacks or 0),
+                **timing_values(row),
             }
             for row in (await self.session.execute(stmt)).all()
         ]
+
+    async def timing_totals(self, *, since: dt.datetime, where: Any = None) -> dict[str, Any]:
+        """Timing percentiles over every model at once (E16), for the dashboard.
+
+        Not derivable from the per-model rows: a percentile of percentiles is not a
+        percentile.
+        """
+        stmt = select(*timing_columns()).where(UsageRecord.recorded_at >= since)
+        if where is not None:
+            stmt = stmt.where(where)
+        return timing_values((await self.session.execute(stmt)).one())
 
     async def by_api_key(
         self, *, since: dt.datetime, limit: int = 100, where: Any = None

@@ -70,6 +70,13 @@ class GatewaySummary(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     avg_latency_ms: float
+    #: Timing percentiles (E16). None when nothing in range was measured: TTFT and
+    #: throughput come from streamed calls only, and `timed_streams` says how many.
+    ttft_p50_ms: float | None = None
+    ttft_p95_ms: float | None = None
+    latency_p95_ms: float | None = None
+    output_tps_p50: float | None = None
+    timed_streams: int = 0
     top_models: list[TopModelRow] = Field(default_factory=list)
     series: list[UsagePoint] = Field(default_factory=list)
 
