@@ -121,6 +121,16 @@ every 15 minutes.
   either wins outright or is refused.
 - Start the run again if it is still needed.
 
+## Teams: what an agent may use (E18)
+
+An agent runs as **its own team**, so its model and knowledge bases must be ones that
+team can see: shared ones, or its team's. A shared agent may use only shared models and
+knowledge bases. This is checked when the agent is saved (422), when it is moved with
+`PUT /scope` (409), and again **every time it runs** (409, and no run is created). A
+model that moved to another team after the agent was saved is therefore refused at the
+next run, with a message saying how to fix it. Traces, voice sessions and memory follow
+the agent's team too. See [teams.md](teams.md#what-an-agent-or-workflow-may-use-e18).
+
 ---
 
 ## The runtime, and why it is not LangGraph

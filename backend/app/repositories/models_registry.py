@@ -469,7 +469,7 @@ class UsageRepository(BaseRepository[UsageRecord]):
             for row in (await self.session.execute(stmt)).all()
         ]
 
-    async def hourly_series(self, *, since: dt.datetime) -> list[dict]:
+    async def hourly_series(self, *, since: dt.datetime, where: Any = None) -> list[dict]:
         """Requests and tokens per hour, for the dashboard chart (M21).
 
         Bucketed by the database. Returning raw records for the browser to bucket would
@@ -486,6 +486,8 @@ class UsageRepository(BaseRepository[UsageRecord]):
             .group_by(bucket)
             .order_by(bucket)
         )
+        if where is not None:
+            stmt = stmt.where(where)
         return [
             {"hour": row.hour, "requests": row.requests, "tokens": int(row.tokens or 0)}
             for row in (await self.session.execute(stmt)).all()

@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Team scoping finished (E18)
+- **Agents and workflows use what their own team can see.** An agent's or workflow's model and knowledge bases are now checked against the resource's own team, not only against the person saving it. A shared agent or workflow may use only shared models and knowledge bases. It is checked on save (422), on `PUT /scope` moves (409), when an agent run starts (409, no run created) and in every workflow LLM and retrieval step. Before, an agent saved earlier kept using a model after the model moved to another team.
+- **Reads follow scope.** `/traces/{id}`, voice sessions, memory search, memory entries, `/conversations/{id}`, the dashboard's model, deployment and gateway figures, and the monitoring overview count only what the caller's teams can see. Memory follows its agent's team. Definitions import respects the importer's teams.
+- **Behaviour change.** A shared agent or workflow that refers to a team's model or knowledge base fails at its next run, with a message saying to move it into that team or make the resource shared. Team-limited callers of `POST /memory/forget-all` erase only their teams' and shared agents' entries; erasing everything still needs `scope.all`.
+- **Upgrade.** No migration. See [docs/teams.md](docs/teams.md#what-an-agent-or-workflow-may-use-e18).
+
 ### Approval expiry and agent usage (E17)
 - **Approvals expire.** A tool call or workflow step waiting for approval longer than `agents.approval_ttl_hours` (default 72, Settings page; 0 = never) expires, and its run fails with a message saying nobody decided. Expiry is audited as the scheduler (`TOOL_APPROVAL_EXPIRED`, `WORKFLOW_APPROVAL_EXPIRED`) and is never recorded as a rejection. A workflow does not take its rejected branch.
 - **Agent calls are accounted.** `agent:<slug>` calls through `/v1` now write a usage row (`agent:<slug>` as the requested model), so they appear on the Usage page, in chargeback and in budgets. They are admitted against API key, team, end-user and model quotas.

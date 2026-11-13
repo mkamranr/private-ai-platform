@@ -101,17 +101,21 @@ async def _detail(service: WorkflowService, workflow: Workflow) -> WorkflowDetai
     )
 
 
-async def _check_references(guard: Any, definition: dict[str, Any]) -> None:
+async def _check_references(
+    guard: Any, definition: dict[str, Any], team_id: uuid.UUID | None
+) -> None:
     """Everything a definition points at must be in the caller's scope: a workflow is not a
-    way to reach another team's knowledge base or model."""
+    way to reach another team's knowledge base or model. Since E18 it must also be usable
+    by the workflow's own team, which is what it runs as."""
     if not isinstance(definition, dict):
         return
-    await guard.knowledge_base_refs(
-        wd.referenced_ids(definition, "retrieval", "knowledge_base_ids")
-    )
-    for name in wd.referenced_ids(definition, "llm", "model"):
+    bases = wd.referenced_ids(definition, "retrieval", "knowledge_base_ids")
+    models = wd.referenced_ids(definition, "llm", "model")
+    await guard.knowledge_base_refs(bases)
+    for name in models:
         if "{{" not in name:
             await guard.model_name(name)
+    await guard.require_usable("workflow", team_id, models=models, knowledge_bases=bases)
 
 
 async def _run_detail(service: WorkflowService, run_id: uuid.UUID) -> RunDetail:
@@ -163,7 +167,7 @@ async def create_workflow(
     """Create a draft. It can be saved while incomplete; publishing is what validates."""
     await guard.assignable(payload.team_id)
     draft = payload.draft if payload.draft is not None else template_definition(payload.template)
-    await _check_references(guard, draft)
+    await _check_references(guard, draft, payload.team_id)
     workflow = await service.create(
         name=payload.name,
         display_name=payload.display_name,
@@ -202,7 +206,9 @@ async def update_workflow(
     await guard.workflow(workflow_id)
     changes = payload.model_dump(exclude_unset=True)
     if changes.get("draft") is not None:
-        await _check_references(guard, changes["draft"])
+        await _check_references(
+            guard, changes["draft"], await guard.team_of("workflow", workflow_id)
+        )
     workflow = await service.update(workflow_id, changes, actor=actor)
     return await _detail(service, workflow)
 
@@ -262,7 +268,7 @@ async def publish_workflow(
     the version they started with."""
     await guard.workflow(workflow_id)
     workflow = await service.get(workflow_id)
-    await _check_references(guard, workflow.draft)
+    await _check_references(guard, workflow.draft, workflow.team_id)
     workflow = await service.publish(workflow_id, note=payload.note, actor=actor)
     return await _detail(service, workflow)
 

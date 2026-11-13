@@ -171,6 +171,7 @@ async def list_mcp_servers(
 async def import_definitions(
     importer: DefinitionImporterDep,
     actor: Annotated[User, require_permission(Perm.AGENT_CREATE)],
+    scope: ScopeDep,
 ) -> list[DefinitionImportResponse]:
     """Declarative registration from `tools/`, `skills/` and `agents/` (M10-M12).
 
@@ -188,7 +189,7 @@ async def import_definitions(
     """
     return [
         DefinitionImportResponse(**asdict(result))
-        for result in await importer.import_all(actor=actor)
+        for result in await importer.import_all(actor=actor, scope=scope)
     ]
 
 
@@ -383,6 +384,13 @@ async def create_agent(
     # runs with the platform's reach, so it must not become a way round team scope.
     await guard.model_name(payload.model)
     await guard.knowledge_base_refs(payload.knowledge_base_ids)
+    # E18: and against the agent's own team, which is what it will run as.
+    await guard.require_usable(
+        "agent",
+        payload.team_id,
+        models=[payload.model],
+        knowledge_bases=payload.knowledge_base_ids,
+    )
     agent, version = await service.create_agent(
         slug=payload.slug,
         display_name=payload.display_name,
@@ -438,6 +446,12 @@ async def update_agent(
         await guard.model_name(payload.model)
     if payload.knowledge_base_ids is not None:
         await guard.knowledge_base_refs(payload.knowledge_base_ids)
+    await guard.require_usable(
+        "agent",
+        await guard.team_of("agent", agent_id),
+        models=[payload.model] if payload.model is not None else [],
+        knowledge_bases=payload.knowledge_base_ids or [],
+    )
     agent, version = await service.update_agent(agent_id, payload, actor=actor)
     detail = AgentDetail.model_validate(agent)
     detail.version = await service.version_read(version)

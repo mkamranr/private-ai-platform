@@ -236,7 +236,13 @@ Workflows take part in team scope ([teams.md](teams.md)):
 - **References:** saving or publishing a definition checks the knowledge bases and model
   names it refers to against your scope. A workflow cannot reach another team's knowledge
   base.
-- **Moving:** `PUT /scope` accepts `resource_type: "workflow"` (needs `workflow.edit`).
+- **Its own team (E18):** the same references must also be usable by the workflow's own
+  team, so a shared workflow may use only shared models and knowledge bases. LLM and
+  retrieval steps check again when they run, on the rendered values. A step that names a
+  model moved to another team since the workflow was published fails with the reason.
+  See [teams.md](teams.md#what-an-agent-or-workflow-may-use-e18).
+- **Moving:** `PUT /scope` accepts `resource_type: "workflow"` (needs `workflow.edit`). A
+  move to a team that cannot use what the workflow refers to is refused with 409.
 
 ## Security notes
 

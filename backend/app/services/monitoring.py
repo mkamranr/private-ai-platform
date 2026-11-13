@@ -31,13 +31,18 @@ from app.config.settings import Settings
 from app.core import metrics
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
-from app.models.agents import AgentRun, RunState
+from app.core.scope import Scope
+from app.models.agents import Agent, AgentRun, RunState
 from app.models.infrastructure import Gpu, GpuMetric, Node
 from app.models.models_registry import ModelDeployment, UsageRecord
 from app.repositories.agents import AgentRunEventRepository, AgentRunRepository
 from app.schemas.monitoring import TraceEvent, TraceResponse
 
 log = get_logger(__name__)
+
+
+def _present(clause: Any) -> tuple[Any, ...]:
+    return () if clause is None else (clause,)
 
 
 async def collect_fleet_state(session: AsyncSession) -> None:
@@ -117,14 +122,23 @@ class MonitoringService:
         self._session = session
         self._settings = settings
 
-    async def overview(self, *, window_hours: int = 24) -> MonitoringOverview:
+    async def overview(
+        self, *, window_hours: int = 24, scope: Scope | None = None
+    ) -> MonitoringOverview:
         since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=window_hours)
+        scope = scope or Scope.everything()
 
-        runs = await self._session.execute(
+        # E18: runs of agents, and usage of keys, in the viewer's teams.
+        run_stmt = (
             select(AgentRun.state, func.count())
+            .join(Agent, Agent.id == AgentRun.agent_id)
             .where(AgentRun.created_at >= since)
             .group_by(AgentRun.state)
         )
+        agent_clause = scope.clause(Agent.team_id)
+        if agent_clause is not None:
+            run_stmt = run_stmt.where(agent_clause)
+        runs = await self._session.execute(run_stmt)
         run_counts = {str(state): count for state, count in runs}
 
         failed = run_counts.get(str(RunState.FAILED), 0)
@@ -136,7 +150,7 @@ class MonitoringService:
                 func.coalesce(func.sum(UsageRecord.prompt_tokens), 0),
                 func.coalesce(func.sum(UsageRecord.completion_tokens), 0),
                 func.coalesce(func.avg(UsageRecord.latency_ms), 0),
-            ).where(UsageRecord.recorded_at >= since)
+            ).where(UsageRecord.recorded_at >= since, *_present(scope.clause(UsageRecord.team_id)))
         )
         request_count, prompt_tokens, completion_tokens, avg_latency = usage.one()
 
@@ -208,9 +222,10 @@ class TraceService:
         self._events = events
         self._settings = settings
 
-    async def get(self, trace_id: str) -> TraceResponse:
+    async def get(self, trace_id: str, *, scope: Scope | None = None) -> TraceResponse:
         run = await self._runs.get_by_trace_id(trace_id)
-        if run is None:
+        # E18: another team's run is reported exactly as an unknown trace id.
+        if run is None or not (scope or Scope.everything()).can_see(run.agent.team_id):
             raise NotFoundError(f"No run has trace id '{trace_id}'.")
 
         events = await self._events.list_for_run(run.id)

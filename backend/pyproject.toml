@@ -45,6 +45,7 @@ ignore = [
 # name — indistinguishable from a redefinition to a linter. Scoped to the one file rather
 # than to `tests/**`, so genuine shadowing anywhere else still fails the build.
 "tests/api/test_node_enrollment.py" = ["F811"]
+"tests/api/test_team_scoping_e18.py" = ["F811"]
 # The seed/CLI scripts print to stdout by design.
 "app/utils/cli.py" = ["T20"]
 

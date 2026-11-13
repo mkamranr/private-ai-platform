@@ -55,7 +55,7 @@ dashboard real signals.
 - [x] Authorization test over every OpenAPI route (401 with no credentials, 403 with no permissions) plus isolation tests.
 - [x] Roles mapped to the plan's eight. The one gap, Knowledge Admin, was added as `KNOWLEDGE_ADMIN`; the others are not renamed (IdP group mappings refer to them). New permissions `team.view`, `team.manage`, `scope.all`.
 - [x] Admin: Teams page (members, team roles, owned resources), team pickers on create forms, team chips on lists, team option in quotas. Doc: [docs/teams.md](../teams.md).
-- [ ] Memory, conversations and dashboard counts are not team-scoped; agent references are checked at save, not at run time. See teams.md.
+- [x] ~~Memory, conversations and dashboard counts are not team-scoped; agent references are checked at save, not at run time.~~ Closed in E18.
 
 ## E4: Model governance and deployment revisions (P1)
 
@@ -186,7 +186,7 @@ dashboard real signals.
 - [x] Prometheus histograms `ai_platform_gateway_request_duration_seconds` and `ai_platform_gateway_output_tokens_per_second`, with Grafana panels beside the existing TTFT one.
 - [x] Console: a "First token (p50)" dashboard card (p95, tok/s, stream count); First token, p95 latency and Tok/s columns on Usage & Quotas. "—" when unmeasured.
 - [x] Tests: `tests/api/test_gateway_timings.py` (stored timings, role-only chunk, exclusions, exact percentiles, null with buffered-only traffic). Doc: [gateway-policy.md](../gateway-policy.md#timings-e16).
-- [ ] `agent:` and voice calls are not timed (agent calls write no usage record). No buffered TTFT. Timings are not in chargeback exports.
+- [ ] `agent:` and voice calls are not timed (agent calls are recorded since E17, without timings). No buffered TTFT. Timings are not in chargeback exports.
 
 ## E17: Approval expiry and agent usage (closes two agents.md known gaps)
 
@@ -196,6 +196,16 @@ dashboard real signals.
 - [x] No migration (the states existed; audit actions are strings).
 - [x] Tests: `tests/api/test_approval_expiry.py`, plus a workflow expiry test in `test_workflows.py`. Docs: [agents.md](../agents.md#expiry-e17), [workflows.md](../workflows.md), [gateway-policy.md](../gateway-policy.md#agent-calls-e17).
 - [ ] Not counted: agent runs started from the console or API, tokens spent after a console approval, workflow LLM steps, memory summaries. No reminder before an approval expires.
+
+## E18: Team scoping finished (closes the E3 open item)
+
+- [x] `app/services/team_references.py`: an agent or workflow may use only what `Scope.for_team(its team)` can see. Checked on agent and workflow save (422, `details.uses`), on `PUT /scope` for agents and workflows (409), at agent run start (409, before the run record), and in workflow LLM and retrieval steps on rendered values (the step fails).
+- [x] Traces (`/traces/{id}`) and voice session creation answer 404 for another team's agent. The monitoring overview counts runs and usage in the caller's teams.
+- [x] Memory and conversations follow their agent's team (no agent = shared): search, list, get conversation, forget one. `forget-all` from a team-limited caller erases only visible entries and keeps session state.
+- [x] Dashboard model and deployment counts and the gateway section follow scope; `UsageRepository.hourly_series` takes `where`.
+- [x] Definitions import: no version added to another team's agent; agents whose references their team cannot use are skipped with the reason.
+- [x] No migration. Tests: `tests/api/test_team_scoping_e18.py`. Doc: [teams.md](../teams.md#what-an-agent-or-workflow-may-use-e18).
+- [ ] Quotas, circuit breakers, tools, skills, MCP servers and fleet figures stay platform-wide by design. Agent tool grants are not team-checked.
 
 ## Phase acceptance (applies to each)
 
