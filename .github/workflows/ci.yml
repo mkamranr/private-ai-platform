@@ -32,8 +32,10 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements*.txt
-      - name: Install dependencies (hash-checked)
-        run: python -m pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+      - name: Install dependencies (hash-checked, as the Dockerfile does)
+        run: |
+          python -m pip install --require-hashes --no-deps -r requirements.txt
+          python -m pip install --require-hashes --no-deps -r requirements-dev.txt
       - name: ruff check
         run: ruff check app tests alembic
       - name: ruff format
@@ -98,8 +100,10 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements*.txt
-      - name: Install dependencies (hash-checked)
-        run: python -m pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+      - name: Install dependencies (hash-checked, as the Dockerfile does)
+        run: |
+          python -m pip install --require-hashes --no-deps -r requirements.txt
+          python -m pip install --require-hashes --no-deps -r requirements-dev.txt
       - name: Throwaway encryption key
         run: echo "SECURITY__ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
       - name: Migrate, round-trip and check
