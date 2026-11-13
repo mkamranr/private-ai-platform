@@ -75,6 +75,7 @@ NETWORK_COMMANDS = (
 NETWORK_ALLOWLIST = {
     "scripts/check_airgap.py": "this gate names the commands it forbids",
     "scripts/build_bundle.py": "build machine only — the one step allowed to use the network",
+    ".github/workflows/ci.yml": "CI runner only — installs hash-pinned build dependencies, never shipped",
     "scripts/phase0_gate.sh": "acceptance gate; curls the platform's own localhost",
     "scripts/phase1_gate.sh": "acceptance gate; curls the platform's own localhost",
     "scripts/phase2_gate.sh": "acceptance gate; curls the platform's own localhost",

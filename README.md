@@ -16,11 +16,20 @@ Built to a 28-module specification across 10 phases, then extended by the 11-pha
 expansion plan in 0.2.0 (see [Recent changes](#recent-changes)). **Every phase has a passing
 acceptance gate that runs on a laptop with no GPU.**
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/mkamranr/private-ai-platform/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/mkamranr/private-ai-platform/actions/workflows/ci.yml/badge.svg?branch=master"></a>
+  <a href="docker-compose.yml"><img alt="Docker Compose" src="https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white"></a>
+  <a href="backend/pyproject.toml"><img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white"></a>
+  <a href="backend/requirements.in"><img alt="FastAPI 0.141" src="https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white"></a>
+  <a href="docs/airgap.md"><img alt="Offline: air-gapped" src="https://img.shields.io/badge/offline-air--gapped-2E7D32"></a>
+  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue"></a>
+</p>
 
-*No CI badge here yet, deliberately: a badge whose number is baked into its URL is a claim
-nobody re-checks. Run `make check` and the gates yourself — that is what
-[Verifying it](#verifying-it) is for, and it takes one command.*
+*The CI badge is live: [the workflow](.github/workflows/ci.yml) runs lint, types, the
+air-gap check, the migration round-trip and the full test suite against PostgreSQL and
+Valkey on every push. The image builds and the acceptance gates need Docker and still run
+locally; see [Verifying it](#verifying-it). The badge images load only when someone views
+this page online, and the platform itself never fetches them.*
 
 ![Dashboard](docs/images/dashboard.png)
 

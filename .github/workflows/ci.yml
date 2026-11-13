@@ -1,0 +1,116 @@
+# Continuous integration on GitHub-hosted runners.
+#
+# This runs on the build side only. The platform itself never reaches the Internet;
+# installing build dependencies here is the same thing the offline bundle build does
+# before it is carried across the air gap. Packages come from the hash-pinned lockfiles.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint, types and air-gap discipline
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install dependencies (hash-checked)
+        run: python -m pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+      - name: ruff check
+        run: ruff check app tests alembic
+      - name: ruff format
+        run: ruff format --check app tests alembic
+      - name: mypy
+        run: mypy app
+      - name: import contracts
+        run: lint-imports
+      - name: air-gap check
+        working-directory: .
+        run: python scripts/check_airgap.py
+      - name: console JavaScript syntax
+        working-directory: .
+        run: |
+          for f in frontend/admin/js/*.js frontend/developer/js/*.js; do node --check "$f"; done
+          # The voice assistant's scripts are ES modules.
+          for f in frontend/voice/js/*.js; do node --experimental-default-type=module --check "$f"; done
+
+  test:
+    name: Tests (PostgreSQL + Valkey)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ai_platform
+          POSTGRES_DB: ai_platform
+          POSTGRES_PASSWORD: ci-only-database-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ai_platform" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    env:
+      DATABASE__HOST: 127.0.0.1
+      DATABASE__PORT: "5432"
+      DATABASE__PASSWORD: ci-only-database-password
+      REDIS__HOST: 127.0.0.1
+      REDIS__PORT: "6379"
+      # Qdrant and MinIO are not started: the tests that need them are integration
+      # tests, and the health tests check that an unreachable dependency reads as down.
+      QDRANT__HOST: 127.0.0.1
+      QDRANT__PORT: "1"
+      MINIO__ENDPOINT: 127.0.0.1:1
+      MINIO__SECRET_KEY: ci-only-minio-secret
+      AUTH__JWT_SECRET_KEY: ci-only-jwt-secret-that-is-long-enough-for-hs256
+      WORKERS__ENABLED: "false"
+      PYTHONUTF8: "1"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install dependencies (hash-checked)
+        run: python -m pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+      - name: Throwaway encryption key
+        run: echo "SECURITY__ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+      - name: Migrate, round-trip and check
+        run: |
+          alembic upgrade head
+          alembic downgrade -1
+          alembic upgrade head
+          alembic check
+      - name: Seed roles and permissions
+        run: python -m app.utils.cli seed --rbac-only
+      - name: pytest
+        run: >-
+          python -m pytest -p no:cacheprovider -rf
+          --deselect tests/api/test_health.py::TestRealProbes::test_live_stack_is_healthy
