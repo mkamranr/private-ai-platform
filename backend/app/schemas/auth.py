@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +15,9 @@ from app.schemas.common import ORMModel
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=150)
     password: str = Field(min_length=1, max_length=1024)
+    #: E20: the token this browser was given when it was trusted at the two-factor step.
+    #: While it is good, the step is skipped. Ignored for accounts without 2FA.
+    device_token: str | None = Field(default=None, max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -21,6 +25,10 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"  # noqa: S105 — an OAuth2 type name, not a credential
     expires_in: int = Field(description="Access token lifetime in seconds")
+    #: E20: present when the person chose to trust this browser. Send it as
+    #: ``device_token`` with the password next time to skip the two-factor step.
+    device_token: str | None = None
+    device_expires_at: dt.datetime | None = None
 
 
 class MfaChallengeResponse(BaseModel):
@@ -35,12 +43,62 @@ class MfaChallengeResponse(BaseModel):
     mfa_token: str
     enrolment_required: bool = False
     expires_in: int = Field(description="Seconds left to complete this step")
+    #: E20: the account has a passkey that can answer this step
+    #: (``/auth/mfa/passkey/options`` then ``/auth/mfa/passkey/verify``).
+    passkey_available: bool = False
+    #: E20: days "trust this browser" lasts if requested at this step; 0 when it is off.
+    remember_days: int = 0
 
 
 class MfaVerifyRequest(BaseModel):
     mfa_token: str = Field(min_length=1, max_length=4096)
     #: Six digits from the authenticator app, or one unused recovery code.
     code: str = Field(min_length=6, max_length=32)
+    #: E20: trust this browser for ``auth.mfa_remember_days``. Ignored at enrolment.
+    remember_device: bool = False
+
+
+class PasskeyOptionsResponse(BaseModel):
+    """E20: pass ``public_key`` to ``navigator.credentials`` (base64url fields decoded),
+    and send ``challenge_token`` back with the browser's answer."""
+
+    public_key: dict[str, Any]
+    challenge_token: str
+
+
+class PasskeyVerifyRequest(BaseModel):
+    """E20: the two-factor step, answered with a passkey."""
+
+    mfa_token: str = Field(min_length=1, max_length=4096)
+    challenge_token: str = Field(min_length=1, max_length=4096)
+    #: The ``PublicKeyCredential`` as JSON (``credential.toJSON()``).
+    credential: dict[str, Any]
+    remember_device: bool = False
+
+
+class PasskeyRegisterRequest(BaseModel):
+    challenge_token: str = Field(min_length=1, max_length=4096)
+    credential: dict[str, Any]
+    #: A label you will recognise, such as "YubiKey" or "Work laptop".
+    name: str = Field(min_length=1, max_length=64)
+
+
+class PasskeyRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    transports: list[str] = Field(default_factory=list)
+    #: Synced between devices (a password manager or platform account).
+    backed_up: bool = False
+    created_at: dt.datetime
+    last_used_at: dt.datetime | None = None
+
+
+class TrustedDeviceRead(ORMModel):
+    id: uuid.UUID
+    label: str
+    created_at: dt.datetime
+    expires_at: dt.datetime
+    last_used_at: dt.datetime | None = None
 
 
 class MfaTokenRequest(BaseModel):
@@ -89,6 +147,12 @@ class MfaStatusResponse(BaseModel):
     recovery_codes_left: int = 0
     #: The platform's policy requires it for this account (so it cannot be turned off).
     required: bool = False
+    #: E20: passkeys can be used on this site (it is reached by a host name over HTTPS).
+    passkeys_supported: bool = False
+    passkeys: int = 0
+    trusted_devices: int = 0
+    #: Days "trust this browser" lasts; 0 when the option is off.
+    remember_days: int = 0
 
 
 class RefreshRequest(BaseModel):

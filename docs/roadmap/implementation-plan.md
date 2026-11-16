@@ -176,7 +176,7 @@ dashboard real signals.
 - [x] Policy: runtime setting `auth.mfa_required` = off / admins / all. Forced enrolment at sign-in (`/auth/mfa/enrol/start`, `/finish`). It cannot be disabled while required. Local accounts only.
 - [x] UI: console code step, forced enrolment, account dialog behind the user badge, 2FA marker and Reset 2FA on the Users page. The developer portal and voice assistant ask for the code.
 - [x] Migration `e6a1c3f5b8d2` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#two-factor-authentication-e15).
-- [ ] No WebAuthn/passkeys, no remembered devices. The portal and voice assistant send people who must enrol to the console.
+- [ ] ~~No WebAuthn/passkeys, no remembered devices.~~ Closed in E20. The portal and voice assistant send people who must enrol to the console.
 
 ## E16: Gateway timings (closes the E8 TTFT/throughput gap)
 
@@ -214,6 +214,17 @@ dashboard real signals.
 - [x] Workflow LLM steps record `workflow.llm` / `workflow:<name>` as soon as the model answers.
 - [x] No migration. Tests: `tests/api/test_internal_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#the-platforms-own-model-calls-e19).
 - [ ] Not refused by quotas; API key and end-user quotas do not apply. Embeddings (ingestion, search, memory) are not accounted. No timings on these rows.
+
+## E20: Passkeys and trusted browsers (closes the E15 open item)
+
+- [x] `webauthn==3.0.1` with `cbor2`, `pyopenssl` and `pyasn1-modules`, pinned with hashes. No network at run time.
+- [x] `app/services/passkeys.py`: relying party from `PLATFORM__PUBLIC_BASE_URL` (or `AUTH__WEBAUTHN_RP_ID` / `AUTH__WEBAUTHN_ORIGINS`); none for an IP address or a non-HTTPS origin other than localhost. Stateless `typ: webauthn` challenge tokens; registration challenges revoked on use; sign-in challenges bound to their `mfa_token`. Sign counter regression refused. Up to ten passkeys, added only with MFA on and the password.
+- [x] Sign-in: `/auth/mfa/passkey/options` and `/verify` share the code path's throttle, lockout and failure counting and spend the same single-use step token.
+- [x] `app/services/trusted_devices.py`: `remember_device` issues a `tdv_` token, stored as SHA-256, bound to `session_version`, lifetime runtime setting `auth.mfa_remember_days` (0 = off and not honoured). `/auth/login` with `device_token` skips the second step. List, forget, forget all; at most 20 per account.
+- [x] Turning MFA off or an admin reset deletes passkeys and trusted browsers. Audit: `USER_PASSKEY_ADDED`, `USER_PASSKEY_REMOVED`, `USER_DEVICE_TRUSTED`, `USER_DEVICE_FORGOTTEN`, sign-ins with `mfa: passkey` / `trusted_device`.
+- [x] Console: *Use a passkey* and *Trust this browser* on the code step; passkeys and trusted browsers on the account dialog.
+- [x] Migration `a8c4e2f6b9d1`. Tests: `tests/api/test_passkeys.py`, with a software authenticator producing real attestations and signatures. Doc: [security.md](../security.md#passkeys-and-trusted-browsers-e20).
+- [ ] Second factor only, no passwordless sign-in. The developer portal and voice assistant accept codes only. Changing the public host name strands existing passkeys.
 
 ## Phase acceptance (applies to each)
 

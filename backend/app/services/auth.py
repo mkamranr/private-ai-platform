@@ -27,14 +27,20 @@ It returns an :class:`MfaChallenge`: a short-lived token of its own type, which
 wrong code counts toward the same lockout as a wrong password. The failure counter is
 deliberately *not* reset by the correct password: otherwise password, nine guesses,
 password again would give unlimited guesses at the code.
+
+**Passkeys and trusted browsers (E20).** The two-factor step may be answered with a
+passkey instead of a code (:meth:`AuthService.complete_passkey`); a failed passkey counts
+like a wrong code. After either, a browser may be trusted for ``auth.mfa_remember_days``,
+and a correct password from that browser then skips the step (:meth:`AuthService.login`
+with ``device_token``). The password is always checked.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import uuid
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
 from app.core.errors import (
@@ -56,6 +62,8 @@ from app.services.audit import AuditService
 from app.services.federation import FederationService
 from app.services.login_guard import LoginGuard, account_locked_fingerprint
 from app.services.mfa import MfaService, MfaSetup, mfa_required_for
+from app.services.passkeys import PasskeyOptions, PasskeyService
+from app.services.trusted_devices import TrustedDeviceService
 
 log = get_logger(__name__)
 
@@ -71,6 +79,9 @@ class TokenPair:
     refresh_token: str
     token_type: str = "bearer"  # noqa: S105 — an OAuth2 type name, not a credential
     expires_in: int = 3600
+    #: Set when the person chose to trust this browser at the two-factor step (E20).
+    device_token: str | None = None
+    device_expires_at: dt.datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +91,10 @@ class MfaChallenge:
     mfa_token: str
     expires_in: int
     enrolment_required: bool = False
+    #: The account has a passkey that can answer the step here (E20).
+    passkey_available: bool = False
+    #: Days "trust this browser" lasts; 0 when the option is off.
+    remember_days: int = 0
 
 
 def _expiry(payload: dict[str, Any]) -> dt.datetime:
@@ -101,6 +116,9 @@ class AuthService:
         mfa: MfaService | None = None,
         mfa_policy: str = "off",
         mfa_challenge_ttl: int = 300,
+        passkeys: PasskeyService | None = None,
+        devices: TrustedDeviceService | None = None,
+        remember_days: int = 0,
     ) -> None:
         self._users = users
         self._hasher = hasher
@@ -115,6 +133,9 @@ class AuthService:
         self._mfa = mfa
         self._mfa_policy = mfa_policy
         self._mfa_challenge_ttl = mfa_challenge_ttl
+        self._passkeys = passkeys
+        self._devices = devices
+        self._remember_days = remember_days if devices is not None else 0
 
     # -- authentication ----------------------------------------------------
     async def login(
@@ -123,6 +144,7 @@ class AuthService:
         password: str,
         *,
         user_agent: str | None = None,
+        device_token: str | None = None,
     ) -> TokenPair | MfaChallenge:
         """Verify credentials and issue tokens, or the MFA step that leads to them.
 
@@ -214,6 +236,16 @@ class AuthService:
 
         if self._mfa is not None and (user.mfa_enabled or mfa_required_for(user, self._mfa_policy)):
             enrol = not user.mfa_enabled
+            # E20: a browser trusted at an earlier two-factor step skips it.
+            if (
+                not enrol
+                and self._remember_days > 0
+                and self._devices is not None
+                and await self._devices.accepts(user, device_token) is not None
+            ):
+                return await self._signed_in(
+                    user, user_agent=user_agent, metadata={"mfa": "trusted_device"}
+                )
             return MfaChallenge(
                 mfa_token=self._tokens.create_mfa_token(
                     str(user.id),
@@ -223,6 +255,12 @@ class AuthService:
                 ),
                 expires_in=self._mfa_challenge_ttl,
                 enrolment_required=enrol,
+                passkey_available=(
+                    not enrol
+                    and self._passkeys is not None
+                    and await self._passkeys.usable_for(user)
+                ),
+                remember_days=self._remember_days,
             )
 
         return await self._signed_in(user, user_agent=user_agent)
@@ -274,12 +312,79 @@ class AuthService:
         )
 
     async def complete_mfa(
-        self, mfa_token: str, code: str, *, user_agent: str | None = None
+        self,
+        mfa_token: str,
+        code: str,
+        *,
+        user_agent: str | None = None,
+        remember_device: bool = False,
     ) -> TokenPair:
         """Exchange the MFA step token and an authenticator or recovery code for tokens."""
-        if self._mfa is None:  # pragma: no cover — wiring error
-            raise AuthenticationError("Two-factor authentication is not configured.")
+        mfa = self._mfa_service()
         user, payload = await self._challenge_user(mfa_token, "verify")
+
+        async def check() -> str | None:
+            return await mfa.check(user, code)
+
+        return await self._second_step(
+            user, payload, check, user_agent=user_agent, remember_device=remember_device
+        )
+
+    async def passkey_options(self, mfa_token: str) -> PasskeyOptions:
+        """E20: a challenge for answering this two-factor step with a passkey."""
+        if self._passkeys is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Passkeys are not configured.")
+        user, payload = await self._challenge_user(mfa_token, "verify")
+        return await self._passkeys.authentication_options(user, step_jti=str(payload["jti"]))
+
+    async def complete_passkey(
+        self,
+        mfa_token: str,
+        *,
+        challenge_token: str,
+        credential: dict[str, Any],
+        user_agent: str | None = None,
+        remember_device: bool = False,
+    ) -> TokenPair:
+        """E20: finish the two-factor step with a passkey. A failure counts like a wrong
+        code: toward the account lockout and the per-address throttle."""
+        if self._passkeys is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Passkeys are not configured.")
+        passkeys = self._passkeys
+        user, payload = await self._challenge_user(mfa_token, "verify")
+
+        async def check() -> str | None:
+            passkey = await passkeys.verify(
+                user,
+                challenge_token=challenge_token,
+                credential=credential,
+                step_jti=str(payload["jti"]),
+            )
+            return "passkey" if passkey is not None else None
+
+        return await self._second_step(
+            user,
+            payload,
+            check,
+            user_agent=user_agent,
+            remember_device=remember_device,
+            failure="Passkey not accepted",
+            error="That passkey was not accepted. Try again, or enter a code.",
+        )
+
+    async def _second_step(
+        self,
+        user: User,
+        payload: dict,
+        check: Callable[[], Awaitable[str | None]],
+        *,
+        user_agent: str | None,
+        remember_device: bool,
+        failure: str = "Incorrect authentication code",
+        error: str = _BAD_CODE,
+    ) -> TokenPair:
+        """The parts of the two-factor step every method shares: throttle, lockout,
+        failure counting, spending the step token, and trusting the browser."""
         address = get_client_ip() or "unknown"
         await self._refuse_throttled(address, username=user.username, user_agent=user_agent)
 
@@ -295,9 +400,9 @@ class AuthService:
                 user_agent=user_agent,
             )
             await self._address_failed(address)
-            raise AuthenticationError(_BAD_CODE)
+            raise AuthenticationError(error)
 
-        method = await self._mfa.check(user, code)
+        method = await check()
         if method is None:
             failures, locked = (
                 await self._guard.account_failed(user, now=now)
@@ -309,17 +414,23 @@ class AuthService:
                 result=AuditResult.FAILURE,
                 user_id=user.id,
                 username=user.username,
-                message="Incorrect authentication code",
+                message=failure,
                 metadata={"failed_login_count": failures, "step": "mfa"},
                 user_agent=user_agent,
             )
             if locked and self._guard is not None:
                 await self._guard.account_locked(user, audit=self._audit, failures=failures)
             await self._address_failed(address)
-            raise AuthenticationError(_BAD_CODE)
+            raise AuthenticationError(error)
 
         await self._spend(user, payload)
-        return await self._signed_in(user, user_agent=user_agent, metadata={"mfa": method})
+        pair = await self._signed_in(user, user_agent=user_agent, metadata={"mfa": method})
+        if remember_device and self._remember_days > 0 and self._devices is not None:
+            token, expires = await self._devices.issue(
+                user, days=self._remember_days, user_agent=user_agent
+            )
+            pair = replace(pair, device_token=token, device_expires_at=expires)
+        return pair
 
     async def start_enrolment(self, mfa_token: str) -> MfaSetup:
         """Sign-in step for someone ``auth.mfa_required`` obliges to set up MFA first."""
@@ -385,6 +496,13 @@ class AuthService:
         self._check_password(user, password)
         await self._require_code(user, code)
         await self._mfa_service().disable(user)
+
+    # -- passkeys and trusted browsers, self-service (E20) ----------------------
+    async def passkey_registration_options(self, user: User, password: str) -> PasskeyOptions:
+        if self._passkeys is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Passkeys are not configured.")
+        self._check_password(user, password)
+        return await self._passkeys.registration_options(user)
 
     async def regenerate_recovery_codes(self, user: User, code: str) -> list[str]:
         await self._require_code(user, code)

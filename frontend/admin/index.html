@@ -195,8 +195,16 @@
           <div class="form-text small" id="mfa-hint">
             Lost your phone? Enter one of your recovery codes instead.
           </div>
+          <!-- E20: shown only when the server says the option is on. -->
+          <div class="form-check small mt-2 d-none" id="mfa-remember-row">
+            <input class="form-check-input" type="checkbox" id="mfa-remember">
+            <label class="form-check-label" for="mfa-remember" id="mfa-remember-label"
+                   >Trust this browser</label>
+          </div>
           <div id="mfa-error" class="alert alert-danger py-2 small d-none mt-2"></div>
           <button class="btn btn-primary w-100 mt-3" type="submit" id="mfa-submit">Verify</button>
+          <button class="btn btn-outline-secondary w-100 mt-2 d-none" type="button"
+                  id="mfa-passkey">Use a passkey</button>
           <button class="btn btn-link btn-sm w-100 mt-1" type="button" id="mfa-restart"
                   >Start over</button>
         </form>

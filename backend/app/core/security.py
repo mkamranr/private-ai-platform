@@ -28,7 +28,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.config.settings import AuthSettings, SecuritySettings
 from app.core.errors import TokenError
 
-TokenType = Literal["access", "refresh", "mfa"]
+TokenType = Literal["access", "refresh", "mfa", "webauthn"]
 
 _API_KEY_PREFIX: Final = "aip"
 _API_KEY_SECRET_BYTES: Final = 32
@@ -113,6 +113,13 @@ class TokenService:
         Its own ``typ``, so it is refused wherever an access or refresh token is expected.
         """
         return self._encode(subject, "mfa", ttl, **claims)
+
+    def create_webauthn_token(self, subject: str, ttl: int, **claims: Any) -> str:
+        """A passkey challenge, carried by the browser between options and response (E20).
+
+        Its own ``typ``, so it is refused as any other kind of token.
+        """
+        return self._encode(subject, "webauthn", ttl, **claims)
 
     def decode(self, token: str, *, expected_type: TokenType = "access") -> dict[str, Any]:
         """Verify signature, expiry and issuer. Raises :class:`TokenError`."""

@@ -988,7 +988,8 @@ class TestTriggers:
 
         row = await session.get(Workflow, uuid.UUID(workflow["id"]))
         assert row is not None
-        row.next_run_at = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+        # Earlier than any real schedule in a shared database, so this row is claimed first.
+        row.next_run_at = dt.datetime(2000, 1, 1, tzinfo=dt.UTC)
         await session.flush()
 
         now = dt.datetime.now(dt.UTC)

@@ -22,7 +22,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from sqlalchemy import or_, update
+from sqlalchemy import delete, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AuthSettings
@@ -31,7 +31,7 @@ from app.core.errors import ConflictError, ValidationError
 from app.core.permissions import Role as SystemRole
 from app.core.security import SecretCipher
 from app.models.audit import AuditAction
-from app.models.auth import User
+from app.models.auth import TrustedDevice, User, UserPasskey
 from app.services.audit import AuditService
 
 #: Roles whose holders count as administrators for ``auth.mfa_required = admins``.
@@ -183,9 +183,16 @@ class MfaService:
         user.mfa_last_step = None
         user.mfa_recovery_hashes = []
 
+    async def _forget_factors(self, user: User) -> None:
+        """Passkeys and trusted browsers belong to two-factor authentication (E20): when
+        it goes, they go too, or a reset would leave a way past the step behind."""
+        await self._session.execute(delete(UserPasskey).where(UserPasskey.user_id == user.id))
+        await self._session.execute(delete(TrustedDevice).where(TrustedDevice.user_id == user.id))
+
     async def disable(self, user: User) -> None:
         """The account holder turns MFA off (the caller has checked password and code)."""
         self._clear(user)
+        await self._forget_factors(user)
         await self._audit.record(
             AuditAction.USER_MFA_DISABLED,
             user_id=user.id,
@@ -204,6 +211,7 @@ class MfaService:
             raise ValidationError(LOCAL_ONLY)
         was_enabled = user.mfa_enabled
         self._clear(user)
+        await self._forget_factors(user)
         user.session_version += 1
         await self._audit.record(
             AuditAction.USER_MFA_RESET,

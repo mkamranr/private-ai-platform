@@ -242,6 +242,18 @@ class AuthSettings(BaseModel):
     #: How long the step between password and code may take.
     mfa_challenge_ttl_seconds: int = Field(default=300, ge=60, le=1800)
 
+    # -- E20: passkeys and trusted browsers ----------------------------------------
+    #: Days a browser may skip the two-factor step after "trust this browser". 0 turns
+    #: the option off. A runtime setting.
+    mfa_remember_days: int = Field(default=30, ge=0, le=365)
+    #: The WebAuthn relying party id: the host name passkeys are bound to. Empty means
+    #: the host of ``PLATFORM__PUBLIC_BASE_URL``. Browsers refuse IP addresses, so a
+    #: site reached by IP has no passkeys and keeps using the authenticator app.
+    webauthn_rp_id: str = Field(default="", max_length=253)
+    #: Origins a passkey sign-in may come from. Empty means the origin of
+    #: ``PLATFORM__PUBLIC_BASE_URL``. Each must be HTTPS, or http://localhost.
+    webauthn_origins: list[str] = Field(default_factory=list)
+
     bootstrap_admin_username: str = "admin"
     bootstrap_admin_email: str = "admin@ai-platform.local"
     # Blank/absent means "do not create a bootstrap admin".

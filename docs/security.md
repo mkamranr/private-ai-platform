@@ -527,6 +527,59 @@ what someone impersonating them would ask for.
 provider owns their second factor. Requiring a second, unrelated enrolment would add
 friction without adding a factor the provider does not already enforce.
 
+## Passkeys and trusted browsers (E20)
+
+**Passkeys answer the second step.** Once two-factor authentication is on, a person can
+add up to ten passkeys on the account dialog: a security key (YubiKey, Feitian), or a
+laptop's or phone's screen lock (Windows Hello, Touch ID, Android). At sign-in the code step
+then offers *Use a passkey*. A passkey replaces the six-digit code, never the password. It
+can only be added while two-factor authentication is on, so the authenticator app and the
+recovery codes remain the way back in when a key is lost. Adding one needs the password.
+
+* **Verification** is done by `webauthn` (py_webauthn 3.0.1, pinned with hashes). It checks
+  the signature, the origin, the relying party id, the challenge and the signature counter.
+  A counter that goes backwards (a cloned key) is refused. Attestation is not requested:
+  the platform does not judge the make of a key.
+* **Challenges are stateless and single-use.** The random challenge travels in a
+  short-lived signed token of its own type (`typ: webauthn`, five minutes). A registration
+  challenge is revoked on use. A sign-in challenge names the `mfa_token` it was issued for
+  and is refused for any other sign-in; that step token is single-use as before.
+* **A failed passkey counts like a wrong code**: toward the account lockout and the
+  per-address throttle (E14), audited as a failed `USER_LOGIN` with `step: mfa`. A
+  successful one is audited with `mfa: passkey`.
+* **The site needs a host name over HTTPS.** WebAuthn binds a credential to a host name
+  and browsers refuse an IP address. The relying party id and the allowed origin come from
+  `PLATFORM__PUBLIC_BASE_URL`; `AUTH__WEBAUTHN_RP_ID` and `AUTH__WEBAUTHN_ORIGINS` override
+  them (for example to share passkeys across subdomains). Origins must be `https://`, or
+  `http://localhost`. A platform reached by IP address shows "Passkeys need a host name
+  over HTTPS" instead of a browser error, and the code still works.
+* Changing `PLATFORM__PUBLIC_BASE_URL` to another host name strands existing passkeys:
+  they are bound to the old name. People then use their code and add the key again.
+
+**Trusted browsers.** At the code or passkey step a person may tick *Trust this browser
+for N days*. The server returns a random token (`tdv_…`, 256 bits) that the console keeps
+in the browser's local storage for that username and sends with the password next time.
+While the token is good, the second step is skipped. Audit records `mfa: trusted_device`.
+
+* Only the token's SHA-256 hash is stored (`trusted_devices`). The password is always
+  checked, and a locked account stays locked.
+* The lifetime is the runtime setting `auth.mfa_remember_days` (Settings page, default 30,
+  0–365). Setting it to 0 turns the option off *and* stops existing tokens from working.
+* A token is bound to the account's session version. Changing the password, *Sign out
+  everywhere*, a detected refresh-token theft and an administrator's *Reset 2FA* forget
+  every trusted browser at once. The account dialog lists them, with *Forget* and *Forget
+  all*. At most 20 are kept per account; the oldest goes first.
+* Anyone with access to that browser profile can skip the code for that account until the
+  token expires. Do not tick it on a shared machine.
+
+**Turning two-factor off**, or an administrator's reset, deletes the account's passkeys
+and trusted browsers.
+
+**Not covered.** The developer portal and the voice assistant ask for the code, not a
+passkey, and do not offer *Trust this browser*. Passkeys are a second factor only: there
+is no passwordless sign-in. Directory and single sign-on accounts have no platform second
+factor, so no passkeys either.
+
 ## What is not built yet
 
 * **LDAP is unverified against a real directory.** The escaping, the empty-password guard
@@ -536,8 +589,9 @@ friction without adding a factor the provider does not already enforce.
   The per-address throttle still applies.
 * **No CAPTCHA or progressive delay.** Lockout and the per-address throttle are the only
   brute-force defences.
-* **TOTP only.** No WebAuthn/passkeys, push approval or SMS. The platform asks for no
-  code from directory or single sign-on accounts.
+* **TOTP and passkeys, as a second factor only.** No passwordless sign-in, push approval
+  or SMS. The developer portal and voice assistant accept only codes. The platform asks
+  for no second factor from directory or single sign-on accounts.
 * **The per-address throttle fails open** while Valkey is down.
 
 

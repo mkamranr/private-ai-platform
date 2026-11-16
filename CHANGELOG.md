@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Passkeys and trusted browsers (E20)
+- **Passkeys as a second factor.** With two-factor authentication on, people can add security keys or their device's screen lock (Windows Hello, Touch ID, Android) on the account dialog and use them instead of the six-digit code. A passkey never replaces the password. A failed passkey counts toward the lockout like a wrong code.
+- **Trust this browser.** The code step can trust the browser for `auth.mfa_remember_days` days (Settings page, default 30; 0 turns it off). The password is still checked. Signing out everywhere, changing the password or an administrator's 2FA reset forgets every trusted browser. The account dialog lists them, with Forget and Forget all.
+- **Needs a host name over HTTPS.** Passkeys are bound to the host in `PLATFORM__PUBLIC_BASE_URL` (override with `AUTH__WEBAUTHN_RP_ID` / `AUTH__WEBAUTHN_ORIGINS`). A platform reached by IP address offers no passkeys and says so; codes work as before.
+- **Not in the portal or voice assistant**, which still ask for the code.
+- **Upgrade.** Migration `a8c4e2f6b9d1` adds `user_passkeys` and `trusted_devices`. Four new pinned Python packages: `webauthn` 3.0.1, `cbor2`, `pyopenssl` and `pyasn1-modules`; rebuild the backend image. See [docs/security.md](docs/security.md#passkeys-and-trusted-browsers-e20).
+
 ### Platform model calls accounted (E19)
 - **Agent runs everywhere.** Agent runs started in the console, through `POST /agents/{id}/execute` or by voice now write a usage row (`endpoint` `agent.run`, `requested_model` `agent:<slug>`), as do the tokens a run spends after an approval. They appear on the Usage page, in chargeback and in budgets, attributed to the person who started the run and the agent's team.
 - **Workflow LLM steps.** Each LLM step writes a usage row (`workflow.llm`, `workflow:<name>`) for the run's starter and the workflow's team.
