@@ -213,7 +213,7 @@ dashboard real signals.
 - [x] Agent runs: tokens counted from `LLM_RESPONSE` events and recorded when the stream ends (completed, failed, suspended, abandoned) as `agent.run` / `agent:<slug>`. Covers console, `/agents/{id}/execute`, voice and every post-approval continuation. `/v1` `agent:` calls pass `record_usage=False` (the gateway records them, E17).
 - [x] Workflow LLM steps record `workflow.llm` / `workflow:<name>` as soon as the model answers.
 - [x] No migration. Tests: `tests/api/test_internal_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#the-platforms-own-model-calls-e19).
-- [ ] Not refused by quotas; API key and end-user quotas do not apply. Embeddings (ingestion, search, memory) are not accounted. No timings on these rows.
+- [ ] Not refused by quotas; API key and end-user quotas do not apply. ~~Embeddings (ingestion, search, memory) are not accounted.~~ Closed in E21. No timings on these rows.
 
 ## E20: Passkeys and trusted browsers (closes the E15 open item)
 
@@ -225,6 +225,14 @@ dashboard real signals.
 - [x] Console: *Use a passkey* and *Trust this browser* on the code step; passkeys and trusted browsers on the account dialog.
 - [x] Migration `a8c4e2f6b9d1`. Tests: `tests/api/test_passkeys.py`, with a software authenticator producing real attestations and signatures. Doc: [security.md](../security.md#passkeys-and-trusted-browsers-e20).
 - [ ] Second factor only, no passwordless sign-in. The developer portal and voice assistant accept codes only. Changing the public host name strands existing passkeys.
+
+## E21: Embedding calls accounted (closes the E19 open item)
+
+- [x] `app/services/embedding_usage.py`: `embed_with` / `embed_through`, the one route from an alias to vectors, replacing three copies (`deps.get_embedder`, `deps._embed_through`, the ingestion worker's `main._embedder`). Each call records a keyless usage row through `GatewayService.record_internal_usage` with the runtime's prompt tokens; an `EmbeddingCharge` names the endpoint, label, user and team; an uncharged call is still recorded as `platform.embed`.
+- [x] Charges: ingestion (uploader, base team), knowledge search, playground, agent and workflow retrieval, RAG eval (caller or starter, each base's team), memory write and search (person, agent's team via `MemoryEntryRepository.agent_team`), dimension probe (creator).
+- [x] Counted toward team and model token budgets, never refused.
+- [x] No migration. Tests: `tests/api/test_embedding_usage.py` (charges per call site, committed rows end to end); the workflow retrieval charge in `test_workflows.py`. Doc: [gateway-policy.md](../gateway-policy.md#embeddings-e21).
+- [ ] Reranking calls are not accounted (no token counts from rerank engines). Voice speech-to-text and text-to-speech are not accounted.
 
 ## Phase acceptance (applies to each)
 

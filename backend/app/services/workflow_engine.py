@@ -530,7 +530,11 @@ class WorkflowEngine:
             except Exception as exc:
                 raise NodeFailedError(f"Knowledge base {value} is not available.") from exc
         trace = await self._knowledge.retrieve(
-            bases, wd._as_text(rendered.get("query")), top_k=rendered.get("top_k")
+            bases,
+            wd._as_text(rendered.get("query")),
+            top_k=rendered.get("top_k"),
+            user_id=run.started_by,
+            purpose="workflow.retrieve",
         )
         passages = [
             {

@@ -79,7 +79,7 @@ def _run_read(trace: RetrievalTrace) -> RetrievalRunRead:
 async def retrieval_playground(
     payload: PlaygroundRequest,
     service: KnowledgeServiceDep,
-    _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
     guard: ScopeGuardDep,
 ) -> PlaygroundResponse:
     """Run one query against one or more knowledge bases.
@@ -103,6 +103,8 @@ async def retrieval_playground(
         candidates=payload.candidates,
         score_threshold=payload.score_threshold,
         reranker=reranker,
+        user_id=actor.id,
+        purpose="retrieval.playground",
     )
     baseline = None
     if payload.compare and trace.reranked:
@@ -113,6 +115,8 @@ async def retrieval_playground(
                 top_k=trace.top_k,
                 score_threshold=payload.score_threshold,
                 reranker=None,
+                user_id=actor.id,
+                purpose="retrieval.playground",
             )
         )
     return PlaygroundResponse(

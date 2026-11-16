@@ -184,6 +184,11 @@ and the same deployment a developer's API call would (§13). A second path would
 disagree about which model is serving, and the symptom would be a base whose vectors are
 incomparable with its own queries.
 
+**Every embedding is accounted (E21).** Ingestion is charged to the uploader and the base's
+team, a search to the person searching and the base's team, and memory to its person and
+the agent's team. The rows appear on the Usage page, in chargeback and in team and model
+token budgets. See [gateway-policy.md](gateway-policy.md#embeddings-e21).
+
 ### The mock embedding model
 
 `mock-embed` (alias `enterprise-embed`) serves **hashed bag-of-words** vectors: each token

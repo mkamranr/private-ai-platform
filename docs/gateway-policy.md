@@ -165,6 +165,29 @@ or workflow step is not stopped by a budget. Stopping a workflow halfway through
 a budget ran out is a decision we have not made for you. API key and end-user quotas do
 not apply (there is no key).
 
+### Embeddings (E21)
+
+Since E21 the platform's own embedding calls are recorded the same way, one row per call,
+with the token count the runtime reported (`completion_tokens` 0):
+
+| `endpoint` | `requested_model` | when | `user_id` | `team_id` |
+|---|---|---|---|---|
+| `knowledge.ingest` | `kb:<name>` | each batch of chunks embedded while ingesting or re-ingesting a document | the uploader | the base's team |
+| `knowledge.search` | `kb:<name>` | `POST /knowledge-bases/{id}/search` | the caller | the base's team |
+| `retrieval.playground` | `kb:<name>` | the retrieval playground (one row per base, and again for the comparison run) | the caller | the base's team |
+| `agent.retrieve` | `kb:<name>` | an agent run searching its knowledge bases | the person the run is for | the base's team |
+| `workflow.retrieve` | `kb:<name>` | a workflow retrieval step | the run's starter | the base's team |
+| `rag.eval` | `kb:<name>` | each question of a RAG evaluation run | whoever started the run | the base's team |
+| `memory.write`, `memory.search` | `memory` | storing and recalling a memory | the memory's person | the agent's team |
+| `knowledge.probe` | the model | the one-string dimension probe when a base is created | the creator | — |
+| `platform.embed` | the model | any other embedding (none today); recorded so nothing goes unseen | — | — |
+
+A search over several bases embeds the query once per base (they may use different
+models), so it writes one row per base, each charged to that base's team. A failed
+embedding writes no row. Quotas count these tokens like the rows above and never refuse
+them: a document is not left half-indexed because a budget ran out. A model server that
+reports no usage records 0 tokens, as it would for a `/v1/embeddings` call.
+
 ## Timings (E16)
 
 Every chat call through `/v1` stores its timings on its usage record. The dashboard and

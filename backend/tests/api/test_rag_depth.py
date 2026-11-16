@@ -58,7 +58,7 @@ def _bucket(term: str) -> int:
     return int(hashlib.md5(term.encode()).hexdigest(), 16) % DIMS  # noqa: S324 - not security
 
 
-async def fake_embed(texts: list[str], model: str) -> list[list[float]]:
+async def fake_embed(texts: list[str], model: str, **_: object) -> list[list[float]]:
     vectors = []
     for text in texts:
         vector = [0.0] * DIMS

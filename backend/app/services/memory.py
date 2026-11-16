@@ -39,6 +39,7 @@ from app.repositories.knowledge import (
     ConversationRepository,
     MemoryEntryRepository,
 )
+from app.services.embedding_usage import EmbeddingCharge
 
 log = get_logger(__name__)
 
@@ -145,6 +146,11 @@ class MemoryService:
         self._redis = redis
         self._embed = embed
         self._embedding_model = embedding_model
+
+    async def _charge(self, scope: MemoryScope, endpoint: str) -> EmbeddingCharge:
+        """E21: a memory embedding is accounted to its person and its agent's team."""
+        team_id = await self._entries.agent_team(scope.agent_id) if scope.agent_id else None
+        return EmbeddingCharge(endpoint, "memory", user_id=scope.user_id, team_id=team_id)
 
     # -- session layer (Valkey) -------------------------------------------
     async def set_session(
@@ -363,7 +369,9 @@ class MemoryService:
         await self._entries.flush()
 
         try:
-            vectors = await self._embed([text], self._embedding_model)  # type: ignore[operator]
+            vectors = await self._embed(  # type: ignore[operator]
+                [text], self._embedding_model, charge=await self._charge(scope, "memory.write")
+            )
             await self._vectors.ensure_collection(
                 CollectionSpec(
                     name=MEMORY_COLLECTION,
@@ -419,7 +427,9 @@ class MemoryService:
             return []
 
         try:
-            vectors = await self._embed([query], self._embedding_model)  # type: ignore[operator]
+            vectors = await self._embed(  # type: ignore[operator]
+                [query], self._embedding_model, charge=await self._charge(scope, "memory.search")
+            )
         except Exception as exc:
             # Recall is an enhancement; the answer is still possible without it.
             log.warning("memory_recall_unavailable", error=str(exc))

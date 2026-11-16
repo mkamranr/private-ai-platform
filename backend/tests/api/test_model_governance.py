@@ -552,7 +552,9 @@ async def test_follow_logs_yields_only_new_lines() -> None:
             _Backend(),  # type: ignore[arg-type]
             handle,
             interval_seconds=0.01,
-            max_seconds=0.035,
+            # Generous: Windows timers tick every ~15.6 ms, so three polls 10 ms apart can
+            # take far longer than 30 ms. Polls after "d" find nothing new and yield nothing.
+            max_seconds=0.3,
         )
     ]
     assert batches == [["a", "b"], ["c"], ["d"]]

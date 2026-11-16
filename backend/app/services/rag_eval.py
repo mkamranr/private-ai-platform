@@ -316,6 +316,8 @@ class RagEvalService:
                     candidates=settings.candidates,
                     score_threshold=settings.score_threshold,
                     reranker=settings.reranker,
+                    user_id=actor.id,
+                    purpose="rag.eval",
                 )
             except Exception as exc:
                 # One question failing (the embedding model timing out) is recorded against

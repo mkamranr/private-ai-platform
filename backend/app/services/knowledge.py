@@ -53,6 +53,7 @@ from app.services.document_parsers import (
     UnsupportedFormatError,
     parse,
 )
+from app.services.embedding_usage import EmbeddingCharge
 
 log = get_logger(__name__)
 
@@ -241,7 +242,7 @@ class KnowledgeService:
         # The embedding model's dimensions are discovered by embedding one probe string,
         # not configured. A wrong number creates a collection that rejects every vector,
         # and the operator would have no way to know the right one.
-        dimensions = await self._probe_dimensions(embedding_model)
+        dimensions = await self._probe_dimensions(embedding_model, actor=actor)
 
         base_id = uuid.uuid4()
         base = KnowledgeBase(
@@ -711,10 +712,17 @@ class KnowledgeService:
             )
         )
 
+        # E21: accounted to whoever uploaded the document and the base's team.
+        charge = EmbeddingCharge(
+            "knowledge.ingest",
+            f"kb:{base.name}",
+            user_id=document.uploaded_by,
+            team_id=base.team_id,
+        )
         for start in range(0, len(rows), EMBED_BATCH):
             batch = rows[start : start + EMBED_BATCH]
             vectors = await self._embed(  # type: ignore[operator]
-                [row.text for row in batch], base.embedding_model
+                [row.text for row in batch], base.embedding_model, charge=charge
             )
             if len(vectors) != len(batch):
                 raise RuntimeError(
@@ -811,9 +819,12 @@ class KnowledgeService:
         *,
         limit: int = 5,
         score_threshold: float | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> list[SearchResult]:
         """Search, rerank where the bases configure it, and return the passages."""
-        trace = await self.retrieve(bases, query, top_k=limit, score_threshold=score_threshold)
+        trace = await self.retrieve(
+            bases, query, top_k=limit, score_threshold=score_threshold, user_id=user_id
+        )
         return trace.results
 
     def _choose_reranker(
@@ -844,6 +855,8 @@ class KnowledgeService:
         score_threshold: float | None = None,
         fallback_threshold: float | None = None,
         reranker: str | None = RERANK_DEFAULT,
+        user_id: uuid.UUID | None = None,
+        purpose: str = "knowledge.search",
     ) -> RetrievalTrace:
         """Vector search across bases, then an optional rerank, with a trace (E5).
 
@@ -859,6 +872,9 @@ class KnowledgeService:
 
         The similarity floor is ``score_threshold``, else each base's ``min_score``, else
         ``fallback_threshold``.
+
+        Each base's query embedding is accounted (E21) as ``purpose`` to ``user_id`` and
+        that base's team.
         """
         trace = RetrievalTrace()
         active = [b for b in bases if b.enabled]
@@ -880,7 +896,13 @@ class KnowledgeService:
         found: list[SearchResult] = []
         for base in active:
             started = time.perf_counter()
-            vectors = await self._embed([query], base.embedding_model)  # type: ignore[operator]
+            vectors = await self._embed(  # type: ignore[operator]
+                [query],
+                base.embedding_model,
+                charge=EmbeddingCharge(
+                    purpose, f"kb:{base.name}", user_id=user_id, team_id=base.team_id
+                ),
+            )
             embed_ms += (time.perf_counter() - started) * 1000
             if not vectors:
                 continue
@@ -965,7 +987,7 @@ class KnowledgeService:
         return trace
 
     # -- helpers -----------------------------------------------------------
-    async def _probe_dimensions(self, model: str) -> int:
+    async def _probe_dimensions(self, model: str, *, actor: User | None = None) -> int:
         """Ask the model how wide its vectors are, by embedding one string.
 
         Discovered rather than configured: a wrong number produces a collection that
@@ -973,7 +995,13 @@ class KnowledgeService:
         right number was.
         """
         try:
-            vectors = await self._embed(["dimension probe"], model)  # type: ignore[operator]
+            vectors = await self._embed(  # type: ignore[operator]
+                ["dimension probe"],
+                model,
+                charge=EmbeddingCharge(
+                    "knowledge.probe", model, user_id=actor.id if actor else None
+                ),
+            )
         except Exception as exc:
             raise ValidationError(
                 f"Could not reach the embedding model {model!r}: {exc}. Deploy an EMBEDDING "

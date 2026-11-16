@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Embedding calls accounted (E21)
+- **Ingestion, search and memory are counted.** Each embedding the platform makes now writes a usage row with the tokens the model server reported. That covers ingesting a document, knowledge base search, the retrieval playground, agent and workflow retrieval, RAG evaluations, and storing or recalling memories. Ingestion is charged to the uploader and the knowledge base's team, searches to the person searching (or the run's starter), and memory to its person and the agent's team. Endpoints are `knowledge.ingest`, `knowledge.search`, `retrieval.playground`, `agent.retrieve`, `workflow.retrieve`, `rag.eval`, `memory.write`, `memory.search` and `knowledge.probe`, with `kb:<name>` or `memory` as the requested model.
+- **Quotas.** These tokens count toward team and model token budgets but never refuse an ingestion or a search.
+- **Upgrade.** No migration. Usage, chargeback and the dashboard's gateway figures rise by what embeddings had been spending unrecorded, which on an embedding deployment is most of its work. See [docs/gateway-policy.md](docs/gateway-policy.md#embeddings-e21).
+
 ### Passkeys and trusted browsers (E20)
 - **Passkeys as a second factor.** With two-factor authentication on, people can add security keys or their device's screen lock (Windows Hello, Touch ID, Android) on the account dialog and use them instead of the six-digit code. A passkey never replaces the password. A failed passkey counts toward the lockout like a wrong code.
 - **Trust this browser.** The code step can trust the browser for `auth.mfa_remember_days` days (Settings page, default 30; 0 turns it off). The password is still checked. Signing out everywhere, changing the password or an administrator's 2FA reset forgets every trusted browser. The account dialog lists them, with Forget and Forget all.

@@ -36,6 +36,7 @@ from app.core.tracing import configure_tracing, instrument_app
 from app.db.clients import MinioClient, QdrantClientWrapper, RedisClient
 from app.db.session import Database
 from app.services.auth_providers import OidcAuthProvider
+from app.services.embedding_usage import EmbeddingCharge, embed_with
 from app.services.health import HealthService
 from app.services.langfuse import LangfuseClient
 from app.services.media_provider import ResolvingOcrEngine
@@ -203,7 +204,9 @@ def _embedder(settings: Settings, database: Database, redis: RedisClient) -> Any
     holding a session open between documents.
     """
 
-    async def embed(texts: list[str], model: str) -> list[list[float]]:
+    async def embed(
+        texts: list[str], model: str, *, charge: EmbeddingCharge | None = None
+    ) -> list[list[float]]:
         from app.repositories.models_registry import (
             ApiKeyRepository,
             ModelAliasRepository,
@@ -224,10 +227,8 @@ def _embedder(settings: Settings, database: Database, redis: RedisClient) -> Any
                 redis.client,
                 database.sessionmaker,
             )
-            # Served name, not the alias the caller passed: upstream has never heard of it.
-            provider, served_model = await gateway.provider_for_model(model)
-            result = await provider.embeddings(texts, model=served_model)
-            return [list(vector) for vector in result.vectors]
+            # Accounted like every platform embedding (E21), on its own session.
+            return await embed_with(gateway, texts, model, charge)
 
     return embed
 

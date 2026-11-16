@@ -70,12 +70,14 @@ class FakeProvider:
 class FakeKnowledge:
     def __init__(self) -> None:
         self.queries: list[str] = []
+        self.charged: list[dict[str, Any]] = []
 
     async def get_base(self, ident: uuid.UUID) -> Any:
         return SimpleNamespace(id=ident, name="handbook")
 
-    async def retrieve(self, bases, query, top_k=None):
+    async def retrieve(self, bases, query, top_k=None, **charge: Any):
         self.queries.append(query)
+        self.charged.append(charge)
         hit = SimpleNamespace(
             text="Passwords are reset from the profile page.",
             document_name="it-guide.md",
@@ -358,6 +360,8 @@ class TestExecution:
         assert result["output"]["sources"][0]["document"] == "it-guide.md"
         assert [s["node_id"] for s in result["steps"]] == ["start", "search", "answer", "end"]
         assert wf.knowledge.queries == ["Reset?"]
+        # E21: the query embedding is accounted to whoever started the run.
+        assert wf.knowledge.charged == [{"user_id": builder.id, "purpose": "workflow.retrieve"}]
         assert wf.models == ["llama-local"]
         prompt = wf.provider.calls[0]["messages"][-1][1]
         assert "Passwords are reset" in prompt and "Question: Reset?" in prompt
