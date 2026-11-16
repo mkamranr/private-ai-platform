@@ -416,7 +416,7 @@ parser — the worse trade.
 ## Sign-in hardening (E14)
 
 **Account lockout.** `AUTH__LOCKOUT_THRESHOLD` (default 10) wrong passwords in a row lock a
-local account for `AUTH__LOCKOUT_MINUTES` (default 15). `0` turns lockout off. While an
+local or directory account for `AUTH__LOCKOUT_MINUTES` (default 15). `0` turns lockout off. While an
 account is locked:
 
 - sign-in is refused with the same message as a wrong password;
@@ -426,6 +426,16 @@ account is locked:
 A lock is audited (`USER_LOCKED`) and raises a WARNING alert. An administrator can lift it
 early on the Users page (`POST /users/{id}/unlock`, audited as `USER_UNLOCKED`). Setting a
 new password lifts it too, and a correct sign-in after the lock expires clears it.
+
+**Directory accounts (E25).** An LDAP account that has signed in before (so the platform
+has a row for it) is counted and locked the same way: a password the directory rejects
+counts toward the same threshold, with the same audit, alert and unlock. **A locked
+directory account is not offered to the directory at all**, so guesses made through the
+platform stop here instead of tripping the directory's own lockout for the real person.
+A correct sign-in after the lock expires clears it. Not counted: a directory user with no
+platform row yet (only the per-address throttle applies), single sign-on (OIDC) accounts,
+which never sign in with a password, and a directory that is unreachable, which is an
+outage rather than a wrong password.
 
 The counter is updated with one atomic `UPDATE` in its own transaction. The failed request
 rolls back, so counting inside it would count nothing. Before E14 that was exactly what
@@ -585,8 +595,10 @@ factor, so no passkeys either.
 * **LDAP is unverified against a real directory.** The escaping, the empty-password guard
   and the bind mode are tested; the bind itself has never met an Active Directory. Same
   status as the LDAP MCP server.
-* **No lockout for directory accounts.** Their password policy belongs to the directory.
-  The per-address throttle still applies.
+* **Directory lockout is the platform's, on top of the directory's own.** Since E25 the
+  platform locks a directory account after `AUTH__LOCKOUT_THRESHOLD` rejected passwords
+  made through it; it does not see guesses made elsewhere, and the directory's password
+  and lockout policy still apply.
 * **No CAPTCHA or progressive delay.** Lockout and the per-address throttle are the only
   brute-force defences.
 * **TOTP and passkeys, as a second factor only.** No passwordless sign-in, push approval
