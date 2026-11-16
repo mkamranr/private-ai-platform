@@ -117,8 +117,11 @@ class ScheduleOutcome:
     keep_days: int = 0
     #: E23: the runner's off-host copy directory, and whether the newest backup is in it.
     copy_configured: bool = False
+    #: E31: ``directory`` or ``s3``.
+    copy_kind: str | None = None
     copy_path: str | None = None
     copy_reachable: bool | None = None
+    copy_error: str | None = None
     newest_copied: bool | None = None
     newest_backup: str | None = None
     newest_backup_at: dt.datetime | None = None
@@ -168,8 +171,11 @@ class BackupScheduler:
             keep_days=keep_days,
             runner_online=online,
             copy_configured=inventory.backup_copy.configured,
+            copy_kind=inventory.backup_copy.kind
+            or ("directory" if inventory.backup_copy.configured else None),
             copy_path=inventory.backup_copy.path,
             copy_reachable=inventory.backup_copy.reachable,
+            copy_error=inventory.backup_copy.error,
             newest_copied=newest.copied if newest else None,
             newest_backup=newest.name if newest else None,
             newest_backup_at=newest_at,
@@ -243,10 +249,16 @@ class BackupScheduler:
         """``backup_copy_missing``: the off-host copy is not happening (E23)."""
         problem = None
         if outcome.copy_configured and outcome.copy_reachable is False:
-            problem = (
-                f"The runner cannot write to its off-host copy directory {outcome.copy_path}. "
-                "Check that the share or disk is mounted."
-            )
+            if outcome.copy_kind == "s3":
+                problem = f"The runner cannot reach its S3 copy target {outcome.copy_path}. " + (
+                    outcome.copy_error
+                    or "Check the endpoint, the bucket and the keys in the host's .env."
+                )
+            else:
+                problem = (
+                    f"The runner cannot write to its off-host copy directory "
+                    f"{outcome.copy_path}. Check that the share or disk is mounted."
+                )
         elif (
             outcome.copy_configured
             and outcome.newest_copied is False

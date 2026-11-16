@@ -32,16 +32,24 @@ class InventoryBackup(BaseModel):
 
 
 class InventoryBackupCopy(BaseModel):
-    """E23: the runner's off-host copy directory (``OPS__BACKUP_COPY_DIR`` on the host)."""
+    """E23: the runner's off-host copy target, configured on the host: a directory
+    (``OPS__BACKUP_COPY_DIR``) or, since E31, S3-compatible storage."""
 
     model_config = ConfigDict(extra="allow")
 
     configured: bool = False
+    #: ``directory`` or ``s3`` (E31). None from a runner older than E31: a directory.
+    kind: str | None = None
+    #: The directory, or ``s3://bucket/prefix at endpoint``. Never credentials.
     path: str | None = None
-    #: The directory exists and is writable now. A mount that went away is False.
+    #: The directory exists and is writable now, or the bucket answers. A mount that went
+    #: away, or an endpoint that refuses the keys, is False.
     reachable: bool | None = None
+    #: Free space, for a directory. None for S3, which does not say.
     free_bytes: int | None = None
     total_bytes: int | None = None
+    #: Why the target cannot be used as configured (a missing S3 setting, say).
+    error: str | None = None
 
 
 class InventoryBundle(BaseModel):
@@ -269,8 +277,11 @@ class BackupScheduleStatus(BaseModel):
     runner_online: bool
     #: E23: the runner's off-host copy directory and whether the newest backup is in it.
     copy_configured: bool = False
+    #: E31: ``directory`` or ``s3``.
+    copy_kind: str | None = None
     copy_path: str | None = None
     copy_reachable: bool | None = None
+    copy_error: str | None = None
     newest_copied: bool | None = None
     newest_backup: str | None
     newest_backup_at: dt.datetime | None

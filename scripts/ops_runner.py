@@ -30,6 +30,12 @@ upgrade stops the API for minutes. So the runner keeps the job's spec in
 ``.ops-runner/state.json``, buffers output while the API is unreachable, and includes the spec
 in every report. The API recreates a missing job from it (``OpsService.report``).
 
+**S3 (E31).** With ``OPS__BACKUP_COPY_S3_ENDPOINT`` (and ``_BUCKET``, ``_ACCESS_KEY``,
+``_SECRET_KEY``; optional ``_PREFIX``, ``_REGION``, ``_CA_FILE``) the copies go to
+S3-compatible storage instead, through ``s3_copy.py``: every request is signed over its
+body's SHA-256, so S3 rejects a file that arrives different, and a ``.complete`` marker
+uploaded last makes a copy count. The keys stay on the host.
+
 **Off-host copies (E23).** With ``OPS__BACKUP_COPY_DIR`` set (a mounted NFS or SMB share,
 or a USB disk), every new backup is also copied there: into ``.partial-NAME``, compared
 file by file (SHA-256) with the original, then renamed to ``NAME``. So a directory named
@@ -67,6 +73,7 @@ REPO_ROOT = SCRIPTS.parent
 sys.path.insert(0, str(SCRIPTS))
 
 import bundle_signing  # noqa: E402 - sibling stdlib module
+import s3_copy  # noqa: E402 - sibling stdlib module (E31)
 
 VERSION = "1.0"
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$")
@@ -123,7 +130,24 @@ class Inventory:
         self.env = env
         copy_dir = (env.get("OPS__BACKUP_COPY_DIR") or "").strip()
         self.copy_dir = Path(copy_dir) if copy_dir else None
+        # E31: S3-compatible storage instead of a directory. One target at a time; with
+        # both set, S3 is used and the report says the directory is ignored.
+        self.s3: s3_copy.S3Target | None = None
+        self.s3_error: str | None = None
+        try:
+            self.s3 = s3_copy.S3Target.from_env(env)
+        except s3_copy.S3Error as exc:
+            self.s3_error = str(exc)
+        self._ignored_dir: str | None = None
+        if self.s3 is not None or self.s3_error:
+            self._ignored_dir = copy_dir or None
+            self.copy_dir = None
+        self._s3_complete: set[str] | None = None
         self._sizes: dict[Path, tuple[float, int]] = {}
+
+    @property
+    def copy_configured(self) -> bool:
+        return self.copy_dir is not None or self.s3 is not None or bool(self.s3_error)
 
     def _cached_size(self, path: Path) -> int:
         mtime = path.stat().st_mtime
@@ -139,6 +163,7 @@ class Inventory:
         current = _key_fingerprint(self.env)
         if not self.backups_dir.is_dir():
             return out
+        self._s3_complete = None  # listed at most once per inventory
         for path in sorted(self.backups_dir.iterdir(), reverse=True):
             if not path.is_dir() or not NAME.match(path.name):
                 continue
@@ -164,23 +189,56 @@ class Inventory:
 
     # -- off-host copies (E23) ---------------------------------------------------------
     def copy_reachable(self) -> bool | None:
+        if self.s3_error:
+            return False
+        if self.s3 is not None:
+            return self.s3.reachable()
         if self.copy_dir is None:
             return None
         return self.copy_dir.is_dir() and os.access(self.copy_dir, os.W_OK)
 
     def copied(self, name: str) -> bool | None:
         """Whether a complete copy exists. Copies are renamed into place only after they
-        compare equal, so the name with a manifest inside means complete."""
+        compare equal, so the name with a manifest inside means complete. In S3 the
+        ``.complete`` marker, uploaded last, means the same (E31)."""
+        if self.s3_error:
+            return False
+        if self.s3 is not None:
+            if self._s3_complete is None:
+                try:
+                    self._s3_complete = self.s3.complete_names()
+                except s3_copy.S3Error:
+                    self._s3_complete = set()
+            return name in self._s3_complete
         if self.copy_dir is None:
             return None
         return (self.copy_dir / name / "manifest.json").is_file()
 
     def copy_report(self) -> dict:
+        if self.s3_error:
+            return {
+                "configured": True,
+                "kind": "s3",
+                "path": "S3",
+                "reachable": False,
+                "error": self.s3_error,
+            }
+        if self.s3 is not None:
+            s3_report: dict[str, Any] = {
+                "configured": True,
+                "kind": "s3",
+                "path": self.s3.location,
+                "reachable": self.s3.reachable(),
+            }
+            if self._ignored_dir:
+                s3_report["note"] = "OPS__BACKUP_COPY_DIR is ignored while S3 is configured."
+            return s3_report  # no free space: S3 does not say, and 0 would be a lie
         if self.copy_dir is None:
             return {"configured": False}
         reachable = bool(self.copy_reachable())
         report: dict[str, Any] = {
             "configured": True,
+            "kind": "directory",
             "path": str(self.copy_dir),
             "reachable": reachable,
         }
@@ -459,10 +517,35 @@ def _digests(root: Path) -> dict[str, str]:
     return out
 
 
+def copy_backup_s3(inventory: Inventory, name: str, reporter: Reporter) -> str | None:
+    """Upload one backup to S3 (E31). None on success, else what went wrong."""
+    if inventory.s3_error:
+        return inventory.s3_error
+    target = inventory.s3
+    assert target is not None
+    source = inventory.backup_path(name)
+    try:
+        if target.copied(source.name):
+            reporter.line(f"{source.name} is already in {target.location}")
+            return None
+        reporter.line(f"uploading {source.name} to {target.location} ...")
+        # Signed over each body's SHA-256: S3 refuses any file that arrives different.
+        target.upload(source, source.name, _digests(source), reporter.line)
+    except (s3_copy.S3Error, OSError) as exc:
+        return f"Upload failed: {exc}"
+    reporter.line(f"uploaded {source.name}; S3 checked every file against its SHA-256")
+    return None
+
+
 def copy_backup(inventory: Inventory, name: str, reporter: Reporter) -> str | None:
     """Copy one backup off-host (E23). None on success, else what went wrong."""
+    if inventory.s3 is not None or inventory.s3_error:
+        return copy_backup_s3(inventory, name, reporter)
     if inventory.copy_dir is None:
-        return "No off-host copy directory is configured (OPS__BACKUP_COPY_DIR)."
+        return (
+            "No off-host copy target is configured "
+            "(OPS__BACKUP_COPY_DIR or OPS__BACKUP_COPY_S3_ENDPOINT)."
+        )
     if not inventory.copy_reachable():
         return f"The copy directory {inventory.copy_dir} is missing or not writable."
     source = inventory.backup_path(name)
@@ -491,6 +574,18 @@ def copy_backup(inventory: Inventory, name: str, reporter: Reporter) -> str | No
 
 def prune_copies(inventory: Inventory, names: list[str], newest: str | None, reporter: Reporter) -> list[str]:
     """Retention for the off-host copies: the same names as on local disk (E23)."""
+    if inventory.s3 is not None:
+        removed = []
+        for name in names:
+            if not NAME.match(name) or name == newest:
+                continue
+            try:
+                if inventory.s3.delete(name):
+                    removed.append(name)
+                    reporter.line(f"deleted copy {name} from {inventory.s3.location}")
+            except s3_copy.S3Error as exc:
+                reporter.line(f"WARNING: could not delete copy {name}: {exc}")
+        return removed
     if inventory.copy_dir is None or not inventory.copy_reachable():
         return []
     deleted = []
@@ -516,7 +611,7 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
         created = sorted({b["name"] for b in inventory.backups()} - before)
         if created:
             reporter.result = {"backup": created[-1]}
-            if inventory.copy_dir is not None:
+            if inventory.copy_configured:
                 # A failed copy does not fail the backup: the backup exists and is good.
                 # The API sees it is not copied, alerts, and queues one retry.
                 problem = copy_backup(inventory, created[-1], reporter)

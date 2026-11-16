@@ -298,6 +298,26 @@ class TestOffHostCopy:
         outcome = await _scheduler(session, settings).run()
         assert "backup.copy" not in outcome.queued
         assert "cannot write" in ((await _alerts(session))["backup_copy_missing"].message or "")
+        assert outcome.copy_kind == "directory"  # a runner older than E31 sends no kind
+
+    async def test_an_unreachable_s3_target_says_so(
+        self, session: AsyncSession, settings: Settings, clean
+    ) -> None:
+        """E31: the alert names the S3 target and the runner's reason, not a mount."""
+        s3 = {
+            "configured": True,
+            "kind": "s3",
+            "path": "s3://backups/site-a at https://minio.example:9000",
+            "reachable": False,
+            "error": "S3 copies need OPS__BACKUP_COPY_S3_SECRET_KEY as well.",
+        }
+        await _runner(session, [{"name": _stamp(0.2), "complete": True, "copied": False}], copy=s3)
+        outcome = await _scheduler(session, settings).run()
+        assert outcome.copy_kind == "s3" and outcome.copy_error == s3["error"]
+        assert "backup.copy" not in outcome.queued
+        message = (await _alerts(session))["backup_copy_missing"].message or ""
+        assert "S3 copy target s3://backups/site-a" in message
+        assert "OPS__BACKUP_COPY_S3_SECRET_KEY" in message and "mounted" not in message
 
     async def test_without_a_copy_directory_nothing_changes(
         self, session: AsyncSession, settings: Settings, clean

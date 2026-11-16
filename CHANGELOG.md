@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Off-host backup copies to S3-compatible storage (E31)
+- **Copies to an object store.** Set `OPS__BACKUP_COPY_S3_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY` and `_SECRET_KEY` in the host's `.env` and the ops runner uploads every backup to S3-compatible storage (a second MinIO, Ceph RGW, Garage or AWS) instead of a directory. Retries, the *Off-host backup copy missing* alert and retention work as for a directory.
+- **Checked on arrival.** Each upload is signed over its SHA-256 and the store rejects a mismatch; a `.complete` marker uploaded last decides what counts as copied, so a half-finished upload never does.
+- **Keys stay on the host**; the console shows the bucket, prefix and endpoint only. No new dependency: the client is standard-library Python.
+- **Upgrade.** No migration. Restart the ops runner after setting the variables. See [docs/backup.md](docs/backup.md#copies-to-s3-compatible-storage-e31).
+
 ### Sign in with a passkey alone (E30)
 - **Passwordless sign-in in the console.** *Sign in with a passkey* asks for no username, password or code: the browser offers your passkeys for this site and you unlock one with your device's PIN or biometric. That is two factors in one step, and it cannot be phished.
 - **Safe by construction.** The challenge names no account, so it reveals nothing about which exist; user verification is required; each challenge works once; locked and disabled accounts are refused; refused attempts count toward the address throttle.

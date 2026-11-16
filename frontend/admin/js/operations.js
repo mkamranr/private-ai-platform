@@ -81,10 +81,13 @@ function scheduleCard(sched) {
   const retention = rules.length
     ? `keep ${rules.join(' or ')}${sched.prune_candidates.length ? ` · <span class="text-warning-emphasis">${sched.prune_candidates.length} to delete at the next run</span>` : ''}`
     : 'keep every backup';
-  // E23: the runner's off-host copy directory (OPS__BACKUP_COPY_DIR on the host).
-  let copyText = '<span class="text-secondary">not configured (set <code>OPS__BACKUP_COPY_DIR</code> on the host)</span>';
+  // E23: the runner's off-host copy target, set on the host: a directory
+  // (OPS__BACKUP_COPY_DIR) or, since E31, S3-compatible storage (OPS__BACKUP_COPY_S3_*).
+  let copyText = '<span class="text-secondary">not configured (set <code>OPS__BACKUP_COPY_DIR</code> or <code>OPS__BACKUP_COPY_S3_ENDPOINT</code> on the host)</span>';
   if (sched.copy_configured) {
-    const where = `<code>${esc(sched.copy_path || '')}</code>`;
+    const kind = sched.copy_kind === 's3' ? 'S3 ' : '';
+    const where = `${kind}<code>${esc(sched.copy_path || '')}</code>`
+      + (sched.copy_error ? ` <span class="text-danger small">${esc(sched.copy_error)}</span>` : '');
     if (sched.copy_reachable === false) copyText = `${pill('WARNING', 'Unreachable')} ${where}`;
     else if (sched.newest_copied === true) copyText = `${pill('HEALTHY', 'Newest copied')} ${where}`;
     else if (sched.newest_copied === false) copyText = `${pill('WARNING', 'Newest not copied')} ${where}`;

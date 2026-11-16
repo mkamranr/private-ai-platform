@@ -248,7 +248,7 @@ dashboard real signals.
 - [x] Runner: `OPS__BACKUP_COPY_DIR` (host only). Copy into `.partial-NAME`, compare SHA-256 of every file, rename. Done after each `backup.create` (a failed copy does not fail the backup) and by the new `backup.copy` job. `backup.prune` deletes the same names from the copy directory, never the newest. Inventory reports `backup_copy` (configured, path, reachable, space) and `copied` per backup.
 - [x] Schedule: one `backup.copy` per newest backup that is not copied; alert `backup_copy_missing` when the directory is unreachable or the newest backup has waited over an hour. Backup page: retention rules and copy status.
 - [x] Migration `b3d5f7a9c1e2` (ops job kind). Tests: `test_backup_schedule.py`, `tests/unit/test_release_tooling.py::TestRunnerCopy`. Docs: [backup.md](../backup.md#off-host-copies-e23); `architecture.md` LangGraph drift fixed.
-- [ ] One copy directory, pruned with local backups; no S3 or remote protocol built in.
+- [ ] ~~One copy directory, pruned with local backups; no S3 or remote protocol built in.~~ S3 closed in E31.
 
 ## E24: Opt-in budget enforcement for the platform's own calls (closes the E19 open item)
 
@@ -300,6 +300,14 @@ dashboard real signals.
 - [x] Console: *Sign in with a passkey* on the sign-in page.
 - [x] No migration. Tests: `tests/api/test_passkey_signin.py`. Doc: [security.md](../security.md#signing-in-with-a-passkey-alone-e30).
 - [ ] Console only (the developer portal and voice assistant use passwords). Passkeys added before E30 may need re-adding to be discoverable. No passkey-only accounts: a password and TOTP remain.
+
+## E31: Off-host backup copies to S3-compatible storage (closes the E23 open item)
+
+- [x] `scripts/s3_copy.py`: stdlib S3 client (Signature V4, path-style; HEAD, PUT, ListObjectsV2, DELETE, multipart above 64 MB). Signature checked against AWS's worked example. Every body signed over its SHA-256, so the store verifies each file or part.
+- [x] Runner: `OPS__BACKUP_COPY_S3_*` (host only) replaces the directory when set. Upload every file, then `PREFIX/NAME/.complete` (file digests); copied = marker present (one listing per inventory). Retention deletes the marker first. Missing settings are an error in the report, never a fallback.
+- [x] Inventory `backup_copy` gains `kind` and `error`; schedule status gains `copy_kind`, `copy_error`; the alert names the S3 target and reason. Console shows the target kind.
+- [x] No migration, no new dependency. Tests: `tests/unit/test_release_tooling.py::TestRunnerS3Copy` (in-process fake S3 that rejects mismatched bodies), `test_backup_schedule.py`. Doc: [backup.md](../backup.md#copies-to-s3-compatible-storage-e31).
+- [ ] One target at a time. No server-side encryption or object-lock options; no SFTP/rsync (mount as a directory).
 
 ## Phase acceptance (applies to each)
 
