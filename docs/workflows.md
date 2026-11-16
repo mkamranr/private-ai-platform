@@ -171,6 +171,9 @@ is `HIGH` or `CRITICAL` risk does the same before calling it. The risk levels co
   decision, the approval becomes `EXPIRED` and the run fails. The `rejected` branch is not
   taken. Audited as `WORKFLOW_APPROVAL_EXPIRED` by `scheduler`. See
   [agents.md](agents.md#expiry-e17).
+- **Reminders (E22):** `agents.approval_reminder_hours` (default 24) before expiry, the
+  step raises a reminder alert (source `approvals`) quoting its message, for the Alerts
+  page and subscribed notification channels. See [agents.md](agents.md#reminders-e22).
 
 ## Triggers
 

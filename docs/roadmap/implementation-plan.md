@@ -195,7 +195,7 @@ dashboard real signals.
 - [x] `agent:<slug>` gateway calls: attributed, admitted once per run against key, team, end-user and model quotas, and recorded as one usage row (`requested_model` = `agent:<slug>`, `model` = the resolved model, no timings). Streamed runs count tokens from `LLM_RESPONSE` events, so a disconnect is still accounted.
 - [x] No migration (the states existed; audit actions are strings).
 - [x] Tests: `tests/api/test_approval_expiry.py`, plus a workflow expiry test in `test_workflows.py`. Docs: [agents.md](../agents.md#expiry-e17), [workflows.md](../workflows.md), [gateway-policy.md](../gateway-policy.md#agent-calls-e17).
-- [ ] ~~Not counted: agent runs started from the console or API, tokens spent after a console approval, workflow LLM steps.~~ Closed in E19 (memory summaries have no caller). No reminder before an approval expires.
+- [ ] ~~Not counted: agent runs started from the console or API, tokens spent after a console approval, workflow LLM steps.~~ Closed in E19 (memory summaries have no caller). ~~No reminder before an approval expires.~~ Closed in E22.
 
 ## E18: Team scoping finished (closes the E3 open item)
 
@@ -233,6 +233,14 @@ dashboard real signals.
 - [x] Counted toward team and model token budgets, never refused.
 - [x] No migration. Tests: `tests/api/test_embedding_usage.py` (charges per call site, committed rows end to end); the workflow retrieval charge in `test_workflows.py`. Doc: [gateway-policy.md](../gateway-policy.md#embeddings-e21).
 - [ ] Reranking calls are not accounted (no token counts from rerank engines). Voice speech-to-text and text-to-speech are not accounted.
+
+## E22: Approval reminders (closes the last E17 open item)
+
+- [x] Runtime setting `agents.approval_reminder_hours` (default 24, 0 = off; none while `approval_ttl_hours` is 0).
+- [x] `app/services/approval_reminders.py`, run by the `approval_expiry` job after expiry: one WARNING alert per pending agent tool call or workflow approval expiring within the window (`approval:tool:<id>`, `approval:workflow:<id>`), title refreshed with the time left (rounded up), cleared once the approval is no longer pending. At most 200 per kind per check.
+- [x] Alert source `approvals` in `KNOWN_SOURCES`, so notification channels can subscribe; delivered once per channel by the E13 outbox.
+- [x] No migration. Tests: `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders-e22).
+- [ ] Reminders go to channels, not to individual approvers (approvers are not modelled). No reminder for approvals that never expire.
 
 ## Phase acceptance (applies to each)
 

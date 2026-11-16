@@ -76,6 +76,7 @@ KNOWN_SOURCES = (
     "notifications",
     "auth",
     "ops_runner",
+    "approvals",
 )
 ALERT_SOURCE = "notifications"
 #: Seconds to wait before retry N (1-based, by attempts made so far).

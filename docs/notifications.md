@@ -28,7 +28,8 @@ Each channel also chooses:
 - **Minimum severity:** critical only, warning and critical (the default), or everything.
 - **Sources:** which kinds of alert to send. Leave them all unticked to send every source.
   Today's sources are `backend_health`, `deployment`, `quota_budget`, `cost_budget`,
-  `backup_schedule` and `notifications`.
+  `backup_schedule`, `notifications`, `auth`, `ops_runner` and `approvals` (reminders
+  before an approval expires, E22).
 
 **Not sent:**
 
