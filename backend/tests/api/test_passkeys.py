@@ -293,14 +293,16 @@ class TestSignIn:
         ).one()
         await session.refresh(passkey)
         assert passkey.sign_count == 1 and passkey.last_used_at is not None
-        login = (
+        # Every row in the test transaction shares one now(), so "the latest" is not
+        # well defined: look for the passkey sign-in among them.
+        logins = (
             await session.scalars(
-                select(AuditLog)
-                .where(AuditLog.action == "USER_LOGIN", AuditLog.user_id == unprivileged_user.id)
-                .order_by(AuditLog.timestamp.desc())
+                select(AuditLog).where(
+                    AuditLog.action == "USER_LOGIN", AuditLog.user_id == unprivileged_user.id
+                )
             )
-        ).first()
-        assert login is not None and login.meta.get("mfa") == "passkey"
+        ).all()
+        assert any(row.meta.get("mfa") == "passkey" for row in logins)
 
     async def test_a_code_still_works(self, client: AsyncClient, unprivileged_user) -> None:
         secret, _ = await _with_passkey(client, unprivileged_user)

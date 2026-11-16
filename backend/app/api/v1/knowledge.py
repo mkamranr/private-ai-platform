@@ -401,7 +401,7 @@ async def delete_document(
 async def search_knowledge_base(
     payload: SearchRequest,
     service: KnowledgeServiceDep,
-    _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
     guard: ScopeGuardDep,
     base_id: uuid.UUID = Path(...),
 ) -> SearchResponse:
@@ -414,7 +414,11 @@ async def search_knowledge_base(
     await guard.knowledge_base(base_id)
     base = await service.get_base(base_id)
     results = await service.search(
-        [base], payload.query, limit=payload.limit, score_threshold=payload.score_threshold
+        [base],
+        payload.query,
+        limit=payload.limit,
+        score_threshold=payload.score_threshold,
+        user_id=actor.id,
     )
     return SearchResponse(
         query=payload.query,

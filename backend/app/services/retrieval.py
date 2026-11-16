@@ -77,7 +77,9 @@ class RetrievalService:
 
         if spec.knowledge_base_ids:
             result.passages, result.searched_bases = await self._search_knowledge(
-                spec.knowledge_base_ids, question
+                spec.knowledge_base_ids,
+                question,
+                user_id=uuid.UUID(context.user_id) if context.user_id else None,
             )
 
         if spec.memory_enabled:
@@ -87,7 +89,7 @@ class RetrievalService:
         return result
 
     async def _search_knowledge(
-        self, base_ids: tuple[str, ...], question: str
+        self, base_ids: tuple[str, ...], question: str, *, user_id: uuid.UUID | None = None
     ) -> tuple[list[SearchResult], list[str]]:
         try:
             ids = [uuid.UUID(value) for value in base_ids]
@@ -114,7 +116,13 @@ class RetrievalService:
 
         # Each base's retrieval settings apply (E5): its top-k, its score floor (else
         # MIN_SCORE) and its reranker, if one is configured.
-        trace = await self._knowledge.retrieve(permitted, question, fallback_threshold=MIN_SCORE)
+        trace = await self._knowledge.retrieve(
+            permitted,
+            question,
+            fallback_threshold=MIN_SCORE,
+            user_id=user_id,
+            purpose="agent.retrieve",
+        )
         for warning in trace.warnings:
             log.warning("agent_retrieval_degraded", detail=warning)
         return trace.results, [b.name for b in permitted]

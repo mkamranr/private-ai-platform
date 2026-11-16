@@ -129,6 +129,7 @@ from app.services.definitions import DefinitionImporter
 from app.services.deployment import DeploymentService
 from app.services.diagnostics import DiagnosticsService
 from app.services.docker_service import DockerService, build_runtime_factory
+from app.services.embedding_usage import embed_through
 from app.services.federation import FederationService
 from app.services.gateway import GatewayContext, GatewayService
 from app.services.gateway_policy import GatewayPolicy
@@ -1030,15 +1031,9 @@ WorkflowServiceDep = Annotated[WorkflowService, Depends(get_workflow_service)]
 
 
 def _embed_through(gateway: GatewayService) -> Any:
-    """Embedding callable bound to one gateway — the same route a request would take."""
-
-    async def embed(texts: list[str], model: str) -> list[list[float]]:
-        # Served name, not the alias the caller passed: upstream has never heard of it.
-        provider, served_model = await gateway.provider_for_model(model)
-        result = await provider.embeddings(texts, model=served_model)
-        return [list(vector) for vector in result.vectors]
-
-    return embed
+    """Embedding callable bound to one gateway — the same route a request would take.
+    Each call is accounted (E21)."""
+    return embed_through(gateway)
 
 
 def _rerank_through(gateway: GatewayService) -> Any:
@@ -1106,16 +1101,10 @@ def get_embedder(gateway: GatewayServiceDep) -> Any:
     So a knowledge base uses the same alias resolution and the same deployment a
     developer's API call would (§13). A second embedding path would eventually disagree
     with the first about which model is serving, and the symptom would be a knowledge base
-    whose vectors are silently incomparable with its own queries.
+    whose vectors are silently incomparable with its own queries. Each call is accounted
+    (E21).
     """
-
-    async def embed(texts: list[str], model: str) -> list[list[float]]:
-        # Served name, not the alias the caller passed: upstream has never heard of it.
-        provider, served_model = await gateway.provider_for_model(model)
-        result = await provider.embeddings(texts, model=served_model)
-        return [list(vector) for vector in result.vectors]
-
-    return embed
+    return embed_through(gateway)
 
 
 def get_knowledge_service(

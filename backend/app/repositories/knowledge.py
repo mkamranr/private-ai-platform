@@ -326,6 +326,12 @@ class ConversationMessageRepository(BaseRepository[ConversationMessage]):
 class MemoryEntryRepository(BaseRepository[MemoryEntry]):
     model = MemoryEntry
 
+    async def agent_team(self, agent_id: uuid.UUID) -> uuid.UUID | None:
+        """The team an agent belongs to; None when shared or gone (E21)."""
+        return (
+            await self.session.execute(select(Agent.team_id).where(Agent.id == agent_id))
+        ).scalar_one_or_none()
+
     async def hidden_agents(
         self, agent_ids: set[uuid.UUID | None], teams: Scope | None
     ) -> set[uuid.UUID]:
