@@ -61,6 +61,9 @@ async def embed_with(
     charge: EmbeddingCharge | None = None,
 ) -> list[list[float]]:
     """Embed ``texts`` with ``model`` (an alias or model name) and account for it."""
+    # E24: refused here, before the model is called, when budgets are enforced on the
+    # platform's own calls and this one's team or model has used its budget.
+    await gateway.check_internal_budget(model, charge.team_id if charge else None)
     started = time.perf_counter()
     # Served name, not the alias the caller passed: upstream has never heard of it.
     provider, served_model = await gateway.provider_for_model(model)

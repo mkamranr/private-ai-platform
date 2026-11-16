@@ -166,6 +166,19 @@ class GatewayPolicy:
             if quota.has_token_limits:
                 admission.charges.append(_Charge(scope, subject_of[scope], quota))
 
+    async def check(self, subjects: Sequence[tuple[str, str]]) -> None:
+        """Refuse if a token budget for any of these subjects is used up (E24).
+
+        Budgets only: no concurrency slot is taken and nothing is charged. For the
+        platform's own calls when ``enforce_platform_budgets`` is on; their tokens are
+        charged afterwards through :meth:`account`, like any call's.
+        """
+        quotas = await self._quotas.applicable(subjects)
+        subject_of = dict(subjects)
+        for scope, quota in quotas.items():
+            if quota.has_token_limits:
+                await self._check_budgets(scope, subject_of[scope], quota)
+
     async def drop_scope(self, admission: Admission, scope: str) -> None:
         """Forget one scope's charges and slots — used when a fallback model takes over,
         so the model that did not answer is neither charged nor kept busy."""

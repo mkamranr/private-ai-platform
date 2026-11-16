@@ -550,6 +550,10 @@ class GatewaySettings(BaseModel):
     #: limit and a CRITICAL one when it is used up. The gateway refuses at 100% either way;
     #: the alert is the notice before that happens.
     budget_warning_percent: int = Field(default=80, ge=1, le=99)
+    #: E24: refuse the platform's own model and embedding calls (agent runs, workflow LLM
+    #: steps, ingestion, search, memory) once a team or model token budget is used up.
+    #: Off by default: they are counted against budgets (E19, E21) but never refused.
+    enforce_platform_budgets: bool = False
 
 
 class KnowledgeSettings(BaseModel):

@@ -159,11 +159,12 @@ Tokens are counted from the run's model responses as they happen, and recorded w
 run's stream ends for any reason: completed, failed, suspended for an approval, or a
 client that hung up.
 
-**Quotas count these calls but do not refuse them.** The tokens are charged to the
-team's and the model's token budgets, so the next `/v1` call sees them, but an agent run
-or workflow step is not stopped by a budget. Stopping a workflow halfway through because
-a budget ran out is a decision we have not made for you. API key and end-user quotas do
-not apply (there is no key).
+**By default, quotas count these calls but do not refuse them.** The tokens are
+charged to the team's and the model's token budgets, so the next `/v1` call sees them,
+but an agent run or workflow step is not stopped by a budget. Stopping a workflow halfway
+through because a budget ran out is a decision we leave to you: see
+[Enforcing budgets on the platform's own calls](#enforcing-budgets-on-the-platforms-own-calls-e24).
+API key and end-user quotas do not apply (there is no key).
 
 ### Embeddings (E21)
 
@@ -184,9 +185,27 @@ with the token count the runtime reported (`completion_tokens` 0):
 
 A search over several bases embeds the query once per base (they may use different
 models), so it writes one row per base, each charged to that base's team. A failed
-embedding writes no row. Quotas count these tokens like the rows above and never refuse
-them: a document is not left half-indexed because a budget ran out. A model server that
-reports no usage records 0 tokens, as it would for a `/v1/embeddings` call.
+embedding writes no row. By default quotas count these tokens like the rows above and
+never refuse them, so a document is not left unindexed because a budget ran out. A model
+server that reports no usage records 0 tokens, as it would for a `/v1/embeddings` call.
+
+### Enforcing budgets on the platform's own calls (E24)
+
+Turn on `gateway.enforce_platform_budgets` (Settings page, *Gateway*; off by default) to
+refuse these calls once a **team** or **model** token budget (per minute, day or month)
+is used up, as a `/v1` call is refused. It is checked before each call, so the call that
+crosses a budget finishes and the next one is refused. Concurrency limits do not apply.
+
+| Call | When its budget is used up |
+|---|---|
+| Agent run started in the console or API (`agent.run`) | `POST /agents/{id}/execute` answers **429** with the budget's message and `Retry-After`; no run is created. A run already going is not stopped, nor a run resumed after an approval |
+| Agent through `/v1` (`agent:<slug>`) | refused by the gateway's own admission, as before |
+| Workflow LLM step | the step **fails** with the budget's message; the workflow's `error` edges apply as for any failed step |
+| Ingestion | the document is marked **FAILED** with the budget's message; re-ingest it once the budget resets |
+| Knowledge search, playground, RAG evaluation, workflow retrieval | refused with 429, or the step fails |
+| Agent retrieval and memory | the run continues without the retrieved context or memory, as when the embedding model is down |
+
+The setting is read on every call, so switching it on or off takes effect at once.
 
 ## Timings (E16)
 

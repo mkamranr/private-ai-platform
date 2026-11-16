@@ -69,9 +69,12 @@ class AgentRunService:
         runtime: object,
         audit: AuditService,
         usage: UsageRecorder | None = None,
+        budget: BudgetCheck | None = None,
     ) -> None:
         #: GatewayService.record_internal_usage in production (E19); None records nothing.
         self._usage = usage
+        #: GatewayService.check_internal_budget in production (E24); None checks nothing.
+        self._budget = budget
         self._runs = runs
         self._events = events
         self._executions = executions
@@ -112,6 +115,10 @@ class AgentRunService:
         )
         if problems:
             raise ConflictError(describe("agent", agent.team_id, problems))
+        # E24: refused before a run record exists, as a /v1 call is refused before it
+        # reaches the model. `agent:` calls through /v1 were admitted by the gateway.
+        if record_usage and self._budget is not None:
+            await self._budget(version.model, agent.team_id)
 
         spec = await self._registry.build_spec(agent, version)
 
@@ -328,6 +335,12 @@ class AgentRunService:
                     state=run.state,
                     iterations=run.iterations,
                 )
+
+
+class BudgetCheck(Protocol):
+    """GatewayService.check_internal_budget (E24): raises RateLimitError when refused."""
+
+    async def __call__(self, configured_model: str, team_id: uuid.UUID | None) -> None: ...
 
 
 class UsageRecorder(Protocol):

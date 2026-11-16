@@ -877,6 +877,7 @@ def get_agent_run_service(
         runtime,
         audit,
         usage=gateway.record_internal_usage,
+        budget=gateway.check_internal_budget,
     )
 
 
@@ -967,6 +968,7 @@ def build_agent_run_service(session: AsyncSession, app_state: Any) -> AgentRunSe
         runtime,
         audit,
         usage=gateway.record_internal_usage,
+        budget=gateway.check_internal_budget,
     )
 
 
@@ -1010,6 +1012,7 @@ def build_workflow_service(session: AsyncSession, app_state: Any) -> WorkflowSer
         tools=ToolRepository(session),
         tool_executors=app_state.tool_executors,
         usage=gateway.record_internal_usage,
+        budget=gateway.check_internal_budget,
     )
     return WorkflowService(
         settings,
