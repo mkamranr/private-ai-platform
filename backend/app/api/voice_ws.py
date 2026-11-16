@@ -259,7 +259,7 @@ class _VoiceTurnHandler:
                     "language": None if session.language == "auto" else session.language,
                     "response_format": "verbose_json",
                 },
-                _context(),
+                await _context(db, session),
                 filename="utterance.wav",
             )
         except (ProviderError, Exception) as exc:
@@ -390,7 +390,7 @@ class _VoiceTurnHandler:
                     "voice": session.voice or "alloy",
                     "response_format": "wav",
                 },
-                _context(),
+                await _context(db, session),
             )
         except Exception as exc:
             timings.tts_ms = watch.ms()
@@ -478,9 +478,12 @@ async def _gateway(db: AsyncSession, app_state: Any) -> Any:
         UsageRepository,
     )
     from app.services.gateway import GatewayService
+    from app.services.runtime_settings import RUNTIME
 
     return GatewayService(
-        get_settings(),
+        # Runtime overrides: `gateway.enforce_platform_budgets` decides whether a team
+        # budget refuses voice (E27).
+        await RUNTIME.effective(db, get_settings()),
         ModelRepository(db),
         ModelAliasRepository(db),
         ModelDeploymentRepository(db),
@@ -491,12 +494,17 @@ async def _gateway(db: AsyncSession, app_state: Any) -> Any:
     )
 
 
-def _context() -> Any:
+async def _context(db: AsyncSession, session: Any) -> Any:
     """Gateway context for a voice call.
 
     No API key: the caller is a signed-in person on a WebSocket, not an application
-    holding a credential. Usage is still recorded, attributed to the session's user.
+    holding a credential. Usage is attributed to the session's user and charged to the
+    team of the agent they are talking to (E27), as the agent run itself is (E19).
     """
+    from app.repositories.agents import AgentRepository
     from app.services.gateway import GatewayContext
 
-    return GatewayContext()
+    agent = await AgentRepository(db).get(session.agent_id)
+    return GatewayContext(
+        user_id=session.user_id, owner_team_id=agent.team_id if agent is not None else None
+    )

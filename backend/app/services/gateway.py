@@ -471,10 +471,18 @@ class GatewayService:
             subjects.append((QuotaScope.API_KEY, str(context.api_key.id)))
         if context.end_user and context.end_user_trusted:
             subjects.append((QuotaScope.END_USER, context.end_user))
-        if context.team_id is not None:
+        # A keyless call made for a team (voice, E27) is the platform's own: its team's
+        # budget is charged, but refuses it only when budgets are enforced on platform
+        # calls (E24). A key's team is always checked, as before.
+        team_checked = (
+            context.api_key is not None or self._settings.gateway.enforce_platform_budgets
+        )
+        if context.team_id is not None and team_checked:
             subjects.append((QuotaScope.TEAM, str(context.team_id)))
         subjects.append((QuotaScope.MODEL, model_name))
         await self._policy.admit(context.admission, subjects)
+        if context.team_id is not None and not team_checked:
+            await self._policy.account(context.admission, [(QuotaScope.TEAM, str(context.team_id))])
 
     # -- agent calls (E17) -------------------------------------------------
     async def agent_model_name(self, agent_id: uuid.UUID, version: int) -> str:

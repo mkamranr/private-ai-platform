@@ -232,7 +232,7 @@ dashboard real signals.
 - [x] Charges: ingestion (uploader, base team), knowledge search, playground, agent and workflow retrieval, RAG eval (caller or starter, each base's team), memory write and search (person, agent's team via `MemoryEntryRepository.agent_team`), dimension probe (creator).
 - [x] Counted toward team and model token budgets, never refused.
 - [x] No migration. Tests: `tests/api/test_embedding_usage.py` (charges per call site, committed rows end to end); the workflow retrieval charge in `test_workflows.py`. Doc: [gateway-policy.md](../gateway-policy.md#embeddings-e21).
-- [ ] Reranking calls are not accounted (no token counts from rerank engines). Voice speech-to-text and text-to-speech are not accounted.
+- [ ] Reranking calls are not accounted (no token counts from rerank engines). ~~Voice speech-to-text and text-to-speech are not accounted.~~ They were recorded but attributed to nobody; attributed since E27.
 
 ## E22: Approval reminders (closes the last E17 open item)
 
@@ -271,6 +271,13 @@ dashboard real signals.
 - [x] Console: the Edit dialog offers *Stop its running deployments too* (ticked) when Blocked is chosen, and reports what was stopped.
 - [x] No migration. Tests: `tests/api/test_block_stops_deployments.py`. Doc: [model-governance.md](../model-governance.md).
 - [ ] A deployment left running because its node was unreachable is not retried automatically.
+
+## E27: Voice speech calls attributed (closes the E21 voice item)
+
+- [x] The voice WebSocket's transcription and synthesis calls carry the session's user and the agent's team (`voice_ws._context`), so their rows appear under that person and team in usage, chargeback and team budgets. Before, the context was empty.
+- [x] Gateway admission: a keyless call made for a team is charged to the team budget; the team budget refuses it only with `gateway.enforce_platform_budgets` on (E24). A key's team is checked as before. The voice gateway reads runtime settings.
+- [x] No migration. Tests: `tests/api/test_voice_attribution.py`. Docs: [gateway-policy.md](../gateway-policy.md), [speech.md](../speech.md).
+- [ ] Voice rows still have no first-token timings (one buffered request each); rerank calls are not accounted.
 
 ## Phase acceptance (applies to each)
 
