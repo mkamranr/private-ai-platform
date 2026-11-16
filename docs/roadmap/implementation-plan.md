@@ -213,7 +213,7 @@ dashboard real signals.
 - [x] Agent runs: tokens counted from `LLM_RESPONSE` events and recorded when the stream ends (completed, failed, suspended, abandoned) as `agent.run` / `agent:<slug>`. Covers console, `/agents/{id}/execute`, voice and every post-approval continuation. `/v1` `agent:` calls pass `record_usage=False` (the gateway records them, E17).
 - [x] Workflow LLM steps record `workflow.llm` / `workflow:<name>` as soon as the model answers.
 - [x] No migration. Tests: `tests/api/test_internal_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#the-platforms-own-model-calls-e19).
-- [ ] Not refused by quotas; API key and end-user quotas do not apply. ~~Embeddings (ingestion, search, memory) are not accounted.~~ Closed in E21. No timings on these rows.
+- [ ] ~~Not refused by quotas~~ (opt-in refusal since E24); API key and end-user quotas do not apply. ~~Embeddings (ingestion, search, memory) are not accounted.~~ Closed in E21. No timings on these rows.
 
 ## E20: Passkeys and trusted browsers (closes the E15 open item)
 
@@ -249,6 +249,13 @@ dashboard real signals.
 - [x] Schedule: one `backup.copy` per newest backup that is not copied; alert `backup_copy_missing` when the directory is unreachable or the newest backup has waited over an hour. Backup page: retention rules and copy status.
 - [x] Migration `b3d5f7a9c1e2` (ops job kind). Tests: `test_backup_schedule.py`, `tests/unit/test_release_tooling.py::TestRunnerCopy`. Docs: [backup.md](../backup.md#off-host-copies-e23); `architecture.md` LangGraph drift fixed.
 - [ ] One copy directory, pruned with local backups; no S3 or remote protocol built in.
+
+## E24: Opt-in budget enforcement for the platform's own calls (closes the E19 open item)
+
+- [x] Runtime setting `gateway.enforce_platform_budgets` (off by default; read on every call). `GatewayPolicy.check` checks team and model token budgets without taking a slot or a charge; `GatewayService.check_internal_budget` resolves the answering model and raises `RateLimitError` (429, `Retry-After`).
+- [x] Checked before the call in `AgentRunService.start` (not for `agent:` calls through `/v1`, which the gateway admitted; not on resume), in the workflow LLM step (a refusal fails the step with the message), and in `embed_with` (every platform embedding: ingestion, search, retrieval, memory). The ingestion worker reads runtime settings per call.
+- [x] No migration. Tests: `tests/api/test_platform_quota_enforcement.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
+- [ ] A running agent is not stopped mid-run when it crosses a budget; a refused document is not retried automatically when the budget resets.
 
 ## Phase acceptance (applies to each)
 

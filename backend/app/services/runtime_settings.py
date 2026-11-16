@@ -247,6 +247,16 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next budget check",
     ),
     RuntimeSetting(
+        "gateway.enforce_platform_budgets",
+        "gateway",
+        "Enforce budgets on the platform's own calls",
+        "When on, agent runs, workflow model steps, document ingestion, knowledge search "
+        "and memory are refused once their team's or model's token budget is used up, "
+        "as /v1 calls are. When off, they are counted against budgets but never refused. "
+        "Read on every such call.",
+        "Immediately",
+    ),
+    RuntimeSetting(
         "chargeback.currency",
         "chargeback",
         "Currency",

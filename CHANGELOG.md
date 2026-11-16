@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Budgets can refuse the platform's own calls (E24)
+- **Opt in.** A new runtime setting, `gateway.enforce_platform_budgets` (Settings page, *Gateway*, off by default). When it is on, agent runs started in the console or API, workflow LLM steps, ingestion, knowledge search, memory and other platform embeddings are refused once their team's or model's token budget is used up, as `/v1` calls are. When it is off, nothing changes: these calls are counted against budgets (E19, E21) and never refused.
+- **What a refusal looks like.** Starting an agent run answers 429 with the budget's message and `Retry-After`. A workflow step fails with the message. A document being ingested is marked failed with it. Agent retrieval and memory continue without context.
+- **Upgrade.** No migration, and nothing changes until the setting is switched on. See [docs/gateway-policy.md](docs/gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
+
 ### Backup retention by age and off-host copies (E23)
 - **Keep backups for N days.** A new runtime setting, `ops.backup_keep_days` (Settings page, 0 = no age limit). With `ops.backup_keep` also set, a backup is deleted only when it is beyond the count *and* past the age. The newest complete backup is never deleted.
 - **Off-host copies.** Set `OPS__BACKUP_COPY_DIR` in the host's `.env` (an NFS or SMB share, or a USB disk) and restart the runner. Each new backup is copied there and compared file by file before it counts. A failed copy is retried once, raises an `Off-host backup copy missing` alert, and never fails the backup. Retention prunes the copies with the backups. The Backup & Restore page shows the directory and whether the newest backup is copied.

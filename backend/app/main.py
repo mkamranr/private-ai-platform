@@ -215,10 +215,13 @@ def _embedder(settings: Settings, database: Database, redis: RedisClient) -> Any
             UsageRepository,
         )
         from app.services.gateway import GatewayService
+        from app.services.runtime_settings import RUNTIME
 
         async with database.sessionmaker() as session:
             gateway = GatewayService(
-                settings,
+                # Runtime overrides, so `gateway.enforce_platform_budgets` (E24) applies
+                # to ingestion as soon as it is switched on.
+                await RUNTIME.effective(session, settings),
                 ModelRepository(session),
                 ModelAliasRepository(session),
                 ModelDeploymentRepository(session),

@@ -33,7 +33,7 @@ from typing import Any, Final
 import httpx
 
 from app.config.settings import Settings
-from app.core.errors import ValidationError
+from app.core.errors import RateLimitError, ValidationError
 from app.core.interfaces.llm import ChatMessage
 from app.core.interfaces.tools import ToolInvocation, ToolType
 from app.core.logging import get_logger
@@ -102,9 +102,12 @@ class WorkflowEngine:
         tool_executors: Mapping[ToolType, Any] | None = None,
         http_transport: httpx.AsyncBaseTransport | None = None,
         usage: Any | None = None,
+        budget: Any | None = None,
     ) -> None:
         #: GatewayService.record_internal_usage in production (E19).
         self._usage = usage
+        #: GatewayService.check_internal_budget in production (E24).
+        self._budget = budget
         self._settings = settings
         self._steps = steps
         self._approvals = approvals
@@ -301,8 +304,10 @@ class WorkflowEngine:
                 break
             except TimeoutError:
                 error = f"Timed out after {timeout:.0f}s."
-            except (NodeFailedError, ValidationError) as exc:
-                error = str(exc.message if isinstance(exc, ValidationError) else exc)
+            except (NodeFailedError, ValidationError, RateLimitError) as exc:
+                # RateLimitError: a budget enforced on platform calls (E24), e.g. for the
+                # embedding a retrieval step needs. A step's failure, not a crash.
+                error = str(exc if isinstance(exc, NodeFailedError) else exc.message)
             except Exception as exc:
                 log.exception("workflow_node_crashed", run=str(run.id), node=node_id)
                 error = f"{type(exc).__name__}: {str(exc)[:300]}"
@@ -445,6 +450,7 @@ class WorkflowEngine:
             raise NodeFailedError("Model calls are not available here.")
         rendered = wd.render(config, context)
         await self._require_usable(run, models=[str(rendered["model"])])
+        await self._check_budget(run, str(rendered["model"]))
         provider, served = await self._provider_factory(str(rendered["model"]))
         started = time.perf_counter()
         messages = []
@@ -471,6 +477,17 @@ class WorkflowEngine:
             except ValueError as exc:
                 raise NodeFailedError("The model's reply is not valid JSON.") from exc
         return Outcome(output=output)
+
+    async def _check_budget(self, run: WorkflowRun, model: str) -> None:
+        """E24: with budgets enforced on platform calls, a step whose team or model has
+        used its budget fails, saying which budget and when it resets."""
+        if self._budget is None:
+            return
+        workflow = await self._steps.session.get(Workflow, run.workflow_id)
+        try:
+            await self._budget(model, workflow.team_id if workflow else None)
+        except RateLimitError as exc:
+            raise NodeFailedError(exc.message) from exc
 
     async def _record_usage(
         self, run: WorkflowRun, model: str, completion: Any, started: float

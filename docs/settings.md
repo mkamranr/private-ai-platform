@@ -34,6 +34,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `ops.support_log_hours`, `ops.support_log_lines` | Operations | support bundle | next bundle |
 | `ops.backup_interval_hours`, `ops.backup_keep`, `ops.backup_keep_days` | Operations | backup schedule and retention by count and age (E12, E23, [backup.md](backup.md#schedule-and-retention-e12)) | next schedule check (5 min) |
 | `gateway.budget_warning_percent` | Gateway | warning share for token quota alerts (E12) | next budget check |
+| `gateway.enforce_platform_budgets` | Gateway | refuse the platform's own model and embedding calls once their team or model budget is used up (E24, [gateway-policy.md](gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24)) | immediately |
 | `chargeback.currency` | Chargeback | every cost report (E9, [chargeback.md](chargeback.md)) | next report |
 | `auth.mfa_required` | Security | who must use two-factor authentication: `off`, `admins`, `all` (E15, [security.md](security.md#two-factor-authentication-e15)) | next sign-in |
 | `auth.mfa_remember_days` | Security | days "trust this browser" skips the two-factor step, 0–365; 0 turns it off and stops existing tokens (E20, [security.md](security.md#passkeys-and-trusted-browsers-e20)) | next sign-in |
