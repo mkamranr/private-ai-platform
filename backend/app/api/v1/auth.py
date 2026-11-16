@@ -44,6 +44,7 @@ from app.schemas.auth import (
     PasskeyOptionsResponse,
     PasskeyRead,
     PasskeyRegisterRequest,
+    PasskeySignInRequest,
     PasskeyVerifyRequest,
     RecoveryCodesResponse,
     RefreshRequest,
@@ -161,6 +162,35 @@ async def mfa_passkey_verify(
         credential=payload.credential,
         user_agent=request.headers.get("user-agent"),
         remember_device=payload.remember_device,
+    )
+    return _tokens(pair)
+
+
+# -- passwordless sign-in (E30) --------------------------------------------------
+@router.post(
+    "/passkey/options",
+    response_model=PasskeyOptionsResponse,
+    summary="Sign in with a passkey: the challenge",
+)
+async def passkey_signin_options(auth: AuthServiceDep) -> PasskeyOptionsResponse:
+    """Options for ``navigator.credentials.get`` with no account named: the browser
+    offers the passkeys it holds for this site."""
+    options = await auth.passkey_signin_options()
+    return PasskeyOptionsResponse(
+        public_key=options.public_key, challenge_token=options.challenge_token
+    )
+
+
+@router.post("/passkey/verify", response_model=TokenResponse, summary="Sign in with a passkey")
+async def passkey_signin(
+    payload: PasskeySignInRequest, request: Request, auth: AuthServiceDep
+) -> TokenResponse:
+    """Sign in with a passkey alone: no password, and no code step, because the passkey
+    was unlocked on the device (user verification is required)."""
+    pair = await auth.passkey_signin(
+        challenge_token=payload.challenge_token,
+        credential=payload.credential,
+        user_agent=request.headers.get("user-agent"),
     )
     return _tokens(pair)
 

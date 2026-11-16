@@ -90,6 +90,7 @@ credential exists. Responses carry no hostnames, DSNs or stack traces.
 
 | method | path | permission | notes |
 |---|---|---|---|
+| POST | `/auth/passkey/options`, `/auth/passkey/verify` | — | E30: sign in with a passkey alone (no username, password or code). Options name no account; verify takes `{challenge_token, credential}` → token pair |
 | POST | `/auth/login` | — | `{username, password}` → token pair. Success and failure both audited. After repeated failures from the address: 401 `challenge_required`, then resend with `challenge: {token, solution}` (E29, see [security.md](security.md#sign-in-hardening-e14)) |
 | POST | `/auth/refresh` | — | `{refresh_token}` → new pair. Each refresh token works once (E14) |
 | POST | `/auth/logout` | authenticated | Revokes this access token, and `{refresh_token}` if given (E14) |
