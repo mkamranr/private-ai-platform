@@ -45,6 +45,7 @@ from typing import Any
 
 from app.core.errors import (
     AuthenticationError,
+    ChallengeRequiredError,
     PermissionDeniedError,
     RateLimitError,
     TokenError,
@@ -145,6 +146,7 @@ class AuthService:
         *,
         user_agent: str | None = None,
         device_token: str | None = None,
+        challenge: dict[str, str] | None = None,
     ) -> TokenPair | MfaChallenge:
         """Verify credentials and issue tokens, or the MFA step that leads to them.
 
@@ -154,6 +156,7 @@ class AuthService:
         """
         address = get_client_ip() or "unknown"
         await self._refuse_throttled(address, username=username, user_agent=user_agent)
+        await self._require_challenge(address, challenge, username=username, user_agent=user_agent)
 
         user = await self._users.get_by_username(username)
 
@@ -539,6 +542,39 @@ class AuthService:
             f"minute{'s' if minutes != 1 else ''}.",
             details={"retry_after_seconds": retry},
         )
+
+    async def _require_challenge(
+        self,
+        address: str,
+        proof: dict[str, str] | None,
+        *,
+        username: str,
+        user_agent: str | None,
+    ) -> None:
+        """E29: after repeated failures from this address, a solved proof of work first.
+
+        Per address, never per account, so the answer says nothing about whether the
+        username exists. Checked before the password, so an unsolved attempt costs the
+        guesser nothing but tells them nothing either. It is not a failure itself.
+        """
+        if self._guard is None:
+            return
+        bits = await self._guard.challenge_bits(address)
+        if bits is None:
+            return
+        if proof and await self._guard.challenges.accept(
+            proof.get("token", ""), proof.get("solution", ""), min_bits=bits
+        ):
+            return
+        await self._audit.record_independent(
+            AuditAction.USER_LOGIN,
+            result=AuditResult.DENIED,
+            username=username,
+            message="Sign-in check required" if not proof else "Sign-in check not solved",
+            metadata={"address": address, "bits": bits},
+            user_agent=user_agent,
+        )
+        raise ChallengeRequiredError(details=self._guard.challenges.issue(bits).as_details())
 
     async def _address_failed(self, address: str) -> None:
         if self._guard is not None:

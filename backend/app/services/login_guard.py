@@ -42,6 +42,7 @@ from app.repositories.audit import AuditRepository
 from app.repositories.operations import AlertRepository
 from app.services.alerts import AlertService
 from app.services.audit import AuditService
+from app.services.login_challenge import LoginChallenges, required_bits
 
 log = get_logger(__name__)
 
@@ -118,6 +119,19 @@ class FailureThrottle:
             )
             return 0
 
+    async def count(self, key: str) -> int:
+        """Failures counted for ``key`` in this window (0 when Valkey is down)."""
+        if self._redis is None:
+            return 0
+        try:
+            raw = await self._redis.get(self._key(key))
+        except Exception as exc:
+            log.warning(
+                "failure_throttle_unavailable", prefix=self._prefix, exc_type=type(exc).__name__
+            )
+            return 0
+        return int(raw) if raw is not None else 0
+
     async def clear(self, key: str) -> None:
         if not self.enabled:
             return
@@ -174,6 +188,16 @@ class LoginGuard(_Independent):
             prefix="auth:login-fail",
             limit=settings.login_ip_max_failures,
             window_seconds=settings.login_ip_window_seconds,
+        )
+        #: E29: the proof of work asked for after repeated failures from an address.
+        self.challenges = LoginChallenges(settings.jwt_secret_key.get_secret_value(), redis)
+
+    async def challenge_bits(self, address: str) -> int | None:
+        """The difficulty this address must solve before signing in, or None."""
+        return required_bits(
+            await self.addresses.count(address),
+            after=self.settings.login_challenge_after,
+            base_bits=self.settings.login_challenge_bits,
         )
 
     async def check_address(self, address: str) -> int | None:

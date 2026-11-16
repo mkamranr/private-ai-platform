@@ -55,11 +55,15 @@ async function api(path, options = {}) {
 
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
+    let body = null;
     try {
-      const body = await response.json();
+      body = await response.json();
       message = body?.error?.message || body?.detail || message;
     } catch { /* non-JSON error body */ }
-    throw new Error(message);
+    // The code and details travel with the message: the sign-in check (E29) needs them.
+    throw Object.assign(new Error(message), {
+      code: body?.error?.code, details: body?.error?.details, status: response.status,
+    });
   }
 
   return response.status === 204 ? null : response.json();
@@ -4577,15 +4581,22 @@ document.getElementById('login-form').onsubmit = async (event) => {
   error.classList.add('d-none');
   try {
     const username = document.getElementById('username').value;
-    const result = await api('/auth/login', {
+    // E29: after repeated failures from this address the server asks for a proof of
+    // work first; pow.js solves it and the sign-in is sent again.
+    const result = await withLoginChallenge((challenge) => api('/auth/login', {
       method: 'POST',
       body: JSON.stringify({
         username,
         password: document.getElementById('password').value,
         // E20: a browser trusted at an earlier two-factor step (mfa.js).
         device_token: trustedDeviceToken(username),
+        challenge,
       }),
+    }), () => {
+      error.textContent = 'Too many failed sign-ins from this network. Checking this browser…';
+      error.classList.remove('d-none');
     });
+    error.classList.add('d-none');
     if (result.mfa_required) {  // E15: the password was right; a code is next
       document.getElementById('password').value = '';
       startMfaStep({ ...result, username });

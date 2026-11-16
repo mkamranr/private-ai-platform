@@ -40,11 +40,15 @@ async function api(path, options = {}) {
   }
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
+    let body = null;
     try {
-      const body = await response.json();
+      body = await response.json();
       message = body?.error?.message || body?.detail || message;
     } catch { /* non-JSON error body */ }
-    throw new Error(message);
+    // Code and details travel with the message: the sign-in check (E29) needs them.
+    throw Object.assign(new Error(message), {
+      code: body?.error?.code, details: body?.error?.details, status: response.status,
+    });
   }
   return response.status === 204 ? null : response.json();
 }
@@ -307,13 +311,15 @@ document.getElementById('login-form').onsubmit = async (event) => {
       await showApp();
       return;
     }
-    const result = await api('/auth/login', {
+    // E29: a proof of work after repeated failures from this address (/js/pow.js).
+    const result = await withLoginChallenge((challenge) => api('/auth/login', {
       method: 'POST',
       body: JSON.stringify({
         username: document.getElementById('username').value,
         password: document.getElementById('password').value,
+        challenge,
       }),
-    });
+    }), () => alert('Too many failed sign-ins from this network. Checking this browser…', 'info'));
     if (result.mfa_required) {
       document.getElementById('password').value = '';
       if (result.enrolment_required) throw new Error('Your account must set up two-factor authentication before it can sign in here. Sign in to the admin console once (at the main address of this site) to set it up, then come back.');

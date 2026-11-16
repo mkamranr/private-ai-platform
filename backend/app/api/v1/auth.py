@@ -99,6 +99,7 @@ async def login(
         payload.password,
         user_agent=request.headers.get("user-agent"),
         device_token=payload.device_token,
+        challenge=payload.challenge.model_dump() if payload.challenge else None,
     )
     if isinstance(result, MfaChallenge):
         # E15: the password was right; the authenticator code is the next step.

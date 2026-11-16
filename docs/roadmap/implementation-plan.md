@@ -165,7 +165,7 @@ dashboard real signals.
 - [x] Ops runner: wrong tokens audited (`OPS_RUNNER_AUTH_FAILED`) and throttled per address (`ops.runner_max_failures` in `ops.runner_failure_window_seconds`), WARNING alert (threat model #12).
 - [x] API: `POST /auth/logout` (optional `refresh_token`), `POST /auth/logout-all`, `POST /users/{id}/unlock`, `POST /users/{id}/sessions/revoke`. Users page: locked pill, Unlock, Sign out everywhere. Alert sources `auth`, `ops_runner` for notification filters.
 - [x] Migration `d5f9b2a3e7c1` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#sign-in-hardening-e14).
-- [ ] ~~No lockout for directory accounts~~ (closed in E25), no CAPTCHA. (MFA arrived in E15.)
+- [ ] ~~No lockout for directory accounts~~ (closed in E25), ~~no CAPTCHA~~ (a proof-of-work check since E29). (MFA arrived in E15.)
 
 ## E15: Two-factor authentication
 
@@ -262,7 +262,7 @@ dashboard real signals.
 - [x] `AuthService.login`: an account owned by a configured password provider (LDAP) is refused while locked *without* the credential reaching the directory (audited `Account is locked`, same generic message, hash for timing). A password no provider accepts for it counts through `LoginGuard.account_failed`, locks at `auth.lockout_threshold` with `USER_LOCKED` and the `account_locked` alert. A directory sign-in clears an expired lock and its alert.
 - [x] Not counted: directory users without a row (address throttle only), OIDC accounts, directory outages (the provider raises).
 - [x] No migration, no new setting. Tests: `tests/api/test_directory_lockout.py`. Doc: [security.md](../security.md#sign-in-hardening-e14).
-- [ ] The platform sees only guesses made through it; the directory's own policy is unchanged. No CAPTCHA.
+- [ ] The platform sees only guesses made through it; the directory's own policy is unchanged.
 
 ## E26: Blocking a model stops its deployments (closes the E4 open item)
 
@@ -284,6 +284,14 @@ dashboard real signals.
 - [x] `DeploymentWorker.stop_blocked`, every 12 passes (about a minute): `DeploymentService.stop_blocked` stops every deployment of a blocked model that is not stopped or failed (`ModelDeploymentRepository.list_live_of_blocked`), including one still being created. Audited `MODEL_STOPPED` as `deployment-worker`, message `Model <name> is blocked`.
 - [x] Alert `blocked_model_running:<deployment>` (WARNING, source `deployment`) while one cannot be stopped; cleared when it is stopped or no longer live. E26's approval change now also stops deployments still being created.
 - [x] No migration. Tests: `tests/api/test_blocked_sweep.py`. Doc: [model-governance.md](../model-governance.md).
+
+## E29: Sign-in check after repeated failures (closes the E14 CAPTCHA item)
+
+- [x] `app/services/login_challenge.py`: stateless HMAC-signed challenge (`nonce.bits.expires.sig`, key derived from the JWT secret, 5 min), SHA-256 leading-zero-bits proof, spent once in Valkey (fails open). Difficulty `auth.login_challenge_bits` (default 20) plus one bit per 5 failures beyond `auth.login_challenge_after` (default 10, 0 = off), capped at 24.
+- [x] `/auth/login` checks it per address before the password: 401 `challenge_required` with `details.challenge`, audited `USER_LOGIN` DENIED. `LoginRequest.challenge` optional.
+- [x] `frontend/admin/js/pow.js` (pure-JS SHA-256, works over plain HTTP), loaded by the console, developer portal and voice assistant; `withLoginChallenge` solves and resends.
+- [x] No migration. Tests: `tests/api/test_login_challenge.py`. Doc: [security.md](../security.md#sign-in-hardening-e14).
+- [ ] Proof of work, not a person test; a guesser spread over many addresses meets only the lockout. The MFA step is not challenged (its attempts already count toward lockout).
 
 ## Phase acceptance (applies to each)
 

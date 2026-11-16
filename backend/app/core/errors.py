@@ -96,6 +96,14 @@ class ConflictError(AppError):
     message = "The request conflicts with the current state of the resource."
 
 
+class ChallengeRequiredError(AppError):
+    """E29: solve the proof of work in ``details.challenge``, then sign in again."""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "challenge_required"
+    message = "Too many failed sign-ins from this address. Complete the check and try again."
+
+
 class RateLimitError(AppError):
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
     code = "rate_limited"
