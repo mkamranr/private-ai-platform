@@ -16,6 +16,8 @@ FAILED and the queue continues; it must not roll back the document indexed befor
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
+import time
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -42,6 +44,9 @@ IDLE_POLL_SECONDS = 3.0
 #: After a failed pass, back off. A Qdrant outage should not produce a tight retry loop
 #: filling the log faster than anyone can read it.
 ERROR_BACKOFF_SECONDS = 15.0
+#: E32: how often to look for documents a budget refused whose budget has reset. Budgets
+#: reset at most once a minute, so more often would only add queries.
+REQUEUE_EVERY_SECONDS = 30.0
 
 
 class IngestionWorker:
@@ -62,9 +67,13 @@ class IngestionWorker:
         # None when no OCR model is deployed (M28). A scanned page then lands in NO_TEXT
         # with a reason rather than the queue failing.
         self._ocr = ocr
+        self._next_requeue = 0.0
 
     async def tick(self) -> bool:
         """Ingest at most one document. Returns whether there was work."""
+        if time.monotonic() >= self._next_requeue:
+            self._next_requeue = time.monotonic() + REQUEUE_EVERY_SECONDS
+            await self.requeue_refused()
         async with self._session_factory() as session:
             documents = DocumentRepository(session)
             document = await documents.claim_next_pending()
@@ -119,6 +128,23 @@ class IngestionWorker:
         except asyncio.CancelledError:
             log.info("ingestion_worker_stopped")
             raise
+
+    async def requeue_refused(self) -> list[object]:
+        """E32: put documents a budget refused back in the queue once it has reset.
+
+        A budget still used up refuses them again, with a new time: one embedding check
+        per document per reset, never a loop.
+        """
+        try:
+            async with self._session_factory() as session:
+                ids = await DocumentRepository(session).requeue_refused(dt.datetime.now(dt.UTC))
+                await session.commit()
+        except Exception:
+            log.exception("requeue_refused_documents_failed")
+            return []
+        for document_id in ids:
+            log.info("document_requeued_after_budget_reset", document=str(document_id))
+        return list(ids)
 
     # -- internals ---------------------------------------------------------
     def _service(self, session: AsyncSession) -> KnowledgeService:

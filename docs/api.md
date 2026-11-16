@@ -673,7 +673,7 @@ Under `/api/v1`, authenticated with the platform JWT. See
 | PATCH | `/knowledge-bases/{id}` | `knowledge.manage`. `display_name`, `description`, `enabled`, `reranker_model` (empty string removes it), `retrieval_top_k`, `rerank_candidates`, `min_score`, `clear_min_score` |
 | POST | `/documents/{id}/versions` | `document.upload`. Multipart `file`; **202**; the current version answers until the new one is indexed |
 | GET | `/documents/{id}/versions` | `knowledge.view`. Newest first |
-| POST | `/documents/{id}/reingest` | `document.upload`. **202**; terminal, current documents only |
+| POST | `/documents/{id}/reingest` | `document.upload`. **202**; terminal, current documents only. Clears `retry_at` (E32: when a budget-refused document will be retried by itself) |
 | POST | `/retrieval/playground` | `knowledge.view`. `knowledge_base_ids`, `query`, `top_k`, `candidates`, `score_threshold`, `reranker` (`default`/`none`/`model`), `reranker_model`, `compare` |
 | GET / POST | `/knowledge-bases/{id}/eval-sets` | `knowledge.view` / `knowledge.manage` |
 | GET / PATCH / DELETE | `/eval-sets/{id}` | `knowledge.view` / `knowledge.manage` / `knowledge.manage` |

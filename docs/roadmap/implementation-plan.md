@@ -255,7 +255,7 @@ dashboard real signals.
 - [x] Runtime setting `gateway.enforce_platform_budgets` (off by default; read on every call). `GatewayPolicy.check` checks team and model token budgets without taking a slot or a charge; `GatewayService.check_internal_budget` resolves the answering model and raises `RateLimitError` (429, `Retry-After`).
 - [x] Checked before the call in `AgentRunService.start` (not for `agent:` calls through `/v1`, which the gateway admitted; not on resume), in the workflow LLM step (a refusal fails the step with the message), and in `embed_with` (every platform embedding: ingestion, search, retrieval, memory). The ingestion worker reads runtime settings per call.
 - [x] No migration. Tests: `tests/api/test_platform_quota_enforcement.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
-- [ ] A running agent is not stopped mid-run when it crosses a budget; a refused document is not retried automatically when the budget resets.
+- [ ] A running agent is not stopped mid-run when it crosses a budget; ~~a refused document is not retried automatically when the budget resets~~ (closed in E32).
 
 ## E25: Lockout for directory accounts (closes the E14 open item)
 
@@ -308,6 +308,14 @@ dashboard real signals.
 - [x] Inventory `backup_copy` gains `kind` and `error`; schedule status gains `copy_kind`, `copy_error`; the alert names the S3 target and reason. Console shows the target kind.
 - [x] No migration, no new dependency. Tests: `tests/unit/test_release_tooling.py::TestRunnerS3Copy` (in-process fake S3 that rejects mismatched bodies), `test_backup_schedule.py`. Doc: [backup.md](../backup.md#copies-to-s3-compatible-storage-e31).
 - [ ] One target at a time. No server-side encryption or object-lock options; no SFTP/rsync (mount as a directory).
+
+## E32: Documents a budget refused are retried when it resets (closes the E24 ingestion item)
+
+- [x] Migration `c4e6a8b0d2f3`: `documents.retry_at` (partial index). `KnowledgeService.ingest` catches `RateLimitError` from embedding: FAILED with the message and `retry_at` = now + `retry_after_seconds` + 60 s. Other failures are unchanged.
+- [x] `DocumentRepository.requeue_refused(now)`: one `UPDATE … RETURNING` back to UPLOADED (two workers cannot both take a document), skipping superseded versions. `IngestionWorker` runs it every 30 s (`REQUEUE_EVERY_SECONDS`); a failure is logged and ingestion goes on.
+- [x] Manual re-ingest clears `retry_at`; `DocumentRead.retry_at`; the console shows when it retries.
+- [x] Tests: `tests/api/test_budget_reingest.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
+- [ ] Only embedding refusals (the only platform call ingestion makes). Retries are logged, not audited. No cap: a budget that never resets (removed quota aside) keeps a document waiting, one check per reset.
 
 ## Phase acceptance (applies to each)
 

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
 from app.config.settings import Settings
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, RateLimitError, ValidationError
 from app.core.interfaces.media import OcrEngine
 from app.core.interfaces.vector import CollectionSpec, Distance, VectorRecord, VectorStore
 from app.core.logging import get_logger
@@ -56,6 +56,9 @@ from app.services.document_parsers import (
 from app.services.embedding_usage import EmbeddingCharge
 
 log = get_logger(__name__)
+#: E32: how long after a budget resets to retry a document it refused, so the retry does
+#: not race the reset itself.
+RETRY_SLACK_SECONDS = 60
 
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 
@@ -502,6 +505,7 @@ class KnowledgeService:
         document.status = DocumentStatus.UPLOADED
         document.error = None
         document.status_detail = None
+        document.retry_at = None
         document.chunk_count = 0
         document.indexed_at = None
         await self._documents.flush()
@@ -676,6 +680,20 @@ class KnowledgeService:
 
         try:
             await self._embed_and_index(base, document, rows)
+        except RateLimitError as exc:
+            # E32: a token budget refused it (E24). Not broken: the ingestion worker
+            # queues it again once the budget resets, a minute after Retry-After.
+            seconds = int(exc.details.get("retry_after_seconds") or 60)
+            retry_at = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=seconds + RETRY_SLACK_SECONDS)
+            log.info("document_embedding_refused", document=str(document.id), retry_at=retry_at)
+            outcome = await self._fail(
+                document,
+                f"Embedding refused: {exc.message} It is retried automatically at "
+                f"{retry_at:%Y-%m-%d %H:%M} UTC, or re-ingest it then.",
+            )
+            document.retry_at = retry_at
+            await self._documents.flush()
+            return outcome
         except Exception as exc:
             log.exception("document_embedding_failed", document=str(document.id))
             return await self._fail(document, f"Embedding failed: {exc}")

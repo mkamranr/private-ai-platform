@@ -33,6 +33,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID  # noqa: N811
@@ -179,6 +180,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_documents_kb_status", "knowledge_base_id", "status"),
         Index("ix_documents_lineage", "knowledge_base_id", "lineage_id"),
+        Index("ix_documents_retry_at", "retry_at", postgresql_where=text("retry_at IS NOT NULL")),
         UniqueConstraint("lineage_id", "version", name="lineage_version"),
         CheckConstraint("version >= 1", name="version_positive"),
         CheckConstraint(
@@ -203,6 +205,9 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(16), default=DocumentStatus.UPLOADED, nullable=False)
     status_detail: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
+    #: E32: a FAILED document whose embedding a token budget refused is queued again by
+    #: the ingestion worker once this passes (when the budget resets). None otherwise.
+    retry_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
     #: Characters of text extracted. Zero with status NO_TEXT is the scanned-image case.
     characters: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
