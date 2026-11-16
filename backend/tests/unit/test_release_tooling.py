@@ -8,10 +8,15 @@ dependency being exercised.
 
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
+import http.server
 import importlib.util
 import json
 import shutil
 import sys
+import threading
+import urllib.parse
 from pathlib import Path
 from types import ModuleType
 
@@ -386,6 +391,7 @@ class TestRunnerCopy:
         site.copy_dir.rmdir()
         assert site.copy_report() == {
             "configured": True,
+            "kind": "directory",
             "path": str(site.copy_dir),
             "reachable": False,
         }
@@ -422,3 +428,242 @@ class TestRunnerCopy:
         bare = runner.Inventory(tmp_path, tmp_path / "updates", {})
         assert bare.copy_report() == {"configured": False}
         assert bare.copied("20261101T000000Z") is None
+
+
+class FakeS3(threading.Thread):
+    """Just enough S3 for ``s3_copy`` (E31): path-style, one bucket, in memory.
+
+    Like S3, it refuses a body whose SHA-256 is not the signed ``x-amz-content-sha256``,
+    and a request signed with any access key but the expected one.
+    """
+
+    BUCKET = "backups"
+    ACCESS = "AKTEST"
+    NS = "http://s3.amazonaws.com/doc/2006-03-01/"
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True)
+        self.objects: dict[str, bytes] = {}
+        self.uploads: dict[str, dict[int, bytes]] = {}
+        self.requests: list[tuple[str, str]] = []
+        self.corrupt_next_put = False
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def reply(self, status, body=b"", headers=None):
+                self.send_response(status)
+                for k, v in (headers or {}).items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+
+            def route(self):
+                url = urllib.parse.urlsplit(self.path)
+                query = dict(urllib.parse.parse_qsl(url.query, keep_blank_values=True))
+                bucket, _, key = urllib.parse.unquote(url.path).lstrip("/").partition("/")
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                fake.requests.append((self.command, key))
+                if f"Credential={fake.ACCESS}/" not in (self.headers.get("Authorization") or ""):
+                    return self.reply(403, b"<Error><Code>InvalidAccessKeyId</Code></Error>")
+                if bucket != fake.BUCKET:
+                    return self.reply(404, b"<Error><Code>NoSuchBucket</Code></Error>")
+                if fake.corrupt_next_put and self.command == "PUT" and body:
+                    fake.corrupt_next_put = False
+                    body = body[:-1] + bytes([body[-1] ^ 1])
+                if hashlib.sha256(body).hexdigest() != self.headers.get("x-amz-content-sha256"):
+                    return self.reply(400, b"<Error><Code>XAmzContentSHA256Mismatch</Code></Error>")
+                return fake.handle(self, key, query, body)
+
+            do_HEAD = do_GET = do_PUT = do_POST = do_DELETE = route  # noqa: N815
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.endpoint = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def run(self) -> None:
+        self.server.serve_forever()
+
+    def handle(self, h, key, query, body):
+        ns = self.NS
+        if not key:
+            if h.command == "HEAD":
+                return h.reply(200)
+            keys = sorted(k for k in self.objects if k.startswith(query.get("prefix", "")))
+            start = int(query.get("continuation-token") or 0)  # two keys a page
+            page, more = keys[start : start + 2], start + 2 < len(keys)
+            xml = f'<ListBucketResult xmlns="{ns}">'
+            xml += "".join(f"<Contents><Key>{k}</Key></Contents>" for k in page)
+            xml += f"<IsTruncated>{'true' if more else 'false'}</IsTruncated>"
+            if more:
+                xml += f"<NextContinuationToken>{start + 2}</NextContinuationToken>"
+            return h.reply(200, (xml + "</ListBucketResult>").encode())
+        if h.command == "POST" and "uploads" in query:
+            upload_id = f"u{len(self.uploads)}"
+            self.uploads[upload_id] = {}
+            xml = f'<InitiateMultipartUploadResult xmlns="{ns}"><UploadId>{upload_id}</UploadId>'
+            return h.reply(200, (xml + "</InitiateMultipartUploadResult>").encode())
+        if h.command == "PUT" and "uploadId" in query:
+            self.uploads[query["uploadId"]][int(query["partNumber"])] = body
+            return h.reply(200, headers={"ETag": f'"{hashlib.sha256(body).hexdigest()[:32]}"'})
+        if h.command == "POST" and "uploadId" in query:
+            parts = self.uploads.pop(query["uploadId"])
+            self.objects[key] = b"".join(parts[n] for n in sorted(parts))
+            return h.reply(200, b"<CompleteMultipartUploadResult/>")
+        if h.command == "PUT":
+            self.objects[key] = body
+            return h.reply(200)
+        if h.command == "HEAD":
+            return h.reply(200 if key in self.objects else 404)
+        if h.command == "DELETE":
+            self.objects.pop(key, None)
+            return h.reply(204)
+        return h.reply(405)
+
+
+class TestRunnerS3Copy:
+    """E31: off-host copies to S3-compatible storage, through the stdlib client."""
+
+    NAMES = TestRunnerCopy.NAMES
+    SECRET = "s3cr3t-never-shown"
+
+    @pytest.fixture
+    def runner(self):
+        return load("ops_runner")
+
+    @pytest.fixture
+    def s3(self):
+        fake = FakeS3()
+        fake.start()
+        yield fake
+        fake.server.shutdown()
+        fake.server.server_close()
+
+    def _env(self, s3, **extra):
+        return {
+            "OPS__BACKUP_COPY_S3_ENDPOINT": s3.endpoint,
+            "OPS__BACKUP_COPY_S3_BUCKET": FakeS3.BUCKET,
+            "OPS__BACKUP_COPY_S3_ACCESS_KEY": FakeS3.ACCESS,
+            "OPS__BACKUP_COPY_S3_SECRET_KEY": self.SECRET,
+            "OPS__BACKUP_COPY_S3_PREFIX": "site-a",
+            **extra,
+        }
+
+    def _site(self, runner, tmp_path, env):
+        root = tmp_path / "site"
+        for name in self.NAMES:
+            backup = root / "backups" / name
+            (backup / "nested").mkdir(parents=True)
+            (backup / "postgres.dump").write_bytes(b"dump-" + name.encode())
+            (backup / "nested" / "minio.tar").write_bytes(b"tar" * 10)
+            (backup / "manifest.json").write_text("{}", encoding="utf-8")
+        return runner.Inventory(root, root / "updates", env)
+
+    def _job(self, runner, site, kind, params):
+        reporter = TestRunnerUpgrade.StubReporter()
+        return runner.execute({"kind": kind, "params": params}, site, reporter, "python3"), reporter
+
+    def test_signature_matches_the_aws_worked_example(self):
+        s3_copy = load("s3_copy")
+        headers = s3_copy.sign(
+            method="GET",
+            host="examplebucket.s3.amazonaws.com",
+            path="/test.txt",
+            query={},
+            headers={"Range": "bytes=0-9"},
+            payload_sha256=s3_copy.EMPTY_SHA256,
+            access_key="AKIAIOSFODNN7EXAMPLE",
+            secret_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            region="us-east-1",
+            now=dt.datetime(2013, 5, 24, tzinfo=dt.UTC),
+        )
+        assert headers["authorization"].endswith(
+            "Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+        )
+
+    def test_a_copy_uploads_every_file_then_the_marker(self, runner, s3, tmp_path):
+        site = self._site(runner, tmp_path, self._env(s3))
+        report = site.copy_report()
+        assert report["kind"] == "s3" and report["reachable"] is True
+        assert self.SECRET not in json.dumps(report) and "free_bytes" not in report
+        assert {b["copied"] for b in site.backups()} == {False}
+
+        outcome, reporter = self._job(runner, site, "backup.copy", {"backup": self.NAMES[1]})
+        assert outcome == ("SUCCEEDED", None)
+        prefix = f"site-a/{self.NAMES[1]}/"
+        assert s3.objects[prefix + "nested/minio.tar"] == b"tar" * 10
+        puts = [k for m, k in s3.requests if m == "PUT"]
+        assert puts[-1] == prefix + ".complete"  # last, so a partial copy never counts
+        marker = json.loads(s3.objects[prefix + ".complete"])
+        assert set(marker["files"]) == {"manifest.json", "postgres.dump", "nested/minio.tar"}
+        assert [b["copied"] for b in site.backups()] == [True, False]
+        assert not any(self.SECRET in line for line in reporter.lines)
+
+    def test_a_file_that_arrives_different_is_refused_and_nothing_counts(
+        self, runner, s3, tmp_path
+    ):
+        site = self._site(runner, tmp_path, self._env(s3))
+        s3.corrupt_next_put = True
+        (status, detail), _ = self._job(runner, site, "backup.copy", {"backup": self.NAMES[0]})
+        assert status == "FAILED" and "XAmzContentSHA256Mismatch" in detail
+        assert not any(k.endswith(".complete") for k in s3.objects)
+        assert site.copied(self.NAMES[0]) is False
+
+    def test_large_files_go_up_in_parts(self, runner, s3, tmp_path, monkeypatch):
+        monkeypatch.setattr(load("s3_copy"), "PART_SIZE", 8)
+        site = self._site(runner, tmp_path, self._env(s3))
+        outcome, _ = self._job(runner, site, "backup.copy", {"backup": self.NAMES[0]})
+        assert outcome == ("SUCCEEDED", None)
+        assert s3.objects[f"site-a/{self.NAMES[0]}/nested/minio.tar"] == b"tar" * 10
+        assert any(m == "POST" for m, _ in s3.requests)  # a multipart upload happened
+
+    def test_wrong_keys_are_unreachable_and_fail_the_copy(self, runner, s3, tmp_path):
+        site = self._site(runner, tmp_path, self._env(s3, OPS__BACKUP_COPY_S3_ACCESS_KEY="nobody"))
+        assert site.copy_report()["reachable"] is False
+        (status, detail), _ = self._job(runner, site, "backup.copy", {"backup": self.NAMES[0]})
+        assert status == "FAILED" and "403" in detail
+
+    def test_a_hanging_endpoint_does_not_stall_the_heartbeat(self, runner, tmp_path, monkeypatch):
+        import socket
+        import time
+
+        silent = socket.socket()  # accepts connections, never answers
+        silent.bind(("127.0.0.1", 0))
+        silent.listen()
+        try:
+            monkeypatch.setattr(load("s3_copy"), "PROBE_TIMEOUT", 0.3)
+            env = {
+                "OPS__BACKUP_COPY_S3_ENDPOINT": f"http://127.0.0.1:{silent.getsockname()[1]}",
+                "OPS__BACKUP_COPY_S3_BUCKET": FakeS3.BUCKET,
+                "OPS__BACKUP_COPY_S3_ACCESS_KEY": FakeS3.ACCESS,
+                "OPS__BACKUP_COPY_S3_SECRET_KEY": self.SECRET,
+            }
+            site = self._site(runner, tmp_path, env)
+            started = time.monotonic()
+            assert site.copy_report()["reachable"] is False
+            assert {b["copied"] for b in site.backups()} == {False}
+            assert time.monotonic() - started < 5
+        finally:
+            silent.close()
+
+    def test_missing_settings_are_reported_not_guessed(self, runner, s3, tmp_path):
+        env = self._env(s3, OPS__BACKUP_COPY_DIR=str(tmp_path))
+        del env["OPS__BACKUP_COPY_S3_SECRET_KEY"]
+        site = self._site(runner, tmp_path, env)
+        report = site.copy_report()
+        assert report["configured"] is True and report["reachable"] is False
+        assert "OPS__BACKUP_COPY_S3_SECRET_KEY" in report["error"]
+        assert site.copy_dir is None  # never silently falls back to the directory
+
+    def test_retention_deletes_copies_but_never_the_newest(self, runner, s3, tmp_path):
+        site = self._site(runner, tmp_path, self._env(s3))
+        for name in self.NAMES:
+            self._job(runner, site, "backup.copy", {"backup": name})
+        outcome, reporter = self._job(runner, site, "backup.prune", {"delete": list(self.NAMES)})
+        assert outcome == ("SUCCEEDED", None)
+        assert reporter.result["deleted_copies"] == [self.NAMES[0]]
+        assert not any(k.startswith(f"site-a/{self.NAMES[0]}/") for k in s3.objects)
+        assert f"site-a/{self.NAMES[1]}/.complete" in s3.objects

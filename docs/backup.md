@@ -129,8 +129,46 @@ OPS__BACKUP_COPY_DIR=/mnt/backup-share/ai-platform
   cannot change it: the console must not choose where the host writes.
 - Restoring from a copy: copy the folder back into `backups/` and restore it as usual.
 
+## Copies to S3-compatible storage (E31)
+
+Instead of a directory, the runner can upload each backup to an S3-compatible object
+store on other hardware: a second MinIO, Ceph RGW, Garage, or AWS S3 where policy allows.
+Set these in the host's `.env` and restart the runner:
+
+```bash
+OPS__BACKUP_COPY_S3_ENDPOINT=https://backup-store.example:9000
+OPS__BACKUP_COPY_S3_BUCKET=ai-platform-backups
+OPS__BACKUP_COPY_S3_ACCESS_KEY=...
+OPS__BACKUP_COPY_S3_SECRET_KEY=...
+# optional
+OPS__BACKUP_COPY_S3_PREFIX=ai-platform-backups   # objects go under PREFIX/NAME/
+OPS__BACKUP_COPY_S3_REGION=us-east-1
+OPS__BACKUP_COPY_S3_CA_FILE=/etc/ssl/certs/backup-store-ca.pem   # a private CA
+```
+
+- **Same behaviour as a directory**: copied after each backup, a failed upload does not
+  fail the backup and is retried once, the same alert, and retention deletes the same
+  names. Only one target is used: with the endpoint set, `OPS__BACKUP_COPY_DIR` is
+  ignored (the inventory says so). A missing bucket or key is reported as an error, not
+  guessed around.
+- **Integrity.** Each request is signed (AWS Signature V4) over its body's SHA-256, and S3
+  refuses a body that does not match, so every file, or every 64 MB part of a large one,
+  is checked by the store on arrival. A `PREFIX/NAME/.complete` object listing every
+  file's SHA-256 is uploaded last; only a backup with that marker counts as copied, so an
+  interrupted upload never does. Retention deletes the marker first.
+- **Credentials stay on the host.** The console sees `s3://bucket/prefix at endpoint` and
+  whether the bucket answers, never the keys, and no free space (S3 does not report it).
+  Give the key write, list and delete on that bucket or prefix only. Prefer `https`; with
+  `http` the keys are not sent, but the backups are, unencrypted in transit (they are
+  already encrypted where `SECURITY__ENCRYPTION_KEY` covers them, not entirely).
+- No extra software: `scripts/s3_copy.py` is standard-library Python, like the runner.
+- Restoring from S3: download `PREFIX/NAME/` (for example
+  `mc cp --recursive store/bucket/PREFIX/NAME backups/`), check the files against
+  `.complete` if you like, delete `.complete`, and restore as usual.
+
 ## Not built yet
 
+* No other remote protocols (SFTP, rsync): mount them as a directory instead.
 * Scheduling runs through the ops runner. Without the runner, use cron with `make backup`.
 * No incremental backups; every run is full.
 * Restore is all-or-nothing: there is no way to recover a single tenant or knowledge base.

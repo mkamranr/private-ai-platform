@@ -273,6 +273,7 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 | `OPS__BACKUP_KEEP` | 0 (keep all) | retention: keep the newest N complete backups; also a runtime setting |
 | `OPS__BACKUP_KEEP_DAYS` | 0 (no age limit) | retention: keep complete backups N days (E23); also a runtime setting |
 | `OPS__BACKUP_COPY_DIR` | unset | **read by the runner on the host**: copy each backup to this directory (E23). See [backup.md](backup.md#off-host-copies-e23) |
+| `OPS__BACKUP_COPY_S3_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY`, `_SECRET_KEY`, `_PREFIX`, `_REGION`, `_CA_FILE` | unset | **read by the runner on the host**: upload each backup to S3-compatible storage instead (E31). See [backup.md](backup.md#copies-to-s3-compatible-storage-e31) |
 
 ## Not built yet
 
