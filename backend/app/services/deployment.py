@@ -71,6 +71,9 @@ ComputeBackendFactory = Callable[[Node], ComputeBackend]
 
 log = get_logger(__name__)
 
+#: Audit username for what the deployment worker does on its own (E28).
+WORKER_ACTOR = "deployment-worker"
+
 # vLLM's own default. Overridden per model from the manifest.
 DEFAULT_GPU_MEMORY_UTILIZATION = 0.90
 
@@ -929,8 +932,9 @@ class DeploymentService:
 
     # -- lifecycle control -------------------------------------------------
     async def stop_deployment(
-        self, deployment_id: uuid.UUID, *, actor: User, reason: str | None = None
+        self, deployment_id: uuid.UUID, *, actor: User | None, reason: str | None = None
     ) -> ModelDeployment:
+        """Stop a deployment. ``actor`` None is the deployment worker (E28)."""
         deployment = await self.get_deployment(deployment_id)
         if deployment.state in {DeploymentState.STOPPED, DeploymentState.FAILED}:
             return deployment
@@ -959,8 +963,8 @@ class DeploymentService:
 
         await self._audit.record(
             AuditAction.MODEL_STOPPED,
-            user_id=actor.id,
-            username=actor.username,
+            user_id=actor.id if actor else None,
+            username=actor.username if actor else WORKER_ACTOR,
             resource_type="deployment",
             resource_id=str(deployment.id),
             message=reason,
@@ -976,14 +980,43 @@ class DeploymentService:
         is put back as it was and reported, rather than failing the others or the
         approval change that asked for it.
         """
+        live = [
+            d
+            for d in await self.list_deployments(model_id=model_id)
+            if str(d.state) not in {DeploymentState.STOPPED, DeploymentState.FAILED}
+        ]
+        return await self._stop_each(live, actor=actor, reason=reason)
+
+    async def stop_blocked(self) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+        """Stop what is still live of every blocked model (E28, the deployment worker).
+
+        Retries the deployments blocking could not stop because their node was
+        unreachable, and catches one that was still being created when its model was
+        blocked. Returns ``(stopped, failed)``.
+        """
+        live = list(await self._deployments.list_live_of_blocked())
+        return await self._stop_each(
+            live,
+            actor=None,
+            reason_for=lambda d: f"Model {d.model.name} is blocked",
+        )
+
+    async def _stop_each(
+        self,
+        deployments: list[ModelDeployment],
+        *,
+        actor: User | None,
+        reason: str | None = None,
+        reason_for: Callable[[ModelDeployment], str] | None = None,
+    ) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+        """Stop each; one that cannot be stopped is put back as it was and reported."""
         stopped: list[uuid.UUID] = []
         failed: list[uuid.UUID] = []
-        for deployment in await self.list_deployments(model_id=model_id):
-            if not deployment.is_active:
-                continue
+        for deployment in deployments:
+            why = reason_for(deployment) if reason_for else reason
             before = deployment.state
             try:
-                await self.stop_deployment(deployment.id, actor=actor, reason=reason)
+                await self.stop_deployment(deployment.id, actor=actor, reason=why)
             except Exception as exc:
                 deployment.state = before
                 log.warning(

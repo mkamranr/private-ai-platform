@@ -270,7 +270,7 @@ dashboard real signals.
 - [x] One that cannot be stopped is restored to its state, listed in `stop_failed`, and does not fail the block or the others. Response `ModelApprovalResult` adds `stopped_deployments` and `stop_failed` to `ModelRead`.
 - [x] Console: the Edit dialog offers *Stop its running deployments too* (ticked) when Blocked is chosen, and reports what was stopped.
 - [x] No migration. Tests: `tests/api/test_block_stops_deployments.py`. Doc: [model-governance.md](../model-governance.md).
-- [ ] A deployment left running because its node was unreachable is not retried automatically.
+- [ ] ~~A deployment left running because its node was unreachable is not retried automatically.~~ Closed in E28.
 
 ## E27: Voice speech calls attributed (closes the E21 voice item)
 
@@ -278,6 +278,12 @@ dashboard real signals.
 - [x] Gateway admission: a keyless call made for a team is charged to the team budget; the team budget refuses it only with `gateway.enforce_platform_budgets` on (E24). A key's team is checked as before. The voice gateway reads runtime settings.
 - [x] No migration. Tests: `tests/api/test_voice_attribution.py`. Docs: [gateway-policy.md](../gateway-policy.md), [speech.md](../speech.md).
 - [ ] Voice rows still have no first-token timings (one buffered request each); rerank calls are not accounted.
+
+## E28: The deployment worker stops what blocking could not (closes the E26 open item)
+
+- [x] `DeploymentWorker.stop_blocked`, every 12 passes (about a minute): `DeploymentService.stop_blocked` stops every deployment of a blocked model that is not stopped or failed (`ModelDeploymentRepository.list_live_of_blocked`), including one still being created. Audited `MODEL_STOPPED` as `deployment-worker`, message `Model <name> is blocked`.
+- [x] Alert `blocked_model_running:<deployment>` (WARNING, source `deployment`) while one cannot be stopped; cleared when it is stopped or no longer live. E26's approval change now also stops deployments still being created.
+- [x] No migration. Tests: `tests/api/test_blocked_sweep.py`. Doc: [model-governance.md](../model-governance.md).
 
 ## Phase acceptance (applies to each)
 

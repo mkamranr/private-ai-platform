@@ -18,6 +18,7 @@ from app.models.models_registry import (
     DeploymentState,
     Model,
     ModelAlias,
+    ModelApprovalStatus,
     ModelDeployment,
     ModelFile,
     UsageRecord,
@@ -124,6 +125,23 @@ class ModelDeploymentRepository(BaseRepository[ModelDeployment]):
         if states:
             stmt = stmt.where(ModelDeployment.state.in_(states))
         stmt = stmt.order_by(ModelDeployment.created_at.desc())
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def list_live_of_blocked(self) -> Sequence[ModelDeployment]:
+        """Deployments of blocked models that are not stopped or failed (E28).
+
+        Blocking stops them (E26); these are the ones that could not be stopped then,
+        or were still being created when the model was blocked.
+        """
+        stmt = (
+            select(ModelDeployment)
+            .join(Model, Model.id == ModelDeployment.model_id)
+            .where(
+                Model.approval_status == ModelApprovalStatus.BLOCKED,
+                ModelDeployment.state.notin_([DeploymentState.STOPPED, DeploymentState.FAILED]),
+            )
+            .options(selectinload(ModelDeployment.model))
+        )
         return (await self.session.execute(stmt)).scalars().all()
 
     async def list_pending(self) -> Sequence[ModelDeployment]:
