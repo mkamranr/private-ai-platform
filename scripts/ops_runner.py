@@ -11,7 +11,9 @@ tools nor the Docker socket (§M04). The admin console therefore never runs thes
 It records an audited request, and this process, running on the host as an operator would,
 claims it and runs **the same scripts an operator runs by hand**:
 
-    backup.create   scripts/backup.py create
+    backup.create   scripts/backup.py create  [+ off-host copy, E23]
+    backup.copy     copy backups/NAME to OPS__BACKUP_COPY_DIR, compare every file (E23)
+    backup.prune    delete the named backups, and their off-host copies
     backup.verify   scripts/backup.py verify <backups/NAME>
     backup.restore  scripts/backup.py restore <backups/NAME> --yes
     bundle.verify   signature check + offline/lib.sh verify_bundle <updates/NAME>
@@ -28,13 +30,22 @@ upgrade stops the API for minutes. So the runner keeps the job's spec in
 ``.ops-runner/state.json``, buffers output while the API is unreachable, and includes the spec
 in every report. The API recreates a missing job from it (``OpsService.report``).
 
-Configuration comes from ``.env`` (``OPS__RUNNER_TOKEN``, ``PLATFORM_HTTP_PORT``) and flags.
-Stdlib only.
+**Off-host copies (E23).** With ``OPS__BACKUP_COPY_DIR`` set (a mounted NFS or SMB share,
+or a USB disk), every new backup is also copied there: into ``.partial-NAME``, compared
+file by file (SHA-256) with the original, then renamed to ``NAME``. So a directory named
+like a backup in the copy directory is a complete copy. A failed copy does not fail the
+backup; the API sees the backup is not copied and queues one ``backup.copy`` retry. The
+directory is configured here, on the host, and never by the console: the console must not
+be able to choose where the host writes.
+
+Configuration comes from ``.env`` (``OPS__RUNNER_TOKEN``, ``PLATFORM_HTTP_PORT``,
+``OPS__BACKUP_COPY_DIR``) and flags. Stdlib only.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -110,6 +121,8 @@ class Inventory:
         self.rollback_dir = root / ".rollback"
         self.trust_key = root / ".trust" / bundle_signing.PUBLIC_NAME
         self.env = env
+        copy_dir = (env.get("OPS__BACKUP_COPY_DIR") or "").strip()
+        self.copy_dir = Path(copy_dir) if copy_dir else None
         self._sizes: dict[Path, tuple[float, int]] = {}
 
     def _cached_size(self, path: Path) -> int:
@@ -144,9 +157,37 @@ class Inventory:
                     "artifacts": sorted((manifest.get("artifacts") or {}).keys()),
                     "key_matches": (recorded == current) if recorded and current else None,
                     "complete": True,
+                    "copied": self.copied(path.name),
                 }
             )
         return out
+
+    # -- off-host copies (E23) ---------------------------------------------------------
+    def copy_reachable(self) -> bool | None:
+        if self.copy_dir is None:
+            return None
+        return self.copy_dir.is_dir() and os.access(self.copy_dir, os.W_OK)
+
+    def copied(self, name: str) -> bool | None:
+        """Whether a complete copy exists. Copies are renamed into place only after they
+        compare equal, so the name with a manifest inside means complete."""
+        if self.copy_dir is None:
+            return None
+        return (self.copy_dir / name / "manifest.json").is_file()
+
+    def copy_report(self) -> dict:
+        if self.copy_dir is None:
+            return {"configured": False}
+        reachable = bool(self.copy_reachable())
+        report: dict[str, Any] = {
+            "configured": True,
+            "path": str(self.copy_dir),
+            "reachable": reachable,
+        }
+        if reachable:
+            usage = shutil.disk_usage(self.copy_dir)
+            report.update(free_bytes=usage.free, total_bytes=usage.total)
+        return report
 
     def bundles(self) -> list[dict]:
         out = []
@@ -215,6 +256,7 @@ class Inventory:
                 else None
             ),
             "backups": self.backups(),
+            "backup_copy": self.copy_report(),
             "bundles": self.bundles(),
             "rollback_points": self.rollback_points(),
             "disk": {"path": str(self.root), "free_bytes": usage.free, "total_bytes": usage.total},
@@ -406,6 +448,63 @@ def run_command(argv: list[str], reporter: Reporter, *, cwd: Path, env: dict | N
     return code
 
 
+def _digests(root: Path) -> dict[str, str]:
+    out = {}
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+        out[path.relative_to(root).as_posix()] = digest.hexdigest()
+    return out
+
+
+def copy_backup(inventory: Inventory, name: str, reporter: Reporter) -> str | None:
+    """Copy one backup off-host (E23). None on success, else what went wrong."""
+    if inventory.copy_dir is None:
+        return "No off-host copy directory is configured (OPS__BACKUP_COPY_DIR)."
+    if not inventory.copy_reachable():
+        return f"The copy directory {inventory.copy_dir} is missing or not writable."
+    source = inventory.backup_path(name)
+    final = inventory.copy_dir / source.name
+    if inventory.copied(source.name):
+        reporter.line(f"{source.name} is already in {inventory.copy_dir}")
+        return None
+    partial = inventory.copy_dir / f".partial-{source.name}"
+    try:
+        if partial.exists():
+            shutil.rmtree(partial)
+        reporter.line(f"copying {source.name} to {inventory.copy_dir} ...")
+        shutil.copytree(source, partial)
+        if _digests(partial) != _digests(source):
+            shutil.rmtree(partial, ignore_errors=True)
+            return "The copy does not match the original; it was removed."
+        if final.exists():  # an incomplete leftover without a manifest
+            shutil.rmtree(final)
+        os.replace(partial, final)
+    except OSError as exc:
+        shutil.rmtree(partial, ignore_errors=True)
+        return f"Copy failed: {exc}"
+    reporter.line(f"copied {source.name}; every file matches")
+    return None
+
+
+def prune_copies(inventory: Inventory, names: list[str], newest: str | None, reporter: Reporter) -> list[str]:
+    """Retention for the off-host copies: the same names as on local disk (E23)."""
+    if inventory.copy_dir is None or not inventory.copy_reachable():
+        return []
+    deleted = []
+    for name in names:
+        if not NAME.match(name) or name == newest:
+            continue
+        path = inventory.copy_dir / name
+        if path.is_dir() and (path / "manifest.json").is_file():
+            shutil.rmtree(path)
+            deleted.append(name)
+            reporter.line(f"deleted copy {name}")
+    return deleted
+
+
 def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -> tuple[str, str | None]:
     kind, params, root = spec["kind"], spec.get("params") or {}, inventory.root
     backup = [python, str(SCRIPTS / "backup.py")]
@@ -417,7 +516,21 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
         created = sorted({b["name"] for b in inventory.backups()} - before)
         if created:
             reporter.result = {"backup": created[-1]}
+            if inventory.copy_dir is not None:
+                # A failed copy does not fail the backup: the backup exists and is good.
+                # The API sees it is not copied, alerts, and queues one retry.
+                problem = copy_backup(inventory, created[-1], reporter)
+                reporter.result["copied"] = problem is None
+                if problem:
+                    reporter.result["copy_error"] = problem
+                    reporter.line(f"WARNING: {problem}")
         return "SUCCEEDED", None
+
+    if kind == "backup.copy":
+        name = params.get("backup", "")
+        problem = copy_backup(inventory, name, reporter)
+        reporter.result = {"backup": name, "copied": problem is None}
+        return ("SUCCEEDED", None) if problem is None else ("FAILED", problem)
 
     if kind == "backup.verify":
         path = inventory.backup_path(params.get("backup", ""))
@@ -496,7 +609,8 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
             shutil.rmtree(path)
             deleted.append(name)
             reporter.line(f"deleted {name}")
-        reporter.result = {"deleted": deleted, "kept_newest": newest}
+        copies = prune_copies(inventory, params.get("delete") or [], newest, reporter)
+        reporter.result = {"deleted": deleted, "deleted_copies": copies, "kept_newest": newest}
         return "SUCCEEDED", None
 
     if kind == "rollback":

@@ -15,7 +15,7 @@ UI, tests, docs, then a phase report.
 - [x] `docs/roadmap/feature-matrix.md`
 - [x] `docs/roadmap/implementation-plan.md`
 - [ ] Baseline: `make check` and `make gate` on a Docker host, with results recorded in current-state §8
-- [ ] Fix doc drift: `docs/architecture.md` §1–3 still say LangGraph
+- [x] Fix doc drift: `docs/architecture.md` §1–3 said LangGraph (fixed in E23)
 
 ## E1: Inference backends + in-app alerts (recommended first slice, P0, additive)
 
@@ -145,7 +145,7 @@ dashboard real signals.
 - [x] Scheduled backups: `ops.backup_interval_hours` queues `backup.create` jobs as `scheduler` (audited). At most one attempt per interval, nothing while the runner is offline. Alerts for overdue and failed backups.
 - [x] Retention: `ops.backup_keep` queues `backup.prune` jobs. The runner checks the names again, keeps the newest complete backup and never deletes a folder without a manifest. Schedule card on the Backup & Restore page and `GET /ops/backups/schedule`.
 - [x] Migration `9a6f2c4e1b57` (table and `backup.prune` job kind) upgrades and downgrades cleanly.
-- [ ] Retention is by count, not age. No off-host copy of backups. (Alerts reach email and chat since E13.)
+- [ ] ~~Retention is by count, not age. No off-host copy of backups.~~ Closed in E23. (Alerts reach email and chat since E13.)
 
 ## E13: Alert notifications
 
@@ -241,6 +241,14 @@ dashboard real signals.
 - [x] Alert source `approvals` in `KNOWN_SOURCES`, so notification channels can subscribe; delivered once per channel by the E13 outbox.
 - [x] No migration. Tests: `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders-e22).
 - [ ] Reminders go to channels, not to individual approvers (approvers are not modelled). No reminder for approvals that never expire.
+
+## E23: Backup retention by age and off-host copies (closes the E12 open item)
+
+- [x] Runtime setting `ops.backup_keep_days`. `to_prune` keeps a backup if any set rule protects it (newest N, or younger than N days); never the newest complete one, never an incomplete one; a name that is not a timestamp has no age and is kept by the age rule.
+- [x] Runner: `OPS__BACKUP_COPY_DIR` (host only). Copy into `.partial-NAME`, compare SHA-256 of every file, rename. Done after each `backup.create` (a failed copy does not fail the backup) and by the new `backup.copy` job. `backup.prune` deletes the same names from the copy directory, never the newest. Inventory reports `backup_copy` (configured, path, reachable, space) and `copied` per backup.
+- [x] Schedule: one `backup.copy` per newest backup that is not copied; alert `backup_copy_missing` when the directory is unreachable or the newest backup has waited over an hour. Backup page: retention rules and copy status.
+- [x] Migration `b3d5f7a9c1e2` (ops job kind). Tests: `test_backup_schedule.py`, `tests/unit/test_release_tooling.py::TestRunnerCopy`. Docs: [backup.md](../backup.md#off-host-copies-e23); `architecture.md` LangGraph drift fixed.
+- [ ] One copy directory, pruned with local backups; no S3 or remote protocol built in.
 
 ## Phase acceptance (applies to each)
 

@@ -316,6 +316,7 @@ class TestRunnerPrune:
         assert outcome == ("SUCCEEDED", None)
         assert reporter.result == {
             "deleted": ["20261102T000000Z"],
+            "deleted_copies": [],
             "kept_newest": "20261103T000000Z",
         }
         assert (site.backups_dir / "20261103T000000Z").exists()
@@ -324,3 +325,100 @@ class TestRunnerPrune:
     def test_an_unlisted_name_fails_the_job(self, runner, site):
         with pytest.raises(runner.JobError):
             self._prune(runner, site, ["../etc"])
+
+
+class TestRunnerCopy:
+    """E23: off-host copies are complete or absent, and pruned with their originals."""
+
+    NAMES = ("20261101T000000Z", "20261102T000000Z")
+
+    @pytest.fixture
+    def runner(self):
+        return load("ops_runner")
+
+    @pytest.fixture
+    def site(self, runner, tmp_path):
+        root = tmp_path / "site"
+        for name in self.NAMES:
+            backup = root / "backups" / name
+            backup.mkdir(parents=True)
+            (backup / "postgres.dump").write_bytes(b"dump-" + name.encode())
+            (backup / "nested").mkdir()
+            (backup / "nested" / "minio.tar").write_bytes(b"tar")
+            (backup / "manifest.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "offsite").mkdir()
+        env = {"OPS__BACKUP_COPY_DIR": str(tmp_path / "offsite")}
+        return runner.Inventory(root, root / "updates", env)
+
+    def _job(self, runner, site, kind, params):
+        reporter = TestRunnerUpgrade.StubReporter()
+        return runner.execute({"kind": kind, "params": params}, site, reporter, "python3"), reporter
+
+    def test_inventory_reports_the_directory_and_what_is_copied(self, runner, site):
+        assert site.copy_report()["configured"] is True
+        assert site.copy_report()["reachable"] is True
+        assert {b["copied"] for b in site.backups()} == {False}
+
+    def test_a_copy_matches_the_original_file_for_file(self, runner, site):
+        outcome, reporter = self._job(runner, site, "backup.copy", {"backup": self.NAMES[1]})
+        assert outcome == ("SUCCEEDED", None)
+        copy = site.copy_dir / self.NAMES[1]
+        assert (copy / "nested" / "minio.tar").read_bytes() == b"tar"
+        assert not any(p.name.startswith(".partial-") for p in site.copy_dir.iterdir())
+        assert [b["copied"] for b in site.backups()] == [True, False]
+        assert reporter.result == {"backup": self.NAMES[1], "copied": True}
+
+    def test_a_copy_that_differs_is_removed_and_fails(self, runner, site, monkeypatch):
+        real = runner._digests
+        calls = []
+
+        def corrupt(root):
+            calls.append(root)
+            digests = real(root)
+            return {**digests, "postgres.dump": "0"} if len(calls) == 1 else digests
+
+        monkeypatch.setattr(runner, "_digests", corrupt)
+        (status, detail), _ = self._job(runner, site, "backup.copy", {"backup": self.NAMES[0]})
+        assert status == "FAILED" and "does not match" in detail
+        assert list(site.copy_dir.iterdir()) == []
+
+    def test_an_unreachable_directory_fails_without_touching_the_backup(self, runner, site):
+        site.copy_dir.rmdir()
+        assert site.copy_report() == {
+            "configured": True,
+            "path": str(site.copy_dir),
+            "reachable": False,
+        }
+        (status, detail), _ = self._job(runner, site, "backup.copy", {"backup": self.NAMES[0]})
+        assert status == "FAILED" and "missing or not writable" in detail
+        assert (site.backups_dir / self.NAMES[0] / "manifest.json").exists()
+
+    def test_a_new_backup_is_copied_and_a_failed_copy_does_not_fail_it(
+        self, runner, site, monkeypatch
+    ):
+        made = "20261103T000000Z"
+
+        def fake_create(argv, reporter, *, cwd, env=None):
+            backup = site.backups_dir / made
+            backup.mkdir()
+            (backup / "manifest.json").write_text("{}", encoding="utf-8")
+            return 0
+
+        monkeypatch.setattr(runner, "run_command", fake_create)
+        monkeypatch.setattr(runner, "copy_backup", lambda *a: "disk full")
+        outcome, reporter = self._job(runner, site, "backup.create", {})
+        assert outcome == ("SUCCEEDED", None)
+        assert reporter.result == {"backup": made, "copied": False, "copy_error": "disk full"}
+
+    def test_retention_prunes_copies_too_but_never_the_newest(self, runner, site):
+        for name in self.NAMES:
+            self._job(runner, site, "backup.copy", {"backup": name})
+        outcome, reporter = self._job(runner, site, "backup.prune", {"delete": list(self.NAMES)})
+        assert outcome == ("SUCCEEDED", None)
+        assert reporter.result["deleted_copies"] == [self.NAMES[0]]
+        assert (site.copy_dir / self.NAMES[1]).exists()
+
+    def test_no_directory_means_nothing_is_copied(self, runner, tmp_path):
+        bare = runner.Inventory(tmp_path, tmp_path / "updates", {})
+        assert bare.copy_report() == {"configured": False}
+        assert bare.copied("20261101T000000Z") is None

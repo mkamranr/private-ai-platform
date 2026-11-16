@@ -26,6 +26,22 @@ class InventoryBackup(BaseModel):
     #: Whether the backup's encryption-key fingerprint matches this install's key.
     key_matches: bool | None = None
     complete: bool = True
+    #: E23: whether the runner's off-host directory holds a complete copy. None when no
+    #: copy directory is configured.
+    copied: bool | None = None
+
+
+class InventoryBackupCopy(BaseModel):
+    """E23: the runner's off-host copy directory (``OPS__BACKUP_COPY_DIR`` on the host)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    configured: bool = False
+    path: str | None = None
+    #: The directory exists and is writable now. A mount that went away is False.
+    reachable: bool | None = None
+    free_bytes: int | None = None
+    total_bytes: int | None = None
 
 
 class InventoryBundle(BaseModel):
@@ -63,6 +79,7 @@ class RunnerInventory(BaseModel):
     root: str | None = None
     installed: dict[str, Any] | None = None
     backups: list[InventoryBackup] = Field(default_factory=list)
+    backup_copy: InventoryBackupCopy = Field(default_factory=InventoryBackupCopy)
     bundles: list[InventoryBundle] = Field(default_factory=list)
     rollback_points: list[InventoryRollbackPoint] = Field(default_factory=list)
     disk: InventoryDisk | None = None
@@ -247,7 +264,14 @@ class BackupScheduleStatus(BaseModel):
     enabled: bool
     interval_hours: int
     keep: int
+    #: E23: days complete backups are kept; 0 = no age limit.
+    keep_days: int = 0
     runner_online: bool
+    #: E23: the runner's off-host copy directory and whether the newest backup is in it.
+    copy_configured: bool = False
+    copy_path: str | None = None
+    copy_reachable: bool | None = None
+    newest_copied: bool | None = None
     newest_backup: str | None
     newest_backup_at: dt.datetime | None
     next_due_at: dt.datetime | None

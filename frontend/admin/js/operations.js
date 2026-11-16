@@ -15,7 +15,7 @@ Object.assign(PILL_TONE, { QUEUED: 'idle', CANCELLED: 'idle' });
 const OPS_KIND_LABEL = {
   'backup.create': 'Backup', 'backup.verify': 'Verify backup', 'backup.restore': 'Restore',
   'bundle.verify': 'Verify bundle', upgrade: 'Upgrade', rollback: 'Rollback',
-  'backup.prune': 'Retention',
+  'backup.prune': 'Retention', 'backup.copy': 'Off-host copy',
 };
 const OPS_ACTIVE = new Set(['QUEUED', 'RUNNING']);
 
@@ -73,9 +73,23 @@ function scheduleCard(sched) {
   const dueText = !due ? '—' : due <= new Date() ? 'now, at the next check' : due.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
   const last = sched.last_job;
   const lastText = last ? `${pill(last.status)} <span class="small text-secondary">${esc(last.requested_by || '')} · ${esc(ago(last.created_at))}</span>` : '<span class="text-secondary">none yet</span>';
-  const retention = sched.keep
-    ? `keep the newest ${sched.keep}${sched.prune_candidates.length ? ` · <span class="text-warning-emphasis">${sched.prune_candidates.length} to delete at the next run</span>` : ''}`
+  // E23: a count, an age, or both (a backup goes only when both let it go).
+  const rules = [
+    sched.keep ? `the newest ${sched.keep}` : '',
+    sched.keep_days ? `${sched.keep_days} day${sched.keep_days === 1 ? '' : 's'}` : '',
+  ].filter(Boolean);
+  const retention = rules.length
+    ? `keep ${rules.join(' or ')}${sched.prune_candidates.length ? ` · <span class="text-warning-emphasis">${sched.prune_candidates.length} to delete at the next run</span>` : ''}`
     : 'keep every backup';
+  // E23: the runner's off-host copy directory (OPS__BACKUP_COPY_DIR on the host).
+  let copyText = '<span class="text-secondary">not configured (set <code>OPS__BACKUP_COPY_DIR</code> on the host)</span>';
+  if (sched.copy_configured) {
+    const where = `<code>${esc(sched.copy_path || '')}</code>`;
+    if (sched.copy_reachable === false) copyText = `${pill('WARNING', 'Unreachable')} ${where}`;
+    else if (sched.newest_copied === true) copyText = `${pill('HEALTHY', 'Newest copied')} ${where}`;
+    else if (sched.newest_copied === false) copyText = `${pill('WARNING', 'Newest not copied')} ${where}`;
+    else copyText = where;
+  }
   return `<div class="card mb-4"><div class="card-body">
     <div class="d-flex flex-wrap gap-2 align-items-start mb-2">
       <div class="me-auto"><h6 class="mb-1">Schedule ${sched.overdue ? pill('WARNING', 'Overdue') : pill('HEALTHY', 'On schedule')}</h6>
@@ -84,6 +98,7 @@ function scheduleCard(sched) {
     <dl class="ops-facts mb-0">
       <dt>Every</dt><dd>${sched.interval_hours} h</dd>
       <dt>Retention</dt><dd>${retention}</dd>
+      <dt>Off-host copy</dt><dd>${copyText}</dd>
       <dt>Next due</dt><dd>${esc(dueText)}${sched.runner_online ? '' : ' <span class="text-danger">(runner offline: nothing can run)</span>'}</dd>
       <dt>Last backup job</dt><dd>${lastText}</dd>
     </dl>${sched.note ? `<div class="small text-secondary mt-2">${esc(sched.note)}</div>` : ''}

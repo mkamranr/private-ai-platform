@@ -32,7 +32,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `gateway.concurrency_lease_seconds` | Gateway resilience | per-model concurrency slots | next gateway request |
 | `ops.runner_stale_seconds`, `ops.max_log_lines` | Operations | ops runner status and reports | immediately |
 | `ops.support_log_hours`, `ops.support_log_lines` | Operations | support bundle | next bundle |
-| `ops.backup_interval_hours`, `ops.backup_keep` | Operations | backup schedule and retention (E12, [backup.md](backup.md#schedule-and-retention-e12)) | next schedule check (5 min) |
+| `ops.backup_interval_hours`, `ops.backup_keep`, `ops.backup_keep_days` | Operations | backup schedule and retention by count and age (E12, E23, [backup.md](backup.md#schedule-and-retention-e12)) | next schedule check (5 min) |
 | `gateway.budget_warning_percent` | Gateway | warning share for token quota alerts (E12) | next budget check |
 | `chargeback.currency` | Chargeback | every cost report (E9, [chargeback.md](chargeback.md)) | next report |
 | `auth.mfa_required` | Security | who must use two-factor authentication: `off`, `admins`, `all` (E15, [security.md](security.md#two-factor-authentication-e15)) | next sign-in |

@@ -40,6 +40,8 @@ class JobKind(enum.StrEnum):
     ROLLBACK = "rollback"
     #: E12: delete backups beyond the retention count. Queued by the schedule only.
     BACKUP_PRUNE = "backup.prune"
+    #: E23: copy a backup to the runner's off-host directory. Queued by the schedule only.
+    BACKUP_COPY = "backup.copy"
 
 
 class JobStatus(enum.StrEnum):
@@ -58,7 +60,7 @@ class OpsJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint(
             "kind IN ('backup.create','backup.verify','backup.restore','bundle.verify',"
-            "'upgrade','rollback','backup.prune')",
+            "'upgrade','rollback','backup.prune','backup.copy')",
             name="ops_job_kind",
         ),
         CheckConstraint(
