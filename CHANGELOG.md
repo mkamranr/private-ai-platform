@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Lockout for directory accounts (E25)
+- **LDAP accounts are locked like local ones.** After `AUTH__LOCKOUT_THRESHOLD` wrong passwords made through the platform, a directory account is locked for `AUTH__LOCKOUT_MINUTES`, with the same audit entry, alert and *Unlock* button on the Users page.
+- **While locked, the password is not sent to the directory**, so guessing through the platform can no longer trip the directory's own lockout for the real person.
+- **Upgrade.** No migration and no new setting: the existing lockout settings now cover directory accounts. Single sign-on (OIDC) accounts are unaffected. See [docs/security.md](docs/security.md#sign-in-hardening-e14).
+
 ### Budgets can refuse the platform's own calls (E24)
 - **Opt in.** A new runtime setting, `gateway.enforce_platform_budgets` (Settings page, *Gateway*, off by default). When it is on, agent runs started in the console or API, workflow LLM steps, ingestion, knowledge search, memory and other platform embeddings are refused once their team's or model's token budget is used up, as `/v1` calls are. When it is off, nothing changes: these calls are counted against budgets (E19, E21) and never refused.
 - **What a refusal looks like.** Starting an agent run answers 429 with the budget's message and `Retry-After`. A workflow step fails with the message. A document being ingested is marked failed with it. Agent retrieval and memory continue without context.

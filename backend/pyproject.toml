@@ -50,6 +50,7 @@ ignore = [
 "tests/api/test_embedding_usage.py" = ["F811"]
 "tests/api/test_approval_reminders.py" = ["F811"]
 "tests/api/test_platform_quota_enforcement.py" = ["F811"]
+"tests/api/test_directory_lockout.py" = ["F811"]
 # The seed/CLI scripts print to stdout by design.
 "app/utils/cli.py" = ["T20"]
 

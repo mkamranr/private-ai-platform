@@ -165,7 +165,7 @@ dashboard real signals.
 - [x] Ops runner: wrong tokens audited (`OPS_RUNNER_AUTH_FAILED`) and throttled per address (`ops.runner_max_failures` in `ops.runner_failure_window_seconds`), WARNING alert (threat model #12).
 - [x] API: `POST /auth/logout` (optional `refresh_token`), `POST /auth/logout-all`, `POST /users/{id}/unlock`, `POST /users/{id}/sessions/revoke`. Users page: locked pill, Unlock, Sign out everywhere. Alert sources `auth`, `ops_runner` for notification filters.
 - [x] Migration `d5f9b2a3e7c1` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#sign-in-hardening-e14).
-- [ ] No lockout for directory accounts, no CAPTCHA. (MFA arrived in E15.)
+- [ ] ~~No lockout for directory accounts~~ (closed in E25), no CAPTCHA. (MFA arrived in E15.)
 
 ## E15: Two-factor authentication
 
@@ -256,6 +256,13 @@ dashboard real signals.
 - [x] Checked before the call in `AgentRunService.start` (not for `agent:` calls through `/v1`, which the gateway admitted; not on resume), in the workflow LLM step (a refusal fails the step with the message), and in `embed_with` (every platform embedding: ingestion, search, retrieval, memory). The ingestion worker reads runtime settings per call.
 - [x] No migration. Tests: `tests/api/test_platform_quota_enforcement.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
 - [ ] A running agent is not stopped mid-run when it crosses a budget; a refused document is not retried automatically when the budget resets.
+
+## E25: Lockout for directory accounts (closes the E14 open item)
+
+- [x] `AuthService.login`: an account owned by a configured password provider (LDAP) is refused while locked *without* the credential reaching the directory (audited `Account is locked`, same generic message, hash for timing). A password no provider accepts for it counts through `LoginGuard.account_failed`, locks at `auth.lockout_threshold` with `USER_LOCKED` and the `account_locked` alert. A directory sign-in clears an expired lock and its alert.
+- [x] Not counted: directory users without a row (address throttle only), OIDC accounts, directory outages (the provider raises).
+- [x] No migration, no new setting. Tests: `tests/api/test_directory_lockout.py`. Doc: [security.md](../security.md#sign-in-hardening-e14).
+- [ ] The platform sees only guesses made through it; the directory's own policy is unchanged. No CAPTCHA.
 
 ## Phase acceptance (applies to each)
 

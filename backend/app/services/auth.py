@@ -158,12 +158,20 @@ class AuthService:
         user = await self._users.get_by_username(username)
 
         if user is None or user.hashed_password is None or user.auth_provider != "local":
+            # E25: an account a password provider (LDAP) owns is locked like a local one.
+            directory = self._directory_account(user)
+            if directory is not None:
+                await self._refuse_locked_directory(
+                    directory, password, address=address, user_agent=user_agent
+                )
             # Not a local account. Offer the credential to each external password
             # provider before giving up — this is how a directory user signs in without
             # the platform ever having a row for them beforehand.
             federated = await self._try_external(username, password, user_agent=user_agent)
             if federated is not None:
                 return federated
+            if directory is not None:
+                await self._directory_failed(directory, address=address, user_agent=user_agent)
 
             # Hash anyway so a missing account and a wrong password take
             # comparable time; skipping the hash leaks account existence via
@@ -536,6 +544,71 @@ class AuthService:
         if self._guard is not None:
             await self._guard.address_failed(address, audit=self._audit)
 
+    # -- directory accounts (E25) -------------------------------------------------------
+    def _directory_account(self, user: User | None) -> User | None:
+        """The account, if a configured password provider (LDAP) owns it.
+
+        Accounts nobody has signed in as yet have no row and are covered by the address
+        throttle alone. OIDC accounts never sign in with a password, so a guess at one is
+        not counted against it.
+        """
+        if user is None or user.auth_provider == "local":
+            return None
+        if user.auth_provider not in {p.name for p in self._password_providers}:
+            return None
+        return user
+
+    async def _refuse_locked_directory(
+        self, user: User, password: str, *, address: str, user_agent: str | None
+    ) -> None:
+        """A locked directory account is refused without asking the directory.
+
+        Not asking is the point: guesses through the platform stop here rather than
+        reaching the directory and tripping *its* lockout for the real person. The same
+        generic message as a wrong password, and a hash for comparable timing.
+        """
+        now = dt.datetime.now(dt.UTC)
+        if user.locked_until is None or user.locked_until <= now:
+            return
+        self._hasher.hash(password)
+        await self._audit.record_independent(
+            AuditAction.USER_LOGIN,
+            result=AuditResult.DENIED,
+            user_id=user.id,
+            username=user.username,
+            message="Account is locked",
+            metadata={
+                "locked_until": user.locked_until.isoformat(),
+                "provider": user.auth_provider,
+            },
+            user_agent=user_agent,
+        )
+        await self._address_failed(address)
+        raise AuthenticationError(_BAD_CREDENTIALS)
+
+    async def _directory_failed(self, user: User, *, address: str, user_agent: str | None) -> None:
+        """No provider accepted the password for an account a provider owns: a wrong
+        password, counted toward ``auth.lockout_threshold`` as a local one is."""
+        now = dt.datetime.now(dt.UTC)
+        failures, locked = (
+            await self._guard.account_failed(user, now=now)
+            if self._guard is not None
+            else (user.failed_login_count + 1, False)
+        )
+        await self._audit.record_independent(
+            AuditAction.USER_LOGIN,
+            result=AuditResult.FAILURE,
+            user_id=user.id,
+            username=user.username,
+            message="Incorrect password",
+            metadata={"failed_login_count": failures, "provider": user.auth_provider},
+            user_agent=user_agent,
+        )
+        if locked and self._guard is not None:
+            await self._guard.account_locked(user, audit=self._audit, failures=failures)
+        await self._address_failed(address)
+        raise AuthenticationError(_BAD_CREDENTIALS)
+
     async def _try_external(
         self, username: str, password: str, *, user_agent: str | None
     ) -> TokenPair | None:
@@ -556,6 +629,11 @@ class AuthService:
             user = await self._federation.resolve(identity)
             user.last_login_at = dt.datetime.now(dt.UTC)
             user.failed_login_count = 0
+            # E25: a lock that has run out is cleared, with its alert, as for local.
+            if user.locked_until is not None:
+                user.locked_until = None
+                if self._guard is not None:
+                    await self._guard.clear_alert(account_locked_fingerprint(user.id))
             await self._audit.record(
                 AuditAction.USER_LOGIN,
                 user_id=user.id,
