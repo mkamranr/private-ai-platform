@@ -53,6 +53,7 @@ from app.schemas.models_registry import (
     EndUserUsageResponse,
     EndUserUsageRow,
     ModelApprovalRequest,
+    ModelApprovalResult,
     ModelDetail,
     ModelFileRead,
     ModelImportResponse,
@@ -159,27 +160,35 @@ async def update_model(
 
 @router.post(
     "/models/{model_id}/approval",
-    response_model=ModelRead,
+    response_model=ModelApprovalResult,
     summary="Approve, deprecate or block a model",
 )
 async def set_model_approval(
     payload: ModelApprovalRequest,
     service: ModelRegistryDep,
+    deployments: DeploymentServiceDep,
     actor: Annotated[User, require_permission(Perm.MODEL_APPROVE)],
     guard: ScopeGuardDep,
     model_id: uuid.UUID = Path(...),
-) -> ModelRead:
+) -> ModelApprovalResult:
     """Governance (E4):
 
     * **approved**: cleared for use;
     * **experimental**: usable, flagged as not yet reviewed;
     * **deprecated**: keeps serving where deployed, but new deployments are refused;
     * **blocked**: not deployable and not served. Gateway calls through an alias go to
-      its fallback alias when it has one, and are otherwise refused with 403.
+      its fallback alias when it has one, and are otherwise refused with 403. Its running
+      deployments are stopped too (E26), unless `stop_deployments` is false; any that
+      cannot be stopped are listed in `stop_failed` and keep running.
     """
     await guard.model(model_id)
     model = await service.set_approval(model_id, payload.status, note=payload.note, actor=actor)
-    return ModelRead.model_validate(model)
+    result = ModelApprovalResult.model_validate(model)
+    if payload.status == "blocked" and payload.stop_deployments is not False:
+        result.stopped_deployments, result.stop_failed = await deployments.stop_model_deployments(
+            model_id, actor=actor, reason=f"Model {model.name} blocked"
+        )
+    return result
 
 
 @router.get("/models/{model_id}", response_model=ModelDetail, summary="Get a model")

@@ -928,7 +928,9 @@ class DeploymentService:
         return DeploymentState.FAILED
 
     # -- lifecycle control -------------------------------------------------
-    async def stop_deployment(self, deployment_id: uuid.UUID, *, actor: User) -> ModelDeployment:
+    async def stop_deployment(
+        self, deployment_id: uuid.UUID, *, actor: User, reason: str | None = None
+    ) -> ModelDeployment:
         deployment = await self.get_deployment(deployment_id)
         if deployment.state in {DeploymentState.STOPPED, DeploymentState.FAILED}:
             return deployment
@@ -961,8 +963,38 @@ class DeploymentService:
             username=actor.username,
             resource_type="deployment",
             resource_id=str(deployment.id),
+            message=reason,
         )
         return deployment
+
+    async def stop_model_deployments(
+        self, model_id: uuid.UUID, *, actor: User, reason: str
+    ) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+        """Stop every active deployment of a model (E26, when it is blocked).
+
+        Returns ``(stopped, failed)``. One that cannot be stopped (its node unreachable)
+        is put back as it was and reported, rather than failing the others or the
+        approval change that asked for it.
+        """
+        stopped: list[uuid.UUID] = []
+        failed: list[uuid.UUID] = []
+        for deployment in await self.list_deployments(model_id=model_id):
+            if not deployment.is_active:
+                continue
+            before = deployment.state
+            try:
+                await self.stop_deployment(deployment.id, actor=actor, reason=reason)
+            except Exception as exc:
+                deployment.state = before
+                log.warning(
+                    "blocked_model_deployment_not_stopped",
+                    deployment=str(deployment.id),
+                    error=type(exc).__name__,
+                )
+                failed.append(deployment.id)
+            else:
+                stopped.append(deployment.id)
+        return stopped, failed
 
     async def restart_deployment(self, deployment_id: uuid.UUID, *, actor: User) -> ModelDeployment:
         """Restart in place, keeping the GPU reservation.

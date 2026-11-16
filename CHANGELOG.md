@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Blocking a model stops its deployments (E26)
+- **Blocking a model now stops its running deployments.** A blocked model is never served, so its containers were only holding GPUs. Each stop is audited. The Edit dialog offers *Stop its running deployments too* (ticked) when Blocked is chosen; the API takes `"stop_deployments": false` to keep them.
+- **An unreachable node does not undo the block.** A deployment that could not be stopped is listed in the response's `stop_failed` and keeps running (the gateway still refuses it); stop it from the Deployments page later.
+- **API.** `POST /models/{id}/approval` returns the model plus `stopped_deployments` and `stop_failed`. Existing fields are unchanged. No migration.
+
 ### Lockout for directory accounts (E25)
 - **LDAP accounts are locked like local ones.** After `AUTH__LOCKOUT_THRESHOLD` wrong passwords made through the platform, a directory account is locked for `AUTH__LOCKOUT_MINUTES`, with the same audit entry, alert and *Unlock* button on the Users page.
 - **While locked, the password is not sent to the directory**, so guessing through the platform can no longer trip the directory's own lockout for the real person.

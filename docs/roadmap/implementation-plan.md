@@ -66,7 +66,7 @@ dashboard real signals.
 - [x] Revisions: `GET/POST /deployments/{id}/revisions`, `POST /deployments/{id}/rollback`. Append-only; GPUs kept reserved across the change; images limited to `runtime_images` plus `MODELS__RUNTIME_IMAGE_ALLOWLIST`; external runtimes refused. Audited `DEPLOYMENT_REVISED`, `DEPLOYMENT_ROLLED_BACK`.
 - [x] `GET /deployments/{id}/logs/stream` (SSE, new lines only, ten-minute cap).
 - [x] Admin: approval pills, filter and family grouping, Edit dialog with approval, two-step deploy wizard, Revisions dialog with rollback, live log viewer. Doc: [docs/model-governance.md](../model-governance.md).
-- [ ] Revisions are not zero-downtime (one container per deployment); blue/green needs replicas. Blocking a model does not stop its containers automatically.
+- [ ] Revisions are not zero-downtime (one container per deployment); blue/green needs replicas. ~~Blocking a model does not stop its containers automatically.~~ Closed in E26.
 
 ## E5: RAG depth (P1)
 
@@ -263,6 +263,14 @@ dashboard real signals.
 - [x] Not counted: directory users without a row (address throttle only), OIDC accounts, directory outages (the provider raises).
 - [x] No migration, no new setting. Tests: `tests/api/test_directory_lockout.py`. Doc: [security.md](../security.md#sign-in-hardening-e14).
 - [ ] The platform sees only guesses made through it; the directory's own policy is unchanged. No CAPTCHA.
+
+## E26: Blocking a model stops its deployments (closes the E4 open item)
+
+- [x] `POST /models/{id}/approval` with `blocked` stops every active deployment of the model through `DeploymentService.stop_model_deployments` (audited `MODEL_STOPPED`, message `Model <name> blocked`). `stop_deployments: false` opts out; other statuses stop nothing.
+- [x] One that cannot be stopped is restored to its state, listed in `stop_failed`, and does not fail the block or the others. Response `ModelApprovalResult` adds `stopped_deployments` and `stop_failed` to `ModelRead`.
+- [x] Console: the Edit dialog offers *Stop its running deployments too* (ticked) when Blocked is chosen, and reports what was stopped.
+- [x] No migration. Tests: `tests/api/test_block_stops_deployments.py`. Doc: [model-governance.md](../model-governance.md).
+- [ ] A deployment left running because its node was unreachable is not retried automatically.
 
 ## Phase acceptance (applies to each)
 

@@ -2133,6 +2133,13 @@
             </div>
             <div class="form-text small">Deprecated: keeps serving, no new deployments.
               Blocked: not deployed or served; aliases go to their fallback.</div>
+            <div class="form-check mt-2 d-none" id="edit-stop-row">
+              <input class="form-check-input" type="checkbox" id="edit-stop-deployments" checked>
+              <label class="form-check-label small" for="edit-stop-deployments">
+                Stop its running deployments too <span id="edit-stop-count" class="text-secondary"></span>
+                <span class="d-block text-secondary">A blocked model is never served, so they only hold GPUs.</span>
+              </label>
+            </div>
           </div>
           <div id="model-edit-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
         </div>

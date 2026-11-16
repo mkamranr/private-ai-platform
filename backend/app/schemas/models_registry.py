@@ -114,6 +114,14 @@ class ModelApprovalRequest(BaseModel):
         max_length=2000,
         description="Why. Shown next to the status and kept in the audit log.",
     )
+    stop_deployments: bool | None = Field(
+        default=None,
+        description=(
+            "E26: with `blocked`, also stop the model's running deployments (a blocked "
+            "model is never served, so they only hold GPUs). Defaults to true for "
+            "`blocked`; ignored for any other status."
+        ),
+    )
 
 
 class ModelFileRead(ORMModel):
@@ -155,6 +163,15 @@ class ModelRead(ORMModel):
     family: str | None = None
     tags: list[str] = Field(default_factory=list)
     created_at: dt.datetime
+
+
+class ModelApprovalResult(ModelRead):
+    """The model after an approval change, and what blocking it stopped (E26)."""
+
+    stopped_deployments: list[uuid.UUID] = Field(default_factory=list)
+    #: Deployments that could not be stopped (an unreachable node, say). Still running;
+    #: stop them from the Deployments page once the node is back.
+    stop_failed: list[uuid.UUID] = Field(default_factory=list)
 
 
 class ModelDetail(ModelRead):

@@ -1633,12 +1633,28 @@ function openModelEdit(modelId) {
   set('edit-description', model.description);
   set('edit-approval', model.approval_status);
   set('edit-approval-note', model.approval_note);
+  document.getElementById('edit-stop-deployments').checked = true;
+  showStopRow(model);
   document.getElementById('edit-governance').classList.toggle('d-none', !can('model.approve'));
   document.getElementById('edit-approval-current').innerHTML = approvalPill(model) +
     (model.approved_at
       ? ` <span class="small text-secondary">since ${esc(ago(model.approved_at))}</span>` : '');
   new bootstrap.Modal(document.getElementById('model-edit-modal')).show();
 }
+
+/* E26: blocking offers to stop the model's running deployments (on by default). */
+function showStopRow(model) {
+  const blocking = field('edit-approval') === 'blocked';
+  const running = model.active_deployments;
+  document.getElementById('edit-stop-row').classList.toggle('d-none', !blocking);
+  document.getElementById('edit-stop-count').textContent =
+    typeof running === 'number' ? `(${running} running)` : '';
+}
+
+document.getElementById('edit-approval').addEventListener('change', () => {
+  const id = document.getElementById('model-edit-form').dataset.modelId;
+  showStopRow(modelCache.find((m) => m.id === id) || {});
+});
 
 onModalSubmit('model-edit-form', 'model-edit-error', async (form) => {
   const id = form.dataset.modelId;
@@ -1659,13 +1675,23 @@ onModalSubmit('model-edit-form', 'model-edit-error', async (form) => {
   });
   const status = field('edit-approval');
   const note = text('edit-approval-note');
-  if (can('model.approve') && (status !== model.approval_status || note !== (model.approval_note || null))) {
-    await api(`/models/${id}/approval`, {
-      method: 'POST', body: JSON.stringify({ status, note }),
+  const stop = status === 'blocked' && document.getElementById('edit-stop-deployments').checked;
+  let result = null;
+  if (can('model.approve') && (status !== model.approval_status
+      || note !== (model.approval_note || null) || stop)) {
+    result = await api(`/models/${id}/approval`, {
+      method: 'POST', body: JSON.stringify({ status, note, stop_deployments: stop }),
     });
   }
   closeModal('model-edit-modal');
-  alert('Model updated.', 'success');
+  const stopped = result?.stopped_deployments?.length || 0;
+  const failed = result?.stop_failed?.length || 0;
+  if (failed) {
+    alert(`Model updated. ${stopped} deployment(s) stopped; ${failed} could not be stopped — `
+      + 'stop them on the Deployments page.', 'warning');
+  } else {
+    alert(stopped ? `Model updated. ${stopped} deployment(s) stopped.` : 'Model updated.', 'success');
+  }
   await renderModels();
 });
 
