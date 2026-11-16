@@ -166,6 +166,38 @@ function rememberChosen() {
     document.getElementById('mfa-remember').checked;
 }
 
+/* E30: sign in with a passkey alone. No username is asked for: the browser offers the
+ * passkeys it holds for this site, and the one chosen names the account. */
+document.getElementById('login-passkey').classList.toggle('d-none', !passkeysInBrowser());
+document.getElementById('login-passkey').onclick = async (event) => {
+  const button = event.target;
+  const error = document.getElementById('login-error');
+  error.classList.add('d-none');
+  button.disabled = true;
+  try {
+    const options = await api('/auth/passkey/options', { method: 'POST' });
+    let credential;
+    try {
+      credential = await navigator.credentials.get({
+        publicKey: decodeRequestOptions(options.public_key),
+      });
+    } catch (err) { throw new Error(passkeyBrowserError(err)); }
+    const result = await api('/auth/passkey/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        challenge_token: options.challenge_token, credential: credentialJSON(credential),
+      }),
+    });
+    token.set(result.access_token);
+    await showApp();
+  } catch (err) {
+    error.textContent = err.message;
+    error.classList.remove('d-none');
+  } finally {
+    button.disabled = false;
+  }
+};
+
 document.getElementById('mfa-passkey').onclick = async (event) => {
   if (!mfaChallenge) return;
   const button = event.target;

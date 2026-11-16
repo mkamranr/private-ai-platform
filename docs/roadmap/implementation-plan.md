@@ -224,7 +224,7 @@ dashboard real signals.
 - [x] Turning MFA off or an admin reset deletes passkeys and trusted browsers. Audit: `USER_PASSKEY_ADDED`, `USER_PASSKEY_REMOVED`, `USER_DEVICE_TRUSTED`, `USER_DEVICE_FORGOTTEN`, sign-ins with `mfa: passkey` / `trusted_device`.
 - [x] Console: *Use a passkey* and *Trust this browser* on the code step; passkeys and trusted browsers on the account dialog.
 - [x] Migration `a8c4e2f6b9d1`. Tests: `tests/api/test_passkeys.py`, with a software authenticator producing real attestations and signatures. Doc: [security.md](../security.md#passkeys-and-trusted-browsers-e20).
-- [ ] Second factor only, no passwordless sign-in. The developer portal and voice assistant accept codes only. Changing the public host name strands existing passkeys.
+- [ ] ~~Second factor only, no passwordless sign-in.~~ Passwordless in the console since E30. The developer portal and voice assistant accept codes only. Changing the public host name strands existing passkeys.
 
 ## E21: Embedding calls accounted (closes the E19 open item)
 
@@ -292,6 +292,14 @@ dashboard real signals.
 - [x] `frontend/admin/js/pow.js` (pure-JS SHA-256, works over plain HTTP), loaded by the console, developer portal and voice assistant; `withLoginChallenge` solves and resends.
 - [x] No migration. Tests: `tests/api/test_login_challenge.py`. Doc: [security.md](../security.md#sign-in-hardening-e14).
 - [ ] Proof of work, not a person test; a guesser spread over many addresses meets only the lockout. The MFA step is not challenged (its attempts already count toward lockout).
+
+## E30: Sign in with a passkey alone (closes the E20 passwordless item)
+
+- [x] `POST /auth/passkey/options`: no `allowCredentials`, user verification required, a single-use webauthn token (`purpose: signin`). `POST /auth/passkey/verify`: the credential names the passkey and account (a `userHandle` must match it), verified with `require_user_verification`, spent once; refused if locked, disabled, non-local or without 2FA. Signed in with `mfa: passkey`, `passwordless: true`; no code step.
+- [x] Throttled per address like any sign-in; a refused answer counts toward the address only. Registration now asks for discoverable credentials (`residentKey: preferred`).
+- [x] Console: *Sign in with a passkey* on the sign-in page.
+- [x] No migration. Tests: `tests/api/test_passkey_signin.py`. Doc: [security.md](../security.md#signing-in-with-a-passkey-alone-e30).
+- [ ] Console only (the developer portal and voice assistant use passwords). Passkeys added before E30 may need re-adding to be discoverable. No passkey-only accounts: a password and TOTP remain.
 
 ## Phase acceptance (applies to each)
 

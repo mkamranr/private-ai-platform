@@ -43,7 +43,8 @@ async function api(path, options = {}) {
     // credentials that just failed, and tells them nothing.
     // Likewise a wrong code at the second sign-in step (E15).
     const signingIn = path.startsWith('/auth/login') || path.startsWith('/auth/mfa/verify') ||
-      path.startsWith('/auth/mfa/enrol') || path.startsWith('/auth/mfa/passkey');
+      path.startsWith('/auth/mfa/enrol') || path.startsWith('/auth/mfa/passkey') ||
+      path.startsWith('/auth/passkey');
     if (!signingIn) {
       // Expired or revoked. Bounce to login rather than leaving the UI in a state
       // where every request silently fails.

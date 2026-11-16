@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Sign in with a passkey alone (E30)
+- **Passwordless sign-in in the console.** *Sign in with a passkey* asks for no username, password or code: the browser offers your passkeys for this site and you unlock one with your device's PIN or biometric. That is two factors in one step, and it cannot be phished.
+- **Safe by construction.** The challenge names no account, so it reveals nothing about which exist; user verification is required; each challenge works once; locked and disabled accounts are refused; refused attempts count toward the address throttle.
+- **Passkeys added from now on** are requested as discoverable, which passwordless sign-in needs. One added before may need removing and adding again to sign in with it alone; it keeps working at the code step either way.
+- **Upgrade.** No migration. See [docs/security.md](docs/security.md#signing-in-with-a-passkey-alone-e30).
+
 ### Sign-in check after repeated failures (E29)
 - **A proof of work instead of a CAPTCHA.** After 10 failed sign-ins from one address (`AUTH__LOGIN_CHALLENGE_AFTER`, 0 = off), signing in from it needs a small SHA-256 proof of work first: about a second in a browser, doubling every five further failures up to about 15 seconds. Nothing leaves the site; hosted CAPTCHAs need the internet.
 - **Automatic in the platform's pages.** The console, developer portal and voice assistant solve it on their own and say so. API clients that sign in with a password get 401 `challenge_required` with the challenge and must resend with `challenge: {token, solution}`; API keys never meet it.

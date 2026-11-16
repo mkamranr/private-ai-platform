@@ -45,6 +45,10 @@ PUBLIC: set[tuple[str, str]] = {
     # E20: the same step, answered with a passkey. The step token is the credential.
     ("POST", "/api/v1/auth/mfa/passkey/options"),
     ("POST", "/api/v1/auth/mfa/passkey/verify"),
+    # E30: signing in with a passkey alone. The options name no account; the signed
+    # answer to them is the credential.
+    ("POST", "/api/v1/auth/passkey/options"),
+    ("POST", "/api/v1/auth/passkey/verify"),
     # E6: the workflow webhook. Its token is the credential; a bad one is 401 all the same.
     ("POST", "/api/v1/workflow-hooks/{workflow_id}"),
     # The host ops runner authenticates with X-Ops-Runner-Token, not a user (E7).

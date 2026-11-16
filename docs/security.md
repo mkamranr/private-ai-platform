@@ -613,9 +613,31 @@ While the token is good, the second step is skipped. Audit records `mfa: trusted
 and trusted browsers.
 
 **Not covered.** The developer portal and the voice assistant ask for the code, not a
-passkey, and do not offer *Trust this browser*. Passkeys are a second factor only: there
-is no passwordless sign-in. Directory and single sign-on accounts have no platform second
-factor, so no passkeys either.
+passkey, and do not offer *Trust this browser*. Directory and single sign-on accounts have
+no platform second factor, so no passkeys either.
+
+### Signing in with a passkey alone (E30)
+
+The console's sign-in page has **Sign in with a passkey**. No username, password or code
+is asked for: the browser offers the passkeys it holds for this site, the person unlocks
+one with the device's PIN or biometric, and the passkey names the account
+(`POST /auth/passkey/options`, then `POST /auth/passkey/verify`).
+
+- **Why the code step is skipped.** The passkey is something you have, and unlocking it
+  (*user verification*, required here) is something you know or are. That is two
+  factors, and phishing-resistant: the browser binds the answer to this site.
+- **Nothing about accounts is revealed.** The challenge names no account, so asking for
+  one says nothing about which exist; a refused answer counts toward the per-address
+  throttle only. Each challenge works once.
+- **The same rules as any sign-in.** A locked account is refused (with the generic
+  message), a disabled one is told so, and the account must be local with two-factor on,
+  as for adding a passkey. Sign-ins are audited `USER_LOGIN` with `mfa: passkey` and
+  `passwordless: true`.
+- **Which passkeys work.** One the browser can offer without being told the username: a
+  *discoverable* credential. Passkeys added since E30 are requested that way; most
+  platform authenticators and password managers comply, some older security keys cannot.
+  A passkey added before E30 may not be discoverable: it keeps working at the code step,
+  and can be removed and added again to sign in with it alone.
 
 ## What is not built yet
 
@@ -629,8 +651,8 @@ factor, so no passkeys either.
 * **A proof of work, not a CAPTCHA (E29).** It slows repeated guessing from one address
   but does not tell a person from a program; a distributed guesser spread over many
   addresses meets only the per-account lockout.
-* **TOTP and passkeys, as a second factor only.** No passwordless sign-in, push approval
-  or SMS. The developer portal and voice assistant accept only codes. The platform asks
+* **TOTP and passkeys.** Passkeys also sign in alone since E30, in the console only. No
+  push approval or SMS. The developer portal and voice assistant accept only codes. The platform asks
   for no second factor from directory or single sign-on accounts.
 * **The per-address throttle fails open** while Valkey is down.
 

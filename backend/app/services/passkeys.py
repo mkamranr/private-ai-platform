@@ -68,6 +68,10 @@ MAX_PASSKEYS = 10
 _VERIFY_ERRORS = (WebAuthnException, ValueError, KeyError, TypeError)
 
 
+#: Subject of a passwordless challenge, which is issued before anyone is known (E30).
+SIGNIN_SUBJECT = "passkey-signin"
+
+
 @dataclass(frozen=True, slots=True)
 class RelyingParty:
     rp_id: str
@@ -195,7 +199,9 @@ class PasskeyService:
             challenge=challenge,
             timeout=CHALLENGE_TTL_SECONDS * 1000,
             authenticator_selection=AuthenticatorSelectionCriteria(
-                resident_key=ResidentKeyRequirement.DISCOURAGED,
+                # E30: discoverable where the authenticator can, so the browser can offer
+                # it at sign-in without being told the username first.
+                resident_key=ResidentKeyRequirement.PREFERRED,
                 user_verification=UserVerificationRequirement.PREFERRED,
             ),
             exclude_credentials=[
@@ -354,6 +360,87 @@ class PasskeyService:
         except _VERIFY_ERRORS as exc:
             # Includes a signature counter that went backwards: a cloned authenticator.
             log.warning("passkey_assertion_refused", user=str(user.id), error=str(exc))
+            return None
+        passkey.sign_count = verified.new_sign_count
+        passkey.backed_up = bool(verified.credential_backed_up)
+        passkey.last_used_at = dt.datetime.now(dt.UTC)
+        return passkey
+
+    # -- passwordless sign-in (E30) -------------------------------------------------
+    async def signin_options(self) -> PasskeyOptions:
+        """A challenge for signing in with a passkey alone: no username, no password.
+
+        ``allowCredentials`` is empty, so the browser offers the passkeys it holds for
+        this site and the answer names the account. Nothing here depends on any account,
+        so asking reveals nothing about which exist. User verification (a PIN or a
+        biometric on the device) is required: possession and verification together are
+        two factors, which is why this sign-in skips the code step.
+        """
+        rp = self._require_rp()
+        challenge = secrets.token_bytes(32)
+        options = generate_authentication_options(
+            rp_id=rp.rp_id,
+            challenge=challenge,
+            timeout=CHALLENGE_TTL_SECONDS * 1000,
+            allow_credentials=[],
+            user_verification=UserVerificationRequirement.REQUIRED,
+        )
+        token = self._tokens.create_webauthn_token(
+            SIGNIN_SUBJECT, CHALLENGE_TTL_SECONDS, purpose="signin", challenge=_b64url(challenge)
+        )
+        return PasskeyOptions(json.loads(options_to_json(options)), token)
+
+    async def verify_signin(
+        self, *, challenge_token: str, credential: dict[str, Any]
+    ) -> UserPasskey | None:
+        """The passkey that answered a passwordless challenge, or None if the answer does
+        not prove one. Spends the challenge once the passkey is known."""
+        rp = self._require_rp()
+        payload = self._tokens.decode(challenge_token, expected_type="webauthn")
+        if payload.get("purpose") != "signin" or payload.get("sub") != SIGNIN_SUBJECT:
+            raise TokenError("This passkey challenge is not for signing in. Start again.")
+        jti = payload.get("jti")
+        if not jti or await self._revocations.is_revoked(str(jti)):
+            raise TokenError("This passkey challenge was already used. Start again.")
+        try:
+            credential_id = _unb64url(str(credential.get("rawId") or credential.get("id") or ""))
+        except (ValueError, TypeError):
+            return None
+        passkey = (
+            await self._session.execute(
+                select(UserPasskey).where(UserPasskey.credential_id == credential_id)
+            )
+        ).scalar_one_or_none()
+        if passkey is None:
+            return None
+        handle = (credential.get("response") or {}).get("userHandle")
+        if handle:
+            try:
+                if _unb64url(str(handle)) != passkey.user_id.bytes:
+                    return None
+            except (ValueError, TypeError):
+                return None
+        spent = await self._revocations.revoke(
+            jti=str(jti),
+            user_id=passkey.user_id,
+            token_type="webauthn",  # noqa: S106 — a token kind, not a credential
+            reason="used",
+            expires_at=dt.datetime.fromtimestamp(int(payload["exp"]), dt.UTC),
+        )
+        if not spent:
+            raise TokenError("This passkey challenge was already used. Start again.")
+        try:
+            verified = verify_authentication_response(
+                credential=credential,
+                expected_challenge=_unb64url(str(payload["challenge"])),
+                expected_rp_id=rp.rp_id,
+                expected_origin=rp.origins,
+                credential_public_key=passkey.public_key,
+                credential_current_sign_count=passkey.sign_count,
+                require_user_verification=True,
+            )
+        except _VERIFY_ERRORS as exc:
+            log.warning("passkey_signin_refused", user=str(passkey.user_id), error=str(exc))
             return None
         passkey.sign_count = verified.new_sign_count
         passkey.backed_up = bool(verified.credential_backed_up)

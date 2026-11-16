@@ -10,7 +10,9 @@ the user row nor wait on a lock the test transaction holds.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import time
 
 import pytest
 from httpx import AsyncClient
@@ -49,6 +51,12 @@ async def _enrol(client: AsyncClient, username: str) -> tuple[str, dict]:
     )
     assert setup.status_code == 200, setup.text
     secret = setup.json()["secret"]
+    # The previous step's code is accepted for one more step only. Computed in the last
+    # moments of a step, it is two steps old by the time the server checks it, so wait
+    # for the next step to begin.
+    into_step = time.time() % totp.STEP_SECONDS
+    if into_step > totp.STEP_SECONDS - 3:
+        await asyncio.sleep(totp.STEP_SECONDS - into_step + 0.1)
     enabled = await client.post(
         "/api/v1/auth/mfa/enable",
         json={"code": _code(secret, -1)},

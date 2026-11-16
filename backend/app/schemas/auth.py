@@ -83,6 +83,13 @@ class PasskeyVerifyRequest(BaseModel):
     remember_device: bool = False
 
 
+class PasskeySignInRequest(BaseModel):
+    """E30: sign in with a passkey alone. No username: the passkey names the account."""
+
+    challenge_token: str = Field(min_length=1, max_length=4096)
+    credential: dict[str, Any]
+
+
 class PasskeyRegisterRequest(BaseModel):
     challenge_token: str = Field(min_length=1, max_length=4096)
     credential: dict[str, Any]

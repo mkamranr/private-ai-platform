@@ -383,6 +383,74 @@ class AuthService:
             error="That passkey was not accepted. Try again, or enter a code.",
         )
 
+    # -- passwordless sign-in (E30) ----------------------------------------------
+    async def passkey_signin_options(self) -> PasskeyOptions:
+        if self._passkeys is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Passkeys are not configured.")
+        address = get_client_ip() or "unknown"
+        await self._refuse_throttled(address, username="(passkey)")
+        return await self._passkeys.signin_options()
+
+    async def passkey_signin(
+        self, *, challenge_token: str, credential: dict[str, Any], user_agent: str | None = None
+    ) -> TokenPair:
+        """Sign in with a passkey alone (E30).
+
+        The passkey was unlocked on the device (user verification is required), so it is
+        two factors by itself and the code step is skipped. The account must still be
+        local, active, unlocked and have two-factor on, as for adding a passkey. A
+        refused answer names no account, so it counts toward the address throttle only.
+        """
+        if self._passkeys is None:  # pragma: no cover — wiring error
+            raise AuthenticationError("Passkeys are not configured.")
+        address = get_client_ip() or "unknown"
+        await self._refuse_throttled(address, username="(passkey)", user_agent=user_agent)
+        refused = "That passkey was not accepted. Sign in with your password instead."
+
+        passkey = await self._passkeys.verify_signin(
+            challenge_token=challenge_token, credential=credential
+        )
+        user = await self._users.get(passkey.user_id) if passkey is not None else None
+        if passkey is None or user is None:
+            await self._audit.record_independent(
+                AuditAction.USER_LOGIN,
+                result=AuditResult.FAILURE,
+                username="(passkey)",
+                message="Passkey not accepted",
+                metadata={"method": "passkey"},
+                user_agent=user_agent,
+            )
+            await self._address_failed(address)
+            raise AuthenticationError(refused)
+
+        now = dt.datetime.now(dt.UTC)
+        problem = None
+        if user.locked_until is not None and user.locked_until > now:
+            problem = "Account is locked"
+        elif not user.is_active:
+            problem = "Account is disabled"
+        elif user.auth_provider != "local" or not user.mfa_enabled:
+            problem = "Passkey sign-in needs a local account with two-factor on"
+        if problem is not None:
+            await self._audit.record_independent(
+                AuditAction.USER_LOGIN,
+                result=AuditResult.DENIED,
+                user_id=user.id,
+                username=user.username,
+                message=problem,
+                metadata={"method": "passkey"},
+                user_agent=user_agent,
+            )
+            await self._address_failed(address)
+            # Disabled is said plainly, as for a password: they proved who they are.
+            if not user.is_active:
+                raise AuthenticationError("This account is disabled.")
+            raise AuthenticationError(refused)
+
+        return await self._signed_in(
+            user, user_agent=user_agent, metadata={"mfa": "passkey", "passwordless": True}
+        )
+
     async def _second_step(
         self,
         user: User,
