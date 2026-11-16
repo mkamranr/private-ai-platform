@@ -43,7 +43,7 @@ async function api(path, options = {}) {
     // credentials that just failed, and tells them nothing.
     // Likewise a wrong code at the second sign-in step (E15).
     const signingIn = path.startsWith('/auth/login') || path.startsWith('/auth/mfa/verify') ||
-      path.startsWith('/auth/mfa/enrol');
+      path.startsWith('/auth/mfa/enrol') || path.startsWith('/auth/mfa/passkey');
     if (!signingIn) {
       // Expired or revoked. Bounce to login rather than leaving the UI in a state
       // where every request silently fails.
@@ -4550,16 +4550,19 @@ document.getElementById('login-form').onsubmit = async (event) => {
   const error = document.getElementById('login-error');
   error.classList.add('d-none');
   try {
+    const username = document.getElementById('username').value;
     const result = await api('/auth/login', {
       method: 'POST',
       body: JSON.stringify({
-        username: document.getElementById('username').value,
+        username,
         password: document.getElementById('password').value,
+        // E20: a browser trusted at an earlier two-factor step (mfa.js).
+        device_token: trustedDeviceToken(username),
       }),
     });
     if (result.mfa_required) {  // E15: the password was right; a code is next
       document.getElementById('password').value = '';
-      startMfaStep(result);
+      startMfaStep({ ...result, username });
       return;
     }
     token.set(result.access_token);

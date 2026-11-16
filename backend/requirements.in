@@ -63,6 +63,9 @@ ldap3==2.9.1
 # QR codes for two-factor enrolment (E15), rendered as SVG on the server so no browser
 # library and no network is involved. Pure Python, no dependencies.
 segno==1.6.6
+# Passkeys and security keys as a second factor (E20): WebAuthn registration and
+# assertion verification. Pulls in cbor2, pyOpenSSL and pyasn1-modules.
+webauthn==3.0.1
 
 # --- Scheduling (M22; workers land in Phase 1) ---
 APScheduler==3.11.3

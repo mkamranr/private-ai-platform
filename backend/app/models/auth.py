@@ -23,6 +23,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Table,
     Text,
@@ -238,6 +239,73 @@ class RevokedToken(Base):
 
     def __repr__(self) -> str:
         return f"<RevokedToken {self.token_type} {self.reason}>"
+
+
+class UserPasskey(UUIDPrimaryKeyMixin, Base):
+    """A passkey or security key that can answer the two-factor step (E20).
+
+    Only the public key is stored. The private key never leaves the authenticator, so a
+    database read reveals nothing that signs in.
+    """
+
+    __tablename__ = "user_passkeys"
+    __table_args__ = (Index("ix_user_passkeys_user_id", "user_id"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The authenticator's id for this credential. Unique across the platform.
+    credential_id: Mapped[bytes] = mapped_column(LargeBinary, unique=True, nullable=False)
+    #: COSE-encoded public key.
+    public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    #: The authenticator's signature counter. A value that goes backwards means the
+    #: credential was cloned, and the sign-in is refused. Synced passkeys report 0.
+    sign_count: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    #: How the browser may reach the authenticator (usb, nfc, ble, internal, hybrid).
+    transports: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    #: The person's own label, such as "YubiKey" or "Work laptop".
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: Whether the passkey is synced between devices (a password manager, a platform
+    #: account) rather than bound to one authenticator.
+    backed_up: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+    last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    def __repr__(self) -> str:
+        return f"<UserPasskey {self.name}>"
+
+
+class TrustedDevice(UUIDPrimaryKeyMixin, Base):
+    """A browser that may skip the two-factor step for a while (E20).
+
+    It holds a random token; only its SHA-256 hash is stored. The token is good only
+    while the account's ``session_version`` is the one it was issued under, so changing
+    the password, signing out everywhere, or an administrator resetting 2FA forgets every
+    trusted browser at once.
+    """
+
+    __tablename__ = "trusted_devices"
+    __table_args__ = (Index("ix_trusted_devices_user_id", "user_id"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: A short description from the browser's user agent, so the person can tell them apart.
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    def __repr__(self) -> str:
+        return f"<TrustedDevice {self.label}>"
 
 
 def permission_uuid() -> uuid.UUID:

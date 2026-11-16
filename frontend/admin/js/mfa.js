@@ -10,10 +10,106 @@
  * The QR code is an SVG rendered by the server (no browser library, no network). It is
  * the server's own output, not user input, which is why it is inserted as markup.
  *
+ * E20 adds passkeys (WebAuthn) as another answer to the second step, and "trust this
+ * browser": a random token the server hands back, kept in localStorage per username and
+ * sent with the password next time. Only its hash is stored on the server; signing out
+ * everywhere or changing the password makes it worthless.
+ *
  * Relies on admin.js globals: api, token, showApp, esc, alert, guard, currentUser.
  */
 
-let mfaChallenge = null;  // { mfa_token, enrolment_required } while the step is open
+let mfaChallenge = null;  // { mfa_token, enrolment_required, username, ... } while open
+
+/* ---------------------------------------------------------------- E20 helpers */
+
+const DEVICE_KEY_PREFIX = 'aip.trusted-device.';
+
+function trustedDeviceToken(username) {
+  try { return localStorage.getItem(DEVICE_KEY_PREFIX + (username || '').toLowerCase()); }
+  catch { return null; }
+}
+
+function keepDeviceToken(username, result) {
+  if (!result.device_token || !username) return;
+  try { localStorage.setItem(DEVICE_KEY_PREFIX + username.toLowerCase(), result.device_token); }
+  catch { /* private window: the browser is simply not remembered */ }
+}
+
+function forgetDeviceToken(username) {
+  try { localStorage.removeItem(DEVICE_KEY_PREFIX + (username || '').toLowerCase()); }
+  catch { /* nothing stored */ }
+}
+
+function b64urlToBuffer(value) {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0)).buffer;
+}
+
+function bufferToB64url(buffer) {
+  let text = '';
+  new Uint8Array(buffer).forEach((b) => { text += String.fromCharCode(b); });
+  return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function passkeysInBrowser() {
+  return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+}
+
+/** The server's JSON options -> what navigator.credentials wants (ArrayBuffers). */
+function decodeCreationOptions(options) {
+  if (PublicKeyCredential.parseCreationOptionsFromJSON) {
+    return PublicKeyCredential.parseCreationOptionsFromJSON(options);
+  }
+  return {
+    ...options,
+    challenge: b64urlToBuffer(options.challenge),
+    user: { ...options.user, id: b64urlToBuffer(options.user.id) },
+    excludeCredentials: (options.excludeCredentials || [])
+      .map((c) => ({ ...c, id: b64urlToBuffer(c.id) })),
+  };
+}
+
+function decodeRequestOptions(options) {
+  if (PublicKeyCredential.parseRequestOptionsFromJSON) {
+    return PublicKeyCredential.parseRequestOptionsFromJSON(options);
+  }
+  return {
+    ...options,
+    challenge: b64urlToBuffer(options.challenge),
+    allowCredentials: (options.allowCredentials || [])
+      .map((c) => ({ ...c, id: b64urlToBuffer(c.id) })),
+  };
+}
+
+/** A PublicKeyCredential -> JSON the server can verify. */
+function credentialJSON(credential) {
+  if (typeof credential.toJSON === 'function') return credential.toJSON();
+  const r = credential.response;
+  const response = { clientDataJSON: bufferToB64url(r.clientDataJSON) };
+  if (r.attestationObject) {
+    response.attestationObject = bufferToB64url(r.attestationObject);
+    response.transports = typeof r.getTransports === 'function' ? r.getTransports() : [];
+  } else {
+    response.authenticatorData = bufferToB64url(r.authenticatorData);
+    response.signature = bufferToB64url(r.signature);
+    response.userHandle = r.userHandle ? bufferToB64url(r.userHandle) : null;
+  }
+  return {
+    id: credential.id,
+    rawId: bufferToB64url(credential.rawId),
+    type: credential.type,
+    response,
+    clientExtensionResults: credential.getClientExtensionResults(),
+  };
+}
+
+/** The browser's own refusals ("cancelled", "timed out") in plain words. */
+function passkeyBrowserError(err) {
+  if (err && err.name === 'NotAllowedError') return 'The passkey request was cancelled or timed out.';
+  if (err && err.name === 'InvalidStateError') return 'That passkey is already on your account.';
+  return (err && err.message) || 'The passkey did not work.';
+}
 
 /* ---------------------------------------------------------------- sign-in step */
 
@@ -52,8 +148,59 @@ function startMfaStep(challenge) {
     enrol.classList.add('d-none');
     enrol.innerHTML = '';
   }
+  // E20: passkey and "trust this browser", only when the server offers them.
+  const passkey = document.getElementById('mfa-passkey');
+  passkey.classList.toggle(
+    'd-none', challenge.enrolment_required || !challenge.passkey_available || !passkeysInBrowser(),
+  );
+  const days = challenge.enrolment_required ? 0 : (challenge.remember_days || 0);
+  document.getElementById('mfa-remember-row').classList.toggle('d-none', days <= 0);
+  document.getElementById('mfa-remember').checked = false;
+  document.getElementById('mfa-remember-label').textContent =
+    `Trust this browser for ${days} day${days === 1 ? '' : 's'}`;
   code.focus();
 }
+
+function rememberChosen() {
+  return !document.getElementById('mfa-remember-row').classList.contains('d-none') &&
+    document.getElementById('mfa-remember').checked;
+}
+
+document.getElementById('mfa-passkey').onclick = async (event) => {
+  if (!mfaChallenge) return;
+  const button = event.target;
+  document.getElementById('mfa-error').classList.add('d-none');
+  button.disabled = true;
+  try {
+    const options = await api('/auth/mfa/passkey/options', {
+      method: 'POST',
+      body: JSON.stringify({ mfa_token: mfaChallenge.mfa_token }),
+    });
+    let credential;
+    try {
+      credential = await navigator.credentials.get({
+        publicKey: decodeRequestOptions(options.public_key),
+      });
+    } catch (err) { showMfaError(passkeyBrowserError(err)); return; }
+    const result = await api('/auth/mfa/passkey/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        mfa_token: mfaChallenge.mfa_token,
+        challenge_token: options.challenge_token,
+        credential: credentialJSON(credential),
+        remember_device: rememberChosen(),
+      }),
+    });
+    keepDeviceToken(mfaChallenge.username, result);
+    token.set(result.access_token);
+    resetMfaStep();
+    await showApp();
+  } catch (err) {
+    showMfaError(err.message);
+  } finally {
+    button.disabled = false;
+  }
+};
 
 function resetMfaStep() {
   mfaChallenge = null;
@@ -139,8 +286,11 @@ document.getElementById('mfa-form').onsubmit = async (event) => {
     }
     const result = await api('/auth/mfa/verify', {
       method: 'POST',
-      body: JSON.stringify({ mfa_token: mfaChallenge.mfa_token, code }),
+      body: JSON.stringify({
+        mfa_token: mfaChallenge.mfa_token, code, remember_device: rememberChosen(),
+      }),
     });
+    keepDeviceToken(mfaChallenge.username, result);
     token.set(result.access_token);
     resetMfaStep();
     await showApp();
@@ -243,8 +393,10 @@ async function renderMfaDialog() {
           : '<button class="btn btn-outline-danger btn-sm ms-auto" type="button" ' +
             'id="mfa-off">Turn off</button>'}
       </div>
-    </form>`;
+    </form>
+    <div id="mfa-factors"></div>`;
   document.getElementById('mfa-manage-form').onsubmit = (event) => event.preventDefault();
+  renderSecondFactors(document.getElementById('mfa-factors'), status);
 
   document.getElementById('mfa-regen').onclick = (event) => guard(event.target, async () => {
     try {
@@ -270,7 +422,130 @@ async function renderMfaDialog() {
             code: document.getElementById('mfa-manage-code').value.trim(),
           }),
         });
+        forgetDeviceToken(currentUser?.username);  // the server deleted it too (E20)
         alert('Two-factor authentication is off.', 'success');
+        await renderMfaDialog();
+      } catch (err) { dialogError(err.message); }
+    });
+  }
+}
+
+/* E20: passkeys and trusted browsers, inside the "on" view of the dialog. */
+async function renderSecondFactors(box, status) {
+  let passkeys = [];
+  let devices = [];
+  try {
+    [passkeys, devices] = await Promise.all([api('/auth/passkeys'), api('/auth/trusted-devices')]);
+  } catch (err) {
+    box.innerHTML = `<div class="alert alert-danger small mt-3">${esc(err.message)}</div>`;
+    return;
+  }
+  const date = (value) => (value ? new Date(value).toLocaleDateString() : 'never');
+  let passkeyPart;
+  if (!status.passkeys_supported) {
+    passkeyPart = `<p class="small text-secondary mb-0">Passkeys need the platform to be
+      reached by a host name over HTTPS. Ask an administrator to set the public address.</p>`;
+  } else if (!passkeysInBrowser()) {
+    passkeyPart = '<p class="small text-secondary mb-0">This browser cannot use passkeys.</p>';
+  } else {
+    passkeyPart = `
+      <p class="small text-secondary">A security key, or your phone or laptop's screen lock,
+        can answer the second step instead of a code.</p>
+      ${passkeys.length ? `<ul class="list-group list-group-flush small mb-2">
+        ${passkeys.map((p) => `
+          <li class="list-group-item px-0 d-flex align-items-center gap-2">
+            <span class="flex-grow-1"><strong>${esc(p.name)}</strong>
+              ${p.backed_up ? '<span class="badge text-bg-light ms-1">synced</span>' : ''}<br>
+              <span class="text-secondary">Added ${esc(date(p.created_at))},
+                last used ${esc(date(p.last_used_at))}</span></span>
+            <button class="btn btn-sm btn-outline-danger" type="button"
+                    data-passkey-remove="${esc(p.id)}" data-passkey-name="${esc(p.name)}"
+                    >Remove</button>
+          </li>`).join('')}
+      </ul>` : ''}
+      <form id="passkey-add-form" class="row g-2">
+        <div class="col-sm-5"><input class="form-control form-control-sm" id="passkey-name"
+          maxlength="64" placeholder="Name, e.g. YubiKey" required></div>
+        <div class="col-sm-4"><input class="form-control form-control-sm" type="password"
+          id="passkey-password" autocomplete="current-password" placeholder="Your password"
+          required></div>
+        <div class="col-sm-3"><button class="btn btn-sm btn-outline-primary w-100"
+          type="submit">Add passkey</button></div>
+      </form>`;
+  }
+  const devicePart = status.remember_days > 0 || devices.length ? `
+    <h6 class="mt-4 mb-2">Trusted browsers</h6>
+    ${devices.length ? `<ul class="list-group list-group-flush small mb-2">
+      ${devices.map((d) => `
+        <li class="list-group-item px-0 d-flex align-items-center gap-2">
+          <span class="flex-grow-1"><strong>${esc(d.label)}</strong><br>
+            <span class="text-secondary">Trusted ${esc(date(d.created_at))}, until
+              ${esc(date(d.expires_at))}</span></span>
+          <button class="btn btn-sm btn-outline-secondary" type="button"
+                  data-device-forget="${esc(d.id)}">Forget</button>
+        </li>`).join('')}
+    </ul>
+    <button class="btn btn-sm btn-outline-danger" type="button" id="device-forget-all"
+            >Forget all</button>`
+    : `<p class="small text-secondary mb-0">None. Tick "Trust this browser" at the code step
+        to skip it for ${status.remember_days} day(s) on that browser.</p>`}` : '';
+
+  box.innerHTML = `<hr><h6 class="mb-2">Passkeys</h6>${passkeyPart}${devicePart}`;
+
+  const add = document.getElementById('passkey-add-form');
+  if (add) {
+    add.onsubmit = (event) => {
+      event.preventDefault();
+      guard(event.submitter, async () => {
+        try {
+          const options = await api('/auth/passkeys/options', {
+            method: 'POST',
+            body: JSON.stringify({ password: document.getElementById('passkey-password').value }),
+          });
+          let credential;
+          try {
+            credential = await navigator.credentials.create({
+              publicKey: decodeCreationOptions(options.public_key),
+            });
+          } catch (err) { dialogError(passkeyBrowserError(err)); return; }
+          await api('/auth/passkeys', {
+            method: 'POST',
+            body: JSON.stringify({
+              challenge_token: options.challenge_token,
+              credential: credentialJSON(credential),
+              name: document.getElementById('passkey-name').value.trim(),
+            }),
+          });
+          alert('Passkey added.', 'success');
+          await renderMfaDialog();
+        } catch (err) { dialogError(err.message); }
+      });
+    };
+  }
+  box.querySelectorAll('[data-passkey-remove]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(`Remove the passkey "${button.dataset.passkeyName}"?`)) return;
+      try {
+        await api(`/auth/passkeys/${button.dataset.passkeyRemove}`, { method: 'DELETE' });
+        await renderMfaDialog();
+      } catch (err) { dialogError(err.message); }
+    });
+  });
+  box.querySelectorAll('[data-device-forget]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      try {
+        await api(`/auth/trusted-devices/${button.dataset.deviceForget}`, { method: 'DELETE' });
+        await renderMfaDialog();
+      } catch (err) { dialogError(err.message); }
+    });
+  });
+  const all = document.getElementById('device-forget-all');
+  if (all) {
+    all.onclick = () => guard(all, async () => {
+      if (!confirm('Forget every trusted browser? Each will ask for a code again.')) return;
+      try {
+        await api('/auth/trusted-devices', { method: 'DELETE' });
+        forgetDeviceToken(currentUser?.username);
         await renderMfaDialog();
       } catch (err) { dialogError(err.message); }
     });

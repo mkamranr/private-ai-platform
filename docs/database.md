@@ -75,9 +75,21 @@ Migration `20260807_1705_phase0_identity_rbac_audit_and_system_settings`.
 | `mfa_recovery_hashes` | jsonb | SHA-256 hashes of unused recovery codes, default `[]` |
 | `created_at`, `updated_at` | timestamptz | |
 
+### `user_passkeys` (E20)
+`id` (PK), `user_id` (FK, cascade, indexed), `credential_id` (bytea, unique), `public_key`
+(bytea, COSE), `sign_count` (bigint; a lower value at sign-in is refused), `transports`
+(jsonb), `name` (varchar 64), `backed_up` (synced passkey), `created_at`, `last_used_at`.
+Deleted when two-factor authentication is turned off or reset.
+
+### `trusted_devices` (E20)
+`id` (PK), `user_id` (FK, cascade, indexed), `token_hash` (varchar 64, unique; SHA-256 of
+the browser's token, never the token), `session_version` (the account's at issue; a
+different value means the token no longer works), `label` ("Firefox on Windows"),
+`created_at`, `expires_at`, `last_used_at`.
+
 ### `revoked_tokens` (E14)
-`jti` (PK), `user_id` (FK, cascade), `token_type`, `reason` (`logout`, `rotated`, or `mfa`
-for a spent sign-in step token, E15),
+`jti` (PK), `user_id` (FK, cascade), `token_type`, `reason` (`logout`, `rotated`, `mfa`
+for a spent sign-in step token (E15), or `used` for a spent passkey challenge (E20)),
 `expires_at` (indexed; rows are pruned hourly once past it), `revoked_at`.
 
 ### `roles`

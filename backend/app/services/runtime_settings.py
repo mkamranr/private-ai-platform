@@ -245,6 +245,16 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next sign-in",
         _one_of("off", "admins", "all"),
     ),
+    RuntimeSetting(
+        "auth.mfa_remember_days",
+        "security",
+        "Trust a browser for (days)",
+        'After the two-factor step, a person may tick "trust this browser" and skip the '
+        "step there for this many days. Changing the password, signing out everywhere or "
+        "a 2FA reset forgets every trusted browser. 0 turns the option off. Read at every "
+        "sign-in.",
+        "Next sign-in",
+    ),
 )
 BY_KEY = {s.key: s for s in RUNTIME_SETTINGS}
 

@@ -7,6 +7,7 @@ discovery and the OIDC redirect flow.
 from __future__ import annotations
 
 import secrets
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -18,7 +19,9 @@ from app.api.deps import (
     AuthServiceDep,
     CurrentUserDep,
     EffectiveSettingsDep,
+    PasskeyServiceDep,
     RedisDep,
+    TrustedDeviceServiceDep,
 )
 from app.api.routing import CommittingRoute
 from app.config.settings import Settings
@@ -38,9 +41,14 @@ from app.schemas.auth import (
     MfaStatusResponse,
     MfaTokenRequest,
     MfaVerifyRequest,
+    PasskeyOptionsResponse,
+    PasskeyRead,
+    PasskeyRegisterRequest,
+    PasskeyVerifyRequest,
     RecoveryCodesResponse,
     RefreshRequest,
     TokenResponse,
+    TrustedDeviceRead,
 )
 from app.schemas.common import MessageResponse
 from app.services.auth import MfaChallenge, TokenPair
@@ -60,6 +68,8 @@ def _tokens(pair: TokenPair) -> TokenResponse:
         refresh_token=pair.refresh_token,
         token_type=pair.token_type,
         expires_in=pair.expires_in,
+        device_token=pair.device_token,
+        device_expires_at=pair.device_expires_at,
     )
 
 
@@ -88,6 +98,7 @@ async def login(
         payload.username,
         payload.password,
         user_agent=request.headers.get("user-agent"),
+        device_token=payload.device_token,
     )
     if isinstance(result, MfaChallenge):
         # E15: the password was right; the authenticator code is the next step.
@@ -95,6 +106,8 @@ async def login(
             mfa_token=result.mfa_token,
             enrolment_required=result.enrolment_required,
             expires_in=result.expires_in,
+            passkey_available=result.passkey_available,
+            remember_days=result.remember_days,
         )
     return _tokens(result)
 
@@ -110,9 +123,120 @@ async def mfa_verify(
     wrong code counts toward the account lockout, like a wrong password.
     """
     pair = await auth.complete_mfa(
-        payload.mfa_token, payload.code, user_agent=request.headers.get("user-agent")
+        payload.mfa_token,
+        payload.code,
+        user_agent=request.headers.get("user-agent"),
+        remember_device=payload.remember_device,
     )
     return _tokens(pair)
+
+
+# -- passkeys and trusted browsers (E20) -------------------------------------------
+@router.post(
+    "/mfa/passkey/options",
+    response_model=PasskeyOptionsResponse,
+    summary="Sign in: a passkey challenge",
+)
+async def mfa_passkey_options(
+    payload: MfaTokenRequest, auth: AuthServiceDep
+) -> PasskeyOptionsResponse:
+    """For the two-factor step: options for ``navigator.credentials.get``."""
+    options = await auth.passkey_options(payload.mfa_token)
+    return PasskeyOptionsResponse(
+        public_key=options.public_key, challenge_token=options.challenge_token
+    )
+
+
+@router.post(
+    "/mfa/passkey/verify", response_model=TokenResponse, summary="Sign in: the passkey step"
+)
+async def mfa_passkey_verify(
+    payload: PasskeyVerifyRequest, request: Request, auth: AuthServiceDep
+) -> TokenResponse:
+    """Finish the two-factor step with a passkey. A failure counts like a wrong code."""
+    pair = await auth.complete_passkey(
+        payload.mfa_token,
+        challenge_token=payload.challenge_token,
+        credential=payload.credential,
+        user_agent=request.headers.get("user-agent"),
+        remember_device=payload.remember_device,
+    )
+    return _tokens(pair)
+
+
+@router.get("/passkeys", response_model=list[PasskeyRead], summary="Your passkeys")
+async def list_passkeys(user: CurrentUserDep, passkeys: PasskeyServiceDep) -> list[PasskeyRead]:
+    return [PasskeyRead.model_validate(p) for p in await passkeys.list_for(user)]
+
+
+@router.post(
+    "/passkeys/options",
+    response_model=PasskeyOptionsResponse,
+    summary="Start adding a passkey",
+)
+async def passkey_registration_options(
+    payload: MfaPasswordRequest, user: CurrentUserDep, auth: AuthServiceDep
+) -> PasskeyOptionsResponse:
+    """Needs the password, and two-factor authentication already on."""
+    options = await auth.passkey_registration_options(user, payload.password)
+    return PasskeyOptionsResponse(
+        public_key=options.public_key, challenge_token=options.challenge_token
+    )
+
+
+@router.post(
+    "/passkeys",
+    response_model=PasskeyRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a passkey",
+)
+async def register_passkey(
+    payload: PasskeyRegisterRequest, user: CurrentUserDep, passkeys: PasskeyServiceDep
+) -> PasskeyRead:
+    passkey = await passkeys.register(
+        user,
+        challenge_token=payload.challenge_token,
+        credential=payload.credential,
+        name=payload.name,
+    )
+    return PasskeyRead.model_validate(passkey)
+
+
+@router.delete("/passkeys/{passkey_id}", response_model=MessageResponse, summary="Remove a passkey")
+async def remove_passkey(
+    passkey_id: uuid.UUID, user: CurrentUserDep, passkeys: PasskeyServiceDep
+) -> MessageResponse:
+    await passkeys.remove(user, passkey_id)
+    return MessageResponse(message="Passkey removed.")
+
+
+@router.get(
+    "/trusted-devices", response_model=list[TrustedDeviceRead], summary="Your trusted browsers"
+)
+async def list_trusted_devices(
+    user: CurrentUserDep, devices: TrustedDeviceServiceDep
+) -> list[TrustedDeviceRead]:
+    return [TrustedDeviceRead.model_validate(d) for d in await devices.list_for(user)]
+
+
+@router.delete(
+    "/trusted-devices/{device_id}", response_model=MessageResponse, summary="Forget a browser"
+)
+async def forget_trusted_device(
+    device_id: uuid.UUID, user: CurrentUserDep, devices: TrustedDeviceServiceDep
+) -> MessageResponse:
+    await devices.forget(user, device_id)
+    return MessageResponse(message="That browser will ask for the second step again.")
+
+
+@router.delete(
+    "/trusted-devices", response_model=MessageResponse, summary="Forget every trusted browser"
+)
+async def forget_all_trusted_devices(
+    user: CurrentUserDep, devices: TrustedDeviceServiceDep
+) -> MessageResponse:
+    count = await devices.forget_all(user)
+    return MessageResponse(message=f"Forgot {count} trusted browser(s).")
 
 
 @router.post(
@@ -141,13 +265,23 @@ async def mfa_enrol_finish(
 
 
 @router.get("/mfa", response_model=MfaStatusResponse, summary="Two-factor status")
-async def mfa_status(user: CurrentUserDep, auth: AuthServiceDep) -> MfaStatusResponse:
+async def mfa_status(
+    user: CurrentUserDep,
+    auth: AuthServiceDep,
+    passkeys: PasskeyServiceDep,
+    devices: TrustedDeviceServiceDep,
+    effective: EffectiveSettingsDep,
+) -> MfaStatusResponse:
     return MfaStatusResponse(
         available=user.auth_provider == "local",
         enabled=user.mfa_enabled,
         enabled_at=user.mfa_enabled_at,
         recovery_codes_left=user.mfa_recovery_codes_left,
         required=auth.mfa_required(user),
+        passkeys_supported=passkeys.relying_party is not None,
+        passkeys=await passkeys.count_for(user),
+        trusted_devices=len(await devices.list_for(user)),
+        remember_days=effective.auth.mfa_remember_days,
     )
 
 

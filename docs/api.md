@@ -102,6 +102,15 @@ credential exists. Responses carry no hostnames, DSNs or stack traces.
 | POST | `/auth/mfa/enable` | authenticated | `{code}` → new token pair + recovery codes; other sessions signed out (E15) |
 | POST | `/auth/mfa/disable` | authenticated | `{password, code}`. 403 while policy requires MFA (E15) |
 | POST | `/auth/mfa/recovery-codes` | authenticated | `{code}` → ten new recovery codes (E15) |
+| POST | `/auth/mfa/passkey/options` | — | `{mfa_token}` → `{public_key, challenge_token}` for `navigator.credentials.get` (E20) |
+| POST | `/auth/mfa/passkey/verify` | — | `{mfa_token, challenge_token, credential, remember_device}` → token pair. A passkey answers the second step (E20) |
+| GET | `/auth/passkeys` | authenticated | Own passkeys: name, transports, synced, added, last used (E20) |
+| POST | `/auth/passkeys/options` | authenticated | `{password}` → `{public_key, challenge_token}` for `navigator.credentials.create`. Needs MFA on; 409 when the site has no host name over HTTPS (E20) |
+| POST | `/auth/passkeys` | authenticated | `{challenge_token, credential, name}` → 201, the passkey (E20) |
+| DELETE | `/auth/passkeys/{id}` | authenticated | Remove one of your passkeys (E20) |
+| GET | `/auth/trusted-devices` | authenticated | Browsers trusted to skip the second step (E20) |
+| DELETE | `/auth/trusted-devices/{id}` | authenticated | Forget one (E20) |
+| DELETE | `/auth/trusted-devices` | authenticated | Forget them all (E20) |
 | GET | `/auth/me` | authenticated | Identity + resolved permission list |
 
 Login failures return one message regardless of cause — distinguishing "no such user"
@@ -121,6 +130,13 @@ With two-factor authentication on (E15), `/auth/login` answers a correct passwor
 `{mfa_required: true, mfa_token, enrolment_required, expires_in}` instead of tokens. A
 client that only reads `access_token` must check `mfa_required` first. See
 [security.md](security.md#two-factor-authentication-e15).
+
+E20 adds `passkey_available` and `remember_days` to that challenge. `/auth/mfa/verify` and
+`/auth/mfa/passkey/verify` take `remember_device: true`, and the token pair then carries
+`device_token` and `device_expires_at`. Send the `device_token` back as `device_token` on
+the next `/auth/login` for that account to skip the second step. `/auth/mfa` gains
+`passkeys_supported`, `passkeys`, `trusted_devices` and `remember_days`. See
+[security.md](security.md#passkeys-and-trusted-browsers-e20).
 
 ---
 

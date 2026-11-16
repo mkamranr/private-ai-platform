@@ -42,6 +42,9 @@ PUBLIC: set[tuple[str, str]] = {
     ("POST", "/api/v1/auth/mfa/verify"),
     ("POST", "/api/v1/auth/mfa/enrol/start"),
     ("POST", "/api/v1/auth/mfa/enrol/finish"),
+    # E20: the same step, answered with a passkey. The step token is the credential.
+    ("POST", "/api/v1/auth/mfa/passkey/options"),
+    ("POST", "/api/v1/auth/mfa/passkey/verify"),
     # E6: the workflow webhook. Its token is the credential; a bad one is 401 all the same.
     ("POST", "/api/v1/workflow-hooks/{workflow_id}"),
     # The host ops runner authenticates with X-Ops-Runner-Token, not a user (E7).
@@ -70,6 +73,14 @@ ANY_AUTHENTICATED: set[tuple[str, str]] = {
     ("POST", "/api/v1/auth/mfa/enable"),
     ("POST", "/api/v1/auth/mfa/disable"),
     ("POST", "/api/v1/auth/mfa/recovery-codes"),
+    # E20: anyone manages their own passkeys and trusted browsers.
+    ("GET", "/api/v1/auth/passkeys"),
+    ("POST", "/api/v1/auth/passkeys/options"),
+    ("POST", "/api/v1/auth/passkeys"),
+    ("DELETE", "/api/v1/auth/passkeys/{passkey_id}"),
+    ("GET", "/api/v1/auth/trusted-devices"),
+    ("DELETE", "/api/v1/auth/trusted-devices/{device_id}"),
+    ("DELETE", "/api/v1/auth/trusted-devices"),
     ("POST", "/api/v1/users/me/password"),
     ("GET", "/api/v1/teams/mine"),
     # Checks the permission for the *kind* of resource being moved, which is only known

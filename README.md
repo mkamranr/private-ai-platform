@@ -97,8 +97,8 @@
 
 ### Security and access
 - **Sign-in.** Local accounts, OIDC single sign-on and LDAP/Active Directory, plus
-  authenticator-app two-factor authentication. Admins can be required to use it, or
-  everyone can.
+  two-factor authentication with an authenticator app or a passkey, and optional
+  trusted browsers. Admins can be required to use it, or everyone can.
 - **Hardening.** Account lockout, sign-in throttling, refresh-token rotation with theft
   detection, and *sign out everywhere*.
 - **Roles and teams.** Role-based permissions and team-owned models, keys, agents and

@@ -147,12 +147,14 @@ from app.services.node_enrollment import NodeEnrollmentService
 from app.services.notification_senders import EmailSender, WebhookSender
 from app.services.notifications import ChannelSender, NotificationService
 from app.services.ops import OpsService
+from app.services.passkeys import PasskeyService
 from app.services.quotas import QuotaService
 from app.services.rag_eval import RagEvalService
 from app.services.retrieval import RetrievalService
 from app.services.runtime_settings import RUNTIME, RuntimeSettingsService
 from app.services.teams import ScopeGuard, TeamService, scope_for
 from app.services.tool_pipeline import ToolPipeline
+from app.services.trusted_devices import TrustedDeviceService
 from app.services.user import UserService
 from app.services.vector_store import QdrantVectorStore
 from app.services.voice import VoiceSessionService
@@ -353,10 +355,30 @@ def get_auth_service(
         # A runtime setting (E15), so turning the policy on needs no restart.
         mfa_policy=effective.auth.mfa_required,
         mfa_challenge_ttl=effective.auth.mfa_challenge_ttl_seconds,
+        # E20: passkeys for the two-factor step, and browsers trusted to skip it.
+        passkeys=PasskeyService(session, effective, tokens, audit, RevokedTokenRepository(session)),
+        devices=TrustedDeviceService(session, audit),
+        remember_days=effective.auth.mfa_remember_days,
     )
 
 
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+
+
+def get_passkey_service(
+    session: SessionDep, tokens: TokensDep, audit: AuditDep, effective: EffectiveSettingsDep
+) -> PasskeyService:
+    return PasskeyService(session, effective, tokens, audit, RevokedTokenRepository(session))
+
+
+PasskeyServiceDep = Annotated[PasskeyService, Depends(get_passkey_service)]
+
+
+def get_trusted_device_service(session: SessionDep, audit: AuditDep) -> TrustedDeviceService:
+    return TrustedDeviceService(session, audit)
+
+
+TrustedDeviceServiceDep = Annotated[TrustedDeviceService, Depends(get_trusted_device_service)]
 
 
 def get_user_service(
