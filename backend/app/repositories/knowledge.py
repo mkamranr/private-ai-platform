@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from app.core.scope import Scope
@@ -137,6 +137,25 @@ class DocumentRepository(BaseRepository[Document]):
             .with_for_update(skip_locked=True)
         )
         return (await self.session.execute(stmt)).scalars().first()
+
+    async def requeue_refused(self, now: dt.datetime) -> list[uuid.UUID]:
+        """E32: queue again every document a budget refused whose budget has reset.
+
+        One statement, so two workers cannot both requeue (and later double-index) one
+        document: the second finds the row already UPLOADED with no ``retry_at``.
+        """
+        stmt = (
+            update(Document)
+            .where(
+                Document.status == DocumentStatus.FAILED,
+                Document.retry_at.is_not(None),
+                Document.retry_at <= now,
+                Document.superseded_at.is_(None),
+            )
+            .values(status=DocumentStatus.UPLOADED, retry_at=None, error=None, status_detail=None)
+            .returning(Document.id)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def count_by_status(self, knowledge_base_id: uuid.UUID) -> dict[str, int]:
         rows = (

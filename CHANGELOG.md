@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Documents a budget refused are retried automatically (E32)
+- **No more manual re-ingest after a budget resets.** With platform budgets enforced (E24), a document whose embedding a used-up team or model budget refused is still marked FAILED with the reason, and now also says when it will be retried: just after the budget resets. The ingestion worker then queues it again by itself.
+- **Bounded.** A budget still used up refuses it again with a new time, so it costs one check per reset. Other failures are not retried. Re-ingesting by hand cancels the pending retry.
+- **Upgrade.** Migration `c4e6a8b0d2f3` adds `documents.retry_at`. See [docs/gateway-policy.md](docs/gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
+
 ### Off-host backup copies to S3-compatible storage (E31)
 - **Copies to an object store.** Set `OPS__BACKUP_COPY_S3_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY` and `_SECRET_KEY` in the host's `.env` and the ops runner uploads every backup to S3-compatible storage (a second MinIO, Ceph RGW, Garage or AWS) instead of a directory. Retries, the *Off-host backup copy missing* alert and retention work as for a directory.
 - **Checked on arrival.** Each upload is signed over its SHA-256 and the store rejects a mismatch; a `.complete` marker uploaded last decides what counts as copied, so a half-finished upload never does.

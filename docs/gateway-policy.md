@@ -205,11 +205,21 @@ crosses a budget finishes and the next one is refused. Concurrency limits do not
 | Agent run started in the console or API (`agent.run`) | `POST /agents/{id}/execute` answers **429** with the budget's message and `Retry-After`; no run is created. A run already going is not stopped, nor a run resumed after an approval |
 | Agent through `/v1` (`agent:<slug>`) | refused by the gateway's own admission, as before |
 | Workflow LLM step | the step **fails** with the budget's message; the workflow's `error` edges apply as for any failed step |
-| Ingestion | the document is marked **FAILED** with the budget's message; re-ingest it once the budget resets |
+| Ingestion | the document is marked **FAILED** with the budget's message and retried automatically once the budget resets (E32, below) |
 | Knowledge search, playground, RAG evaluation, workflow retrieval | refused with 429, or the step fails |
 | Agent retrieval and memory | the run continues without the retrieved context or memory, as when the embedding model is down |
 
 The setting is read on every call, so switching it on or off takes effect at once.
+
+**Refused documents are retried (E32).** A document whose embedding a budget refused
+records when to try again: the refusal's `Retry-After` (the next minute, midnight UTC or
+the 1st of the month) plus one minute. The document's `retry_at` says when, and the
+console shows it under the error. About every 30 seconds the ingestion worker queues every
+such document whose time has passed; it is parsed and embedded again from the stored
+original. A budget still used up refuses it again with a new time, so it is one check per
+document per reset, never a loop. Any other failure is not retried. Re-ingesting it by
+hand clears the retry; a document replaced by a newer version is not retried. The retry
+is logged (`document_requeued_after_budget_reset`), not audited: nobody asked for it.
 
 ## Timings (E16)
 

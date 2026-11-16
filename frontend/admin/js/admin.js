@@ -3102,7 +3102,9 @@ function documentRow(doc) {
   return `<tr>
     <td>
       <div class="fw-medium">${esc(doc.filename)}${version}${pending}</div>
-      ${note ? `<div class="small text-danger">${esc(note)}</div>` : ''}
+      ${note ? `<div class="small ${doc.retry_at ? 'text-warning-emphasis' : 'text-danger'}">${esc(note)}</div>` : ''}
+      ${doc.retry_at && doc.status === 'FAILED'
+        ? `<div class="small text-secondary">budget refused: retries automatically ${esc(new Date(doc.retry_at).toLocaleString())}</div>` : ''}
       ${doc.ocr_used ? '<div class="small text-secondary">text recovered by OCR</div>' : ''}
     </td>
     <td class="small text-secondary mono">${esc(doc.content_type || '—')}</td>

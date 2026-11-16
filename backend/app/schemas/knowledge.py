@@ -150,6 +150,8 @@ class DocumentRead(ORMModel):
     status: str
     status_detail: str | None = None
     error: str | None = None
+    #: E32: when the ingestion worker will try again, for a document a budget refused.
+    retry_at: dt.datetime | None = None
     characters: int
     chunk_count: int
     ocr_used: bool
