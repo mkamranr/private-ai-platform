@@ -644,7 +644,7 @@ Under `/api/v1`, authenticated with the platform JWT. See
 | method | path | permission |
 |---|---|---|
 | PATCH | `/models/{id}` | `model.register` — display name, description, version, license, source reference, publisher, family, tags; omitted fields unchanged |
-| POST | `/models/{id}/approval` | `model.approve` — `status` (`approved`/`experimental`/`deprecated`/`blocked`), optional `note` |
+| POST | `/models/{id}/approval` | `model.approve` — `status` (`approved`/`experimental`/`deprecated`/`blocked`), optional `note`, optional `stop_deployments` (E26: with `blocked`, default true). Response adds `stopped_deployments` and `stop_failed` |
 | POST | `/models/{id}/deploy/validate` | `model.deploy` — same body as `/deploy`; dry run, nothing reserved |
 | GET | `/deployments/{id}/revisions` | `model.view` — newest first, `current` marks the applied one |
 | POST | `/deployments/{id}/revisions` | `model.deploy` — `image`, `tensor_parallel_size`, `max_model_len`, `gpu_memory_utilization`, `change_note`; **202** |

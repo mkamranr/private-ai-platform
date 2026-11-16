@@ -29,15 +29,24 @@ Code:
   says whether the weights are present; approval says whether the organisation allows
   the model.
 - **Deprecating a model does not stop anything.** It only refuses new deployments.
-- **Blocking a model does not stop its containers either.** The gateway stops routing to
-  it straight away, including agent calls, which resolve models the same way.
+- **Blocking a model stops its running deployments (E26).** A blocked model is never
+  served, so its containers would only hold GPUs. Each is stopped as from the
+  Deployments page, audited `MODEL_STOPPED` with the message `Model <name> blocked`.
+  - To keep them (to inspect one, say), send `"stop_deployments": false`, or untick
+    *Stop its running deployments too* in the Edit dialog.
+  - A deployment that cannot be stopped (its node is unreachable) does not undo the
+    block. It is listed in the response's `stop_failed` and keeps running; stop it from
+    the Deployments page once the node is back. The gateway refuses it either way.
+  - The response lists what was stopped in `stopped_deployments`.
+- The gateway stops routing to a blocked model straight away, including agent calls,
+  which resolve models the same way.
   - Through an alias with a fallback alias, calls go to the fallback. The fallback must
     not itself be blocked.
   - Called by its own name, or through an alias with no usable fallback, the caller gets
     **403** with code `model_blocked`. The message names what the caller asked for,
     never the model behind an alias.
-  - Stop the deployments when convenient. Restarting a blocked model's deployment is
-    allowed; changing its configuration is not.
+  - Restarting a blocked model's deployment is allowed; changing its configuration is
+    not.
 - Re-running manifest import updates license, provenance, family and tags from the
   manifest. It **never** changes the approval status, so a re-import cannot undo a block.
 
@@ -206,6 +215,8 @@ The existing `GET /deployments/{id}/logs` (one snapshot) is unchanged.
 - approval permission and audit;
 - the filters;
 - deploy refusal for blocked and deprecated models;
+- blocking stops running deployments, unless asked not to, and reports one it could not
+  stop (`tests/api/test_block_stops_deployments.py`, E26);
 - blocked handling in the gateway: 403, hidden from `/v1/models`, alias fallback; and
   deprecated models still serving;
 - validation without reservation;
