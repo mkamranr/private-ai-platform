@@ -12,12 +12,19 @@ from app.core.validators import PlatformEmail
 from app.schemas.common import ORMModel
 
 
+class LoginChallengeProof(BaseModel):
+    token: str = Field(min_length=1, max_length=256)
+    solution: str = Field(min_length=1, max_length=64)
+
+
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=150)
     password: str = Field(min_length=1, max_length=1024)
     #: E20: the token this browser was given when it was trusted at the two-factor step.
     #: While it is good, the step is skipped. Ignored for accounts without 2FA.
     device_token: str | None = Field(default=None, max_length=128)
+    #: E29: the solved proof of work, when the last attempt answered `challenge_required`.
+    challenge: LoginChallengeProof | None = None
 
 
 class TokenResponse(BaseModel):

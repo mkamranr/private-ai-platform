@@ -451,6 +451,33 @@ Valkey and **fails open**: a cache outage must not lock everyone out of the cons
 per-account lock is in Postgres and keeps working. Behind a reverse proxy, set
 `SECURITY__TRUSTED_PROXY_CIDRS`, otherwise every client looks like the proxy.
 
+**Sign-in check (E29).** A hosted CAPTCHA needs the internet and sends every sign-in to a
+third party, so the platform uses a proof of work instead. After
+`AUTH__LOGIN_CHALLENGE_AFTER` (default 10, `0` = off) failed sign-ins from one address in
+the throttle window, `/auth/login` answers **401** `challenge_required` with a challenge
+in `error.details.challenge` (`token`, `bits`, `expires_in`). The browser finds a
+`solution` such that `SHA-256(token + ":" + solution)` starts with `bits` zero bits, and
+sends the sign-in again with `"challenge": {"token": ..., "solution": ...}`. The console,
+the developer portal and the voice assistant do this on their own (`/js/pow.js`), with a
+note that the browser is being checked.
+
+- **Progressive.** The first check asks for `AUTH__LOGIN_CHALLENGE_BITS` (default 20,
+  about a second in a browser). Every five further failures add a bit, which doubles the
+  work, up to 24 bits (about 15 seconds). It slows guessing well before the throttle
+  refuses the address at 30.
+- **Per address, never per account,** and checked before the password: the answer says
+  nothing about whether a username exists, and an unsolved attempt tests no password. A
+  solved check does not reset the failure count.
+- **Stateless and single-use.** The token is signed with a key derived from the JWT
+  secret and expires after 5 minutes; a solution is spent once in Valkey. With Valkey
+  down there are no failure counts, so no check is asked for (it fails open like the
+  throttle).
+- **What it is not.** Proof of work makes each guess cost the guesser time; it does not
+  tell a person from a program, and a fast native client pays far less than a browser.
+  It complements the lockout and the throttle, it does not replace them. API clients
+  that sign in with a password must implement the same check (or use API keys, which
+  never meet it).
+
 **Signing out.** Every token carries a `jti` and a session version, `sv`.
 
 - `POST /auth/logout` revokes this access token, and the refresh token too if the body
@@ -599,8 +626,9 @@ factor, so no passkeys either.
   platform locks a directory account after `AUTH__LOCKOUT_THRESHOLD` rejected passwords
   made through it; it does not see guesses made elsewhere, and the directory's password
   and lockout policy still apply.
-* **No CAPTCHA or progressive delay.** Lockout and the per-address throttle are the only
-  brute-force defences.
+* **A proof of work, not a CAPTCHA (E29).** It slows repeated guessing from one address
+  but does not tell a person from a program; a distributed guesser spread over many
+  addresses meets only the per-account lockout.
 * **TOTP and passkeys, as a second factor only.** No passwordless sign-in, push approval
   or SMS. The developer portal and voice assistant accept only codes. The platform asks
   for no second factor from directory or single sign-on accounts.

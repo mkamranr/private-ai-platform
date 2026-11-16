@@ -226,6 +226,13 @@ class AuthSettings(BaseModel):
     #: Counted in Valkey; while Valkey is down the limit is not enforced.
     login_ip_max_failures: int = Field(default=30, ge=0, le=10000)
     login_ip_window_seconds: int = Field(default=900, ge=60, le=86400)
+    #: E29: after this many failed sign-ins from one address in the window above,
+    #: `/auth/login` asks the browser for a proof of work (0 = never). Below
+    #: `login_ip_max_failures`, so guessing is slowed well before the address is refused.
+    login_challenge_after: int = Field(default=10, ge=0, le=10000)
+    #: Leading zero bits of SHA-256 the first challenge asks for. 20 is about a second
+    #: in a browser; every further 5 failures add a bit (twice the work), up to 24.
+    login_challenge_bits: int = Field(default=20, ge=8, le=24)
     #: A refresh token used again within this many seconds of being exchanged is
     #: refused quietly (two tabs refreshing at once). Later reuse is treated as theft
     #: and signs the account out everywhere.

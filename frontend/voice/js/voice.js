@@ -104,13 +104,21 @@ class VoiceAssistant {
   // -- lifecycle -----------------------------------------------------------
   /** Resolves true when signed in, false when an authenticator code is needed (E15). */
   async signIn(username, password) {
-    const response = await fetch(`${API}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!response.ok) throw new Error('Sign-in failed. Check the username and password.');
-    const body = await response.json();
+    // E29: a proof of work after repeated failures from this address (/js/pow.js,
+    // loaded by index.html as a classic script, so it is on window).
+    const send = async (challenge) => {
+      const response = await fetch(`${API}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, challenge }),
+      });
+      if (response.ok) return response.json();
+      const error = await response.json().catch(() => null);
+      throw Object.assign(new Error('Sign-in failed. Check the username and password.'), {
+        code: error?.error?.code, details: error?.error?.details,
+      });
+    };
+    const body = await window.withLoginChallenge(send);
     if (body.mfa_required) {
       if (body.enrolment_required) throw new Error('Your account must set up two-factor authentication before it can sign in here. Sign in to the admin console once (at the main address of this site) to set it up, then come back.');
       this.mfaToken = body.mfa_token;

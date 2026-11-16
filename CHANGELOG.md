@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Sign-in check after repeated failures (E29)
+- **A proof of work instead of a CAPTCHA.** After 10 failed sign-ins from one address (`AUTH__LOGIN_CHALLENGE_AFTER`, 0 = off), signing in from it needs a small SHA-256 proof of work first: about a second in a browser, doubling every five further failures up to about 15 seconds. Nothing leaves the site; hosted CAPTCHAs need the internet.
+- **Automatic in the platform's pages.** The console, developer portal and voice assistant solve it on their own and say so. API clients that sign in with a password get 401 `challenge_required` with the challenge and must resend with `challenge: {token, solution}`; API keys never meet it.
+- **Per address, checked before the password**, so it reveals nothing about accounts and an unsolved attempt tests no password.
+- **Upgrade.** No migration. Settings `AUTH__LOGIN_CHALLENGE_AFTER` (10) and `AUTH__LOGIN_CHALLENGE_BITS` (20). See [docs/security.md](docs/security.md#sign-in-hardening-e14).
+
 ### Blocked models' deployments are retried (E28)
 - **The deployment worker finishes the job.** About once a minute it stops any deployment of a blocked model that is still live: one whose node was unreachable when the model was blocked, or one that was still being created. Audited as `deployment-worker`.
 - **Alert while it cannot.** *Blocked model still running* (WARNING) stays open for each deployment the worker cannot stop, and clears once it is stopped.
