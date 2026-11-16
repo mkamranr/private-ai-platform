@@ -48,24 +48,40 @@ async def clean(session: AsyncSession) -> None:
 
 
 async def _runner(
-    session: AsyncSession, backups: list[dict[str, Any]], *, online: bool = True
+    session: AsyncSession,
+    backups: list[dict[str, Any]],
+    *,
+    online: bool = True,
+    copy: dict[str, Any] | None = None,
 ) -> None:
     # Liveness is judged against the real clock (OpsService.is_online), not the
     # scheduler's fixed NOW, which is taken at import and can be minutes old by the
     # time a full run reaches this test.
     real_now = dt.datetime.now(dt.UTC)
     seen = real_now if online else real_now - dt.timedelta(hours=2)
-    session.add(OpsRunner(name="host-1", inventory={"backups": backups}, last_seen_at=seen))
+    inventory: dict[str, Any] = {"backups": backups}
+    if copy is not None:
+        inventory["backup_copy"] = copy
+    session.add(OpsRunner(name="host-1", inventory=inventory, last_seen_at=seen))
     await session.flush()
 
 
 def _scheduler(
-    session: AsyncSession, settings: Settings, *, interval: int = 24, keep: int = 0
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    interval: int = 24,
+    keep: int = 0,
+    keep_days: int = 0,
 ) -> BackupScheduler:
     tuned = settings.model_copy(
         update={
             "ops": settings.ops.model_copy(
-                update={"backup_interval_hours": interval, "backup_keep": keep}
+                update={
+                    "backup_interval_hours": interval,
+                    "backup_keep": keep,
+                    "backup_keep_days": keep_days,
+                }
             )
         }
     )
@@ -200,7 +216,7 @@ class TestRetention:
         outcome = await _scheduler(session, settings, interval=24, keep=2).run()
         assert outcome.queued == ["backup.prune"]
         (job,) = await _jobs(session)
-        assert job.params == {"delete": [_stamp(73), _stamp(49)], "keep": 2}
+        assert job.params == {"delete": [_stamp(73), _stamp(49)], "keep": 2, "keep_days": 0}
         assert job.requested_by_name == "scheduler"
 
         # While that job is queued or done, the same backups are not asked for again.
@@ -214,6 +230,94 @@ class TestRetention:
         await _runner(session, [{"name": _stamp(h), "complete": True} for h in (1, 25, 49)])
         outcome = await _scheduler(session, settings, interval=24, keep=0).run()
         assert outcome.queued == [] and outcome.prune_candidates == []
+
+
+def test_age_retention() -> None:
+    """E23: each rule that is set protects a backup on its own."""
+    now = dt.datetime(2026, 11, 30, tzinfo=dt.UTC)
+    names = ["20261101T000000Z", "20261110T000000Z", "20261120T000000Z", "20261129T000000Z"]
+    backups = [InventoryBackup(name=n) for n in names] + [
+        InventoryBackup(name="20261001T000000Z", complete=False),
+    ]
+    # Age only: older than 14 days goes, whatever the count.
+    assert to_prune(backups, 0, 14, now) == ["20261101T000000Z", "20261110T000000Z"]
+    # Both: beyond the newest N *and* older than 14 days.
+    assert to_prune(backups, 2, 14, now) == ["20261101T000000Z", "20261110T000000Z"]
+    assert to_prune(backups, 3, 14, now) == ["20261101T000000Z"]
+    # The newest is kept even when everything is "too old".
+    later = dt.datetime(2027, 1, 1, tzinfo=dt.UTC)
+    assert "20261129T000000Z" not in to_prune(backups, 0, 1, later)
+    # A name that is not a timestamp has no age, so the age rule keeps it.
+    odd = [InventoryBackup(name="20261129T000000Z"), InventoryBackup(name="0-manual")]
+    assert to_prune(odd, 0, 1, later) == []
+
+
+COPY = {"configured": True, "path": "/mnt/offsite", "reachable": True}
+
+
+class TestOffHostCopy:
+    async def test_an_uncopied_backup_queues_one_copy(
+        self, session: AsyncSession, settings: Settings, clean
+    ) -> None:
+        await _runner(session, [{"name": _stamp(2), "complete": True, "copied": False}], copy=COPY)
+        outcome = await _scheduler(session, settings).run()
+        assert outcome.queued == ["backup.copy"]
+        (job,) = await _jobs(session)
+        assert job.params == {"backup": _stamp(2)} and job.requested_by_name == "scheduler"
+
+        # It failed: not retried for the same backup, and the alert says why.
+        job.status = JobStatus.FAILED
+        job.error = "disk full"
+        await session.flush()
+        outcome = await _scheduler(session, settings).run()
+        assert outcome.queued == []
+        alert = (await _alerts(session))["backup_copy_missing"]
+        assert "disk full" in (alert.message or "") and _stamp(2) in (alert.message or "")
+
+    async def test_a_copied_backup_clears_the_alert(
+        self, session: AsyncSession, settings: Settings, clean
+    ) -> None:
+        await _runner(session, [{"name": _stamp(2), "complete": True, "copied": False}], copy=COPY)
+        await _scheduler(session, settings).run()
+        assert "backup_copy_missing" in await _alerts(session)
+
+        await session.execute(delete(OpsRunner))
+        await _runner(session, [{"name": _stamp(2), "complete": True, "copied": True}], copy=COPY)
+        outcome = await _scheduler(session, settings).run()
+        assert outcome.newest_copied is True
+        assert "backup_copy_missing" not in await _alerts(session)
+
+    async def test_an_unreachable_directory_alerts_and_queues_nothing(
+        self, session: AsyncSession, settings: Settings, clean
+    ) -> None:
+        await _runner(
+            session,
+            [{"name": _stamp(0.2), "complete": True, "copied": False}],
+            copy={**COPY, "reachable": False},
+        )
+        outcome = await _scheduler(session, settings).run()
+        assert "backup.copy" not in outcome.queued
+        assert "cannot write" in ((await _alerts(session))["backup_copy_missing"].message or "")
+
+    async def test_without_a_copy_directory_nothing_changes(
+        self, session: AsyncSession, settings: Settings, clean
+    ) -> None:
+        await _runner(session, [{"name": _stamp(2), "complete": True}])
+        outcome = await _scheduler(session, settings).run()
+        assert outcome.queued == [] and outcome.copy_configured is False
+        assert outcome.newest_copied is None
+        assert "backup_copy_missing" not in await _alerts(session)
+
+    async def test_age_retention_is_queued_with_both_rules(
+        self, session: AsyncSession, settings: Settings, clean
+    ) -> None:
+        backups = [{"name": _stamp(h), "complete": True} for h in (1, 25, 24 * 20, 24 * 40)]
+        await _runner(session, backups)
+        outcome = await _scheduler(session, settings, keep=2, keep_days=30).run()
+        assert outcome.queued == ["backup.prune"]
+        (job,) = await _jobs(session)
+        assert job.params == {"delete": [_stamp(24 * 40)], "keep": 2, "keep_days": 30}
+        assert job.reason == "retention: keep the newest 2 backup(s) and keep 30 day(s)"
 
 
 class TestScheduleApi:

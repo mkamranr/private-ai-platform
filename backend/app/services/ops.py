@@ -343,7 +343,7 @@ class OpsService:
         self, kind: JobKind, params: dict[str, Any], *, reason: str
     ) -> OpsJob:
         """A job the backup schedule queues (E12): audited, with no person behind it."""
-        if kind not in (JobKind.BACKUP_CREATE, JobKind.BACKUP_PRUNE):
+        if kind not in (JobKind.BACKUP_CREATE, JobKind.BACKUP_PRUNE, JobKind.BACKUP_COPY):
             raise ValidationError(f"The schedule does not queue {kind} jobs.")
         return await self._request(kind, params, actor=None, reason=reason)
 

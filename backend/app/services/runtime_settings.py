@@ -229,6 +229,16 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next scheduled backup",
     ),
     RuntimeSetting(
+        "ops.backup_keep_days",
+        "operations",
+        "Keep backups for (days)",
+        "Complete backups older than this are deleted. 0 means no age limit. With "
+        '"Backups to keep" also set, a backup is deleted only when it is both older '
+        "than this and beyond that count. The newest complete backup is never deleted. "
+        "Off-host copies are pruned the same way.",
+        "Next scheduled backup",
+    ),
+    RuntimeSetting(
         "gateway.budget_warning_percent",
         "gateway",
         "Budget warning at (%)",

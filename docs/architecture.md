@@ -12,12 +12,19 @@ database.
 
 The spec's core principle (§2) is *do not rebuild mature open-source technologies*.
 So the custom code here is the registry, scheduler, policy engine, API gateway,
-node agent, admin UI and integration layer. vLLM does inference. LangGraph runs
-agents. MCP handles tool interoperability. Qdrant does vector search. PostgreSQL
+node agent, admin UI and integration layer. vLLM does inference. MCP handles tool
+interoperability. Qdrant does vector search. PostgreSQL
 persists. Prometheus/Grafana/Loki/Tempo handle telemetry.
 
 Every time you are tempted to write something an existing component already does,
 that is the signal to integrate rather than implement.
+
+The one deliberate exception is the **agent loop**. The plan named LangGraph; the
+platform runs its own ReAct loop (`PlatformAgentRuntime`) behind the `AgentRuntime`
+interface, because LangGraph would add 38 packages to the air-gapped bundle (a second
+PostgreSQL driver and a telemetry client among them) and keep run state in opaque tables
+that backup, audit and approvals could not read. A `LangGraphAgentRuntime` remains an
+addition, not a rewrite. See [agents.md](agents.md#the-runtime-and-why-it-is-not-langgraph).
 
 ---
 
@@ -34,7 +41,7 @@ that is the signal to integrate rather than implement.
         |                      |                      |
    COMPUTE LAYER           AI LAYER             DATA LAYER
    Docker                  vLLM                 PostgreSQL
-   Node Agent              LangGraph            Qdrant
+   Node Agent              Agent runtime        Qdrant
    GPU / DCGM              MCP                  Valkey
                            Skills, Tools        MinIO
 ```
@@ -56,7 +63,7 @@ on a concrete class.
 | `ComputeBackend` | defined | `DockerComputeBackend` (P2) | `KubernetesComputeBackend` |
 | `LLMProvider` | defined | `VLLMProvider`, `MockLLMProvider` (P2) | `SGLangProvider`, `OllamaProvider` |
 | `VectorStore` | defined | `QdrantVectorStore` (P5) | `PgVectorStore` |
-| `AgentRuntime` | defined | `LangGraphAgentRuntime` (P4) | any agent runtime |
+| `AgentRuntime` | defined | `PlatformAgentRuntime` (P4, native ReAct loop) | `LangGraphAgentRuntime` |
 | `GpuProbe` | defined | `NvidiaSmi`, `Dcgm`, **`Fake`** (P1) | — |
 | `Scheduler` | defined | `SimpleGpuScheduler` (P2) | topology/quota-aware |
 | `ToolExecutor` | defined | MCP, REST, OpenAPI, Internal, Database (P4) | — |

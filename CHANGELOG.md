@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Backup retention by age and off-host copies (E23)
+- **Keep backups for N days.** A new runtime setting, `ops.backup_keep_days` (Settings page, 0 = no age limit). With `ops.backup_keep` also set, a backup is deleted only when it is beyond the count *and* past the age. The newest complete backup is never deleted.
+- **Off-host copies.** Set `OPS__BACKUP_COPY_DIR` in the host's `.env` (an NFS or SMB share, or a USB disk) and restart the runner. Each new backup is copied there and compared file by file before it counts. A failed copy is retried once, raises an `Off-host backup copy missing` alert, and never fails the backup. Retention prunes the copies with the backups. The Backup & Restore page shows the directory and whether the newest backup is copied.
+- **Docs.** `docs/architecture.md` no longer says LangGraph runs agents: the platform's own runtime does, and the page says why.
+- **Upgrade.** Migration `b3d5f7a9c1e2` allows the new `backup.copy` job. The new `scripts/ops_runner.py` ships in the bundle; restart the runner after upgrading (and after setting `OPS__BACKUP_COPY_DIR`) so it runs it. See [docs/backup.md](docs/backup.md#off-host-copies-e23).
+
 ### Approval reminders (E22)
 - **A warning before an approval expires.** An agent tool call or workflow step whose approval will expire within `agents.approval_reminder_hours` (default 24, Settings page; 0 = off) raises a WARNING alert naming the tool and agent, or the workflow step, and the time left. It appears on the Alerts page and clears once someone decides or the approval expires.
 - **Notifications.** A new alert source, `approvals`: subscribe a webhook or email channel to it to tell approvers. Channels that send every source get reminders without a change.

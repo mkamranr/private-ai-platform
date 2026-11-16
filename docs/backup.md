@@ -69,13 +69,14 @@ dump to a file inside the container first.
 
 ## Schedule and retention (E12)
 
-Two runtime settings on the Settings page (Operations) control them. Both are off (0) by
+Runtime settings on the Settings page (Operations) control them. All are off (0) by
 default.
 
 | Setting | Meaning |
 |---|---|
 | `ops.backup_interval_hours` | take a backup every N hours (1–720) |
 | `ops.backup_keep` | keep the newest N complete backups and delete older ones |
+| `ops.backup_keep_days` | keep complete backups for N days (E23) |
 
 Every five minutes the platform checks the runner's inventory:
 
@@ -84,8 +85,12 @@ Every five minutes the platform checks the runner's inventory:
   other. It queues nothing while the runner is offline or another backup is queued or
   running, and makes at most one attempt per interval, so a failing backup is not retried
   in a loop.
-- **Retention** queues a `backup.prune` job listing the backups beyond `ops.backup_keep`,
-  once per new backup and only when no other job is active. The runner checks each name
+- **Retention** queues a `backup.prune` job listing the backups past the rules, once per
+  new backup and only when no other job is active. With only `ops.backup_keep`, a backup
+  goes once it is beyond the newest N; with only `ops.backup_keep_days`, once it is older
+  than N days. With both, **each rule protects a backup on its own**: it goes only when it
+  is beyond the count *and* past the age. So `keep 7` and `keep 30 days` never leave fewer
+  than seven backups, and never delete one younger than a month. The runner checks each name
   again, always keeps the newest complete backup, and never deletes a folder without a
   `manifest.json` (it could be a backup still being written). Incomplete backups do not
   count towards the number kept.
@@ -97,8 +102,32 @@ The Backup & Restore page shows the schedule, when the next backup is due, the l
 backup job and how many backups the next retention run will delete.
 `GET /api/v1/ops/backups/schedule` returns the same information.
 
-Retention deletes only local backups under `backups/`. Copy backups off the host
-separately: a schedule on one disk does not protect against losing that disk.
+## Off-host copies (E23)
+
+A schedule on one disk does not protect against losing that disk. Set
+`OPS__BACKUP_COPY_DIR` in the host's `.env` to a directory on other storage, typically an
+NFS or SMB share or a USB disk mounted on the host, and restart the runner:
+
+```bash
+OPS__BACKUP_COPY_DIR=/mnt/backup-share/ai-platform
+```
+
+- After each successful backup the runner copies it there: into `.partial-NAME`, then it
+  compares every file's SHA-256 with the original, then it renames the copy to `NAME`. A
+  directory named like a backup in the copy directory is therefore a complete copy.
+- **A failed copy does not fail the backup.** The backup is good; the copy is retried once
+  by a `backup.copy` job the schedule queues (shown as *Off-host copy*). The same happens
+  when the newest backup has no copy because the directory was unreachable or was set
+  later.
+- **Alert.** `Off-host backup copy missing` (WARNING) appears when the runner cannot write
+  to the directory, or the newest backup has waited more than an hour for its copy. It
+  says why, and clears once the newest backup is copied.
+- **Retention prunes the copies too**, with the same names: the copy directory does not
+  grow without bound. To keep copies longer than local backups, point a separate archival
+  job at the share.
+- The directory is configured on the host only. The console shows it and its state, but
+  cannot change it: the console must not choose where the host writes.
+- Restoring from a copy: copy the folder back into `backups/` and restore it as usual.
 
 ## Not built yet
 

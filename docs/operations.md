@@ -116,9 +116,10 @@ The page lists each backup with:
 - Vector snapshots are not restored automatically (see [backup.md](backup.md)).
 
 **Schedule (E12).** With `ops.backup_interval_hours` set, the platform queues backups
-itself as jobs requested by `scheduler`. With `ops.backup_keep` set, it queues
-*Retention* (`backup.prune`) jobs that delete the oldest complete backups. Both appear
-under Recent operations. See [backup.md](backup.md#schedule-and-retention-e12).
+itself as jobs requested by `scheduler`. With `ops.backup_keep` or
+`ops.backup_keep_days` set, it queues *Retention* (`backup.prune`) jobs that delete old
+complete backups, and with an off-host copy directory, *Off-host copy* (`backup.copy`)
+retries (E23). All appear under Recent operations. See [backup.md](backup.md#schedule-and-retention-e12).
 
 ## Offline Updates
 
@@ -270,10 +271,13 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 | `OPS__SUPPORT_LOG_HOURS` / `OPS__SUPPORT_LOG_LINES` | 6 / 5000 | how much log a support bundle includes |
 | `OPS__BACKUP_INTERVAL_HOURS` | 0 (off) | scheduled backup every N hours; also a runtime setting |
 | `OPS__BACKUP_KEEP` | 0 (keep all) | retention: keep the newest N complete backups; also a runtime setting |
+| `OPS__BACKUP_KEEP_DAYS` | 0 (no age limit) | retention: keep complete backups N days (E23); also a runtime setting |
+| `OPS__BACKUP_COPY_DIR` | unset | **read by the runner on the host**: copy each backup to this directory (E23). See [backup.md](backup.md#off-host-copies-e23) |
 
 ## Not built yet
 
-- Retention is by count only. There is no age-based policy and no off-host copy.
+- Off-host copies go to one directory the host can write to. There is no built-in S3 or
+  remote protocol, and copies are pruned with the local backups.
 - No partial restore (one team or knowledge base), and no automatic Qdrant snapshot restore.
 - Bundle import is a copy on the host. There is no streaming upload through the console.
 - One runner per site is the tested shape. Several are tolerated, but the pages show the

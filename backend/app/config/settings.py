@@ -716,6 +716,9 @@ class OpsSettings(BaseModel):
     #: E12: keep this many complete backups and delete older ones after each scheduled
     #: backup. 0 keeps every backup. The newest complete backup is never deleted.
     backup_keep: int = Field(default=0, ge=0, le=1000)
+    #: E23: keep complete backups this many days. 0 = no age limit. With ``backup_keep``
+    #: also set, a backup is deleted only when both rules would let it go.
+    backup_keep_days: int = Field(default=0, ge=0, le=3650)
 
 
 class NotificationsSettings(BaseModel):
