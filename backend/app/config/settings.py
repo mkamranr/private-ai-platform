@@ -618,6 +618,9 @@ class AgentsSettings(BaseModel):
     #: Hours an agent tool call or a workflow step waits for a decision before it expires
     #: and its run fails (E17). 0 = wait forever, the behaviour before E17.
     approval_ttl_hours: int = Field(default=72, ge=0, le=8760)
+    #: Hours before that expiry an approval raises a reminder alert (source
+    #: ``approvals``, E22). 0 = no reminders. Ignored while approvals never expire.
+    approval_reminder_hours: int = Field(default=24, ge=0, le=8760)
     # Tool types deliberately disabled: §M12 lists them but §25 forbids
     # unrestricted shell execution. They stay off until a hardened executor
     # exists (see docs/security.md).

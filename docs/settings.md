@@ -38,6 +38,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `auth.mfa_required` | Security | who must use two-factor authentication: `off`, `admins`, `all` (E15, [security.md](security.md#two-factor-authentication-e15)) | next sign-in |
 | `auth.mfa_remember_days` | Security | days "trust this browser" skips the two-factor step, 0–365; 0 turns it off and stops existing tokens (E20, [security.md](security.md#passkeys-and-trusted-browsers-e20)) | next sign-in |
 | `agents.approval_ttl_hours` | Security | hours an agent or workflow approval waits before it expires and its run fails; 0 = never (E17, [agents.md](agents.md#expiry-e17)) | next expiry check (15 min) |
+| `agents.approval_reminder_hours` | Security | hours before that expiry an approval raises a reminder alert (source `approvals`); 0 = off (E22, [agents.md](agents.md#reminders-e22)) | next expiry check (15 min) |
 
 **Deliberately not editable:**
 

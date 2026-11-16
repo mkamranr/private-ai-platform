@@ -121,6 +121,24 @@ every 15 minutes.
   either wins outright or is refused.
 - Start the run again if it is still needed.
 
+### Reminders (E22)
+
+An approval that will expire within `agents.approval_reminder_hours` (default 24, a
+runtime setting; 0 = off) raises a **reminder alert**, checked by the same 15-minute job.
+With the defaults, a reminder appears after 48 hours of waiting, 24 hours before expiry.
+
+- One WARNING alert per approval, source `approvals`, titled with the tool and agent (or
+  the workflow step) and the time left, for example *Approval for create_ticket (IT
+  Helpdesk) expires in 12 hours*. Each check refreshes the time left.
+- It shows on the **Alerts** page. A notification channel subscribed to `approvals` (or to
+  every source) announces it once, by webhook or email: point one at the approvers' chat.
+- It clears at the next check after someone approves or rejects, or after the approval
+  expires.
+- A reminder window as long as the expiry reminds as soon as an approval is requested.
+  While approvals never expire (`agents.approval_ttl_hours` = 0) there are no reminders.
+- Reminders go to channels, not to individual approvers: the platform does not know who is
+  meant to decide. At most 200 reminders per kind are raised per check.
+
 ## Teams: what an agent may use (E18)
 
 An agent runs as **its own team**, so its model and knowledge bases must be ones that

@@ -72,6 +72,7 @@ from app.repositories.ops import OpsJobRepository, OpsRunnerRepository
 from app.repositories.teams import TeamRepository
 from app.services.alerts import AlertService
 from app.services.approval_expiry import ApprovalExpiry
+from app.services.approval_reminders import ApprovalReminders
 from app.services.audit import AuditService
 from app.services.backup_schedule import BackupScheduler
 from app.services.budgets import BudgetWatcher, CostBudgetService
@@ -206,6 +207,21 @@ class InfrastructureWorker:
                 await session.commit()
         except Exception:
             log.exception("approval_expiry_failed")
+        # After expiry, so an approval that just expired has its reminder cleared (E22).
+        try:
+            async with self._session_factory() as session:
+                settings = await RUNTIME.effective(session, self._settings)
+                audit = AuditService(
+                    AuditRepository(session), session_factory=self._session_factory
+                )
+                alert_repo = AlertRepository(session)
+                await ApprovalReminders(session, AlertService(alert_repo, audit), alert_repo).run(
+                    ttl_hours=settings.agents.approval_ttl_hours,
+                    reminder_hours=settings.agents.approval_reminder_hours,
+                )
+                await session.commit()
+        except Exception:
+            log.exception("approval_reminders_failed")
 
     async def purge_metrics(self) -> None:
         try:

@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Approval reminders (E22)
+- **A warning before an approval expires.** An agent tool call or workflow step whose approval will expire within `agents.approval_reminder_hours` (default 24, Settings page; 0 = off) raises a WARNING alert naming the tool and agent, or the workflow step, and the time left. It appears on the Alerts page and clears once someone decides or the approval expires.
+- **Notifications.** A new alert source, `approvals`: subscribe a webhook or email channel to it to tell approvers. Channels that send every source get reminders without a change.
+- **Upgrade.** No migration. With the defaults, approvals already waiting more than 48 hours raise reminders at the first check after upgrading. See [docs/agents.md](docs/agents.md#reminders-e22).
+
 ### Embedding calls accounted (E21)
 - **Ingestion, search and memory are counted.** Each embedding the platform makes now writes a usage row with the tokens the model server reported. That covers ingesting a document, knowledge base search, the retrieval playground, agent and workflow retrieval, RAG evaluations, and storing or recalling memories. Ingestion is charged to the uploader and the knowledge base's team, searches to the person searching (or the run's starter), and memory to its person and the agent's team. Endpoints are `knowledge.ingest`, `knowledge.search`, `retrieval.playground`, `agent.retrieve`, `workflow.retrieve`, `rag.eval`, `memory.write`, `memory.search` and `knowledge.probe`, with `kb:<name>` or `memory` as the requested model.
 - **Quotas.** These tokens count toward team and model token budgets but never refuse an ingestion or a search.
