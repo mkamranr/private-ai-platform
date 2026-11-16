@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Voice speech calls attributed (E27)
+- **Voice usage has an owner.** The voice assistant's speech-to-text and text-to-speech calls were recorded with no user or team. They are now recorded for the person speaking and charged to the team of the agent they talk to, so they appear under that person and team on the Usage page, in chargeback and against team budgets.
+- **Nothing new is refused by default.** Model quotas apply as before. A team budget refuses voice only when `gateway.enforce_platform_budgets` (E24) is on.
+- **Upgrade.** No migration.
+
 ### Blocking a model stops its deployments (E26)
 - **Blocking a model now stops its running deployments.** A blocked model is never served, so its containers were only holding GPUs. Each stop is audited. The Edit dialog offers *Stop its running deployments too* (ticked) when Blocked is chosen; the API takes `"stop_deployments": false` to keep them.
 - **An unreachable node does not undo the block.** A deployment that could not be stopped is listed in the response's `stop_failed` and keeps running (the gateway still refuses it); stop it from the Deployments page later.

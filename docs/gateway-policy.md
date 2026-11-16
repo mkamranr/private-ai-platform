@@ -53,8 +53,12 @@ and `details.used` for budgets.
   warning is logged.
 
 Key and end-user quotas apply to calls through `/v1`. Model quotas also apply to the voice
-assistant, which goes through the same gateway methods without an API key. Agents and
-document ingestion reach models by another path and are not subject to quotas.
+assistant, which goes through the same gateway methods without an API key. Since E27 its
+speech-to-text and text-to-speech calls are recorded for the person speaking and charged
+to the **team of the agent** they talk to; that team's budget refuses them only when
+`gateway.enforce_platform_budgets` is on (E24), as for the platform's other calls. Agents
+and document ingestion reach models by another path; see
+[the platform's own model calls](#the-platforms-own-model-calls-e19).
 
 ### Concurrency leases
 

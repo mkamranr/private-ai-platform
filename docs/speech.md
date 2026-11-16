@@ -61,7 +61,8 @@ that downloads and then will not play.
 
 Keys can be scoped to `audio` like any other surface, and audio is metered: seconds for
 transcription, characters for synthesis, since neither has tokens. Both appear in
-`/api/v1/usage` beside chat.
+`/api/v1/usage` beside chat. Calls made by the voice assistant carry no API key; since
+E27 they are recorded for the signed-in person and charged to the agent's team.
 
 ## OCR
 
