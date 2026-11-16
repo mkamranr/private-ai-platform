@@ -52,6 +52,11 @@ POLL_INTERVAL_SECONDS = 5
 #: operator learns about a leaked container the same day, rare enough that listing
 #: containers on every node is not a constant background cost.
 ORPHAN_SCAN_EVERY = 120
+#: Passes between sweeps for deployments of blocked models still running (E28): about a
+#: minute, so a node that comes back is not left serving GPUs to a blocked model for long.
+BLOCKED_SWEEP_EVERY = 12
+#: Alert for a blocked model's deployment the worker cannot stop.
+BLOCKED_RUNNING_PREFIX = "blocked_model_running:"
 
 
 class DeploymentWorker:
@@ -168,6 +173,46 @@ class DeploymentWorker:
         except Exception:
             log.exception("deployment_failure_alert_failed", deployment=str(deployment.id))
 
+    async def stop_blocked(self) -> None:
+        """Stop deployments of blocked models that are still live (E28). Never raises."""
+        try:
+            async with self._session_factory() as session:
+                await self._stop_blocked(session)
+                await session.commit()
+        except Exception:
+            log.exception("blocked_model_sweep_failed")
+
+    async def _stop_blocked(self, session: AsyncSession) -> tuple[list, list]:
+        """One sweep on ``session``: stop, then raise or clear the alerts.
+
+        One alert per deployment that cannot be stopped, cleared once it is stopped or
+        no longer live (stopped by hand, or its model unblocked).
+        """
+        stopped, failed = await self._service(session).stop_blocked()
+        alerts = AlertService(AlertRepository(session), AuditService(AuditRepository(session)))
+        wanted = {f"{BLOCKED_RUNNING_PREFIX}{d}" for d in failed}
+        for deployment_id in failed:
+            log.warning("blocked_model_still_running", deployment=str(deployment_id))
+            await alerts.raise_alert(
+                fingerprint=f"{BLOCKED_RUNNING_PREFIX}{deployment_id}",
+                severity="WARNING",
+                source="deployment",
+                title="Blocked model still running",
+                message=(
+                    "A deployment of a blocked model could not be stopped, usually because "
+                    "its node is unreachable. Retried every minute; the gateway does not "
+                    "route to it meanwhile."
+                ),
+                resource_type="deployment",
+                resource_id=str(deployment_id),
+            )
+        for fingerprint in await AlertRepository(session).open_fingerprints("deployment"):
+            if fingerprint.startswith(BLOCKED_RUNNING_PREFIX) and fingerprint not in wanted:
+                await alerts.clear(fingerprint)
+        if stopped:
+            log.info("blocked_model_deployments_stopped", count=len(stopped))
+        return stopped, failed
+
     async def _report_orphans(self) -> None:
         """Log any managed container without a deployment record. Never removes."""
         try:
@@ -192,6 +237,8 @@ class DeploymentWorker:
                 # on every node.
                 if passes % ORPHAN_SCAN_EVERY == 0:
                     await self._report_orphans()
+                if passes % BLOCKED_SWEEP_EVERY == 0:
+                    await self.stop_blocked()
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
         except asyncio.CancelledError:
             log.info("deployment_worker_stopped")

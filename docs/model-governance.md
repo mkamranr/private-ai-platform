@@ -35,8 +35,13 @@ Code:
   - To keep them (to inspect one, say), send `"stop_deployments": false`, or untick
     *Stop its running deployments too* in the Edit dialog.
   - A deployment that cannot be stopped (its node is unreachable) does not undo the
-    block. It is listed in the response's `stop_failed` and keeps running; stop it from
-    the Deployments page once the node is back. The gateway refuses it either way.
+    block. It is listed in the response's `stop_failed` and keeps running; the gateway
+    refuses it either way.
+  - **The deployment worker retries (E28).** About once a minute it stops whatever is
+    still live of a blocked model, including a deployment that was still being created
+    when the model was blocked. These stops are audited as `deployment-worker`. While
+    one cannot be stopped, a WARNING alert *Blocked model still running* stays open; it
+    clears once the deployment is stopped, by the worker or by hand.
   - The response lists what was stopped in `stopped_deployments`.
 - The gateway stops routing to a blocked model straight away, including agent calls,
   which resolve models the same way.
@@ -217,6 +222,7 @@ The existing `GET /deployments/{id}/logs` (one snapshot) is unchanged.
 - deploy refusal for blocked and deprecated models;
 - blocking stops running deployments, unless asked not to, and reports one it could not
   stop (`tests/api/test_block_stops_deployments.py`, E26);
+- the deployment worker's retry and its alert (`tests/api/test_blocked_sweep.py`, E28);
 - blocked handling in the gateway: 403, hidden from `/v1/models`, alias fallback; and
   deprecated models still serving;
 - validation without reservation;
