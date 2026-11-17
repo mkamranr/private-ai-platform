@@ -964,8 +964,15 @@ function renderTriggersTab() {
         <p class="small text-secondary">Another system starts a run by POSTing a JSON body,
           which becomes the run's input. It runs with the permissions of whoever published
           the version. The token is shown once; rotating it stops the old one at once.</p>
-        <div class="mb-3">${d.webhook_enabled ? '<span class="pill pill-ok">Enabled</span>' : '<span class="pill pill-idle">Disabled</span>'}</div>
+        <div class="mb-3">${d.webhook_enabled ? '<span class="pill pill-ok">Enabled</span>' : '<span class="pill pill-idle">Disabled</span>'}
+          ${d.webhook_enabled && d.webhook_signature_required ? '<span class="pill pill-ok">Signed calls only</span>' : ''}</div>
         <div id="wf-hook-token"></div>
+        ${edit ? `<div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" id="wf-hook-signed" ${d.webhook_signature_required ? 'checked' : ''}>
+          <label class="form-check-label small" for="wf-hook-signed">Require signed calls
+            (HMAC-SHA256 of the body, with a timestamp; replays are refused). Applied when
+            the token is issued.</label>
+        </div>` : ''}
         ${edit ? `<div class="d-flex gap-2">
           <button class="btn btn-sm btn-primary" id="wf-hook-rotate">${d.webhook_enabled ? 'Rotate token' : 'Enable webhook'}</button>
           ${d.webhook_enabled ? '<button class="btn btn-sm btn-outline-danger" id="wf-hook-off">Disable</button>' : ''}
@@ -990,17 +997,31 @@ function renderTriggersTab() {
   const rotate = document.getElementById('wf-hook-rotate');
   if (rotate) rotate.onclick = () => guard(rotate, async () => {
     if (d.webhook_enabled && !confirm('Rotate the token? Callers using the current one start failing now.')) return;
-    const hook = await api(`/workflows/${wf.selected}/webhook`, { method: 'POST' });
+    const requireSignature = document.getElementById('wf-hook-signed')?.checked ?? false;
+    const hook = await api(`/workflows/${wf.selected}/webhook`, {
+      method: 'POST', body: JSON.stringify({ require_signature: requireSignature }),
+    });
     wf.detail = await api(`/workflows/${wf.selected}`);
     renderDetail();
+    // E36: a signed call, as a sender would make it with openssl.
+    const signedExample = hook.signing_secret ? `
+        <div class="fw-medium mt-2 mb-1">Signing secret${hook.signature_required ? ' (calls must be signed)' : ''}</div>
+        <div class="mono text-break mb-2">${esc(hook.signing_secret)}</div>
+        <pre class="logs mb-0">BODY='{"example": true}'; TS=$(date +%s)
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac '${esc(hook.signing_secret)}' | sed 's/^.* //')
+curl -X POST ${esc(hook.url)} \\
+  -H "X-Workflow-Token: ${esc(hook.token)}" \\
+  -H "X-Workflow-Timestamp: $TS" -H "X-Workflow-Signature: sha256=$SIG" \\
+  -H "Content-Type: application/json" -d "$BODY"</pre>` : '';
     document.getElementById('wf-hook-token').innerHTML = `
       <div class="alert alert-success small">
-        <div class="fw-medium mb-1">Copy the token now — it will not be shown again.</div>
+        <div class="fw-medium mb-1">Copy these now — they will not be shown again.</div>
         <div class="mono text-break mb-2">${esc(hook.token)}</div>
-        <pre class="logs mb-0">curl -X POST ${esc(hook.url)} \\
+        ${hook.signature_required ? '' : `<pre class="logs mb-0">curl -X POST ${esc(hook.url)} \\
   -H "X-Workflow-Token: ${esc(hook.token)}" \\
   -H "Content-Type: application/json" \\
-  -d '{"example": true}'</pre>
+  -d '{"example": true}'</pre>`}
+        ${signedExample}
       </div>`;
   });
   const off = document.getElementById('wf-hook-off');

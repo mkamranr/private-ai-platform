@@ -37,6 +37,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -121,6 +122,13 @@ class Workflow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: SHA-256 of the webhook token. NULL: webhooks disabled. The token itself is shown
     #: once, when it is generated.
     webhook_token_hash: Mapped[str | None] = mapped_column(String(64))
+    #: E36: the HMAC signing secret, Fernet-encrypted (verifying needs the secret itself,
+    #: so it cannot be hashed like the token). Issued with the token, shown once.
+    webhook_secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    #: E36: refuse webhook calls without a valid, fresh signature.
+    webhook_signature_required: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")

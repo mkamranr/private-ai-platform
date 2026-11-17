@@ -59,6 +59,8 @@ class WorkflowRead(BaseModel):
     schedule_input: dict[str, Any] = Field(default_factory=dict)
     next_run_at: dt.datetime | None = None
     webhook_enabled: bool = False
+    #: E36: unsigned webhook calls are refused.
+    webhook_signature_required: bool = False
     node_count: int = 0
     last_run: LastRun | None = None
     created_at: dt.datetime
@@ -117,6 +119,16 @@ class WebhookToken(BaseModel):
     token: str
     url: str
     message: str
+    #: E36: the HMAC-SHA256 signing secret, shown once. None when the platform has no
+    #: encryption key to keep it with.
+    signing_secret: str | None = None
+    signature_required: bool = False
+
+
+class WebhookRotateRequest(BaseModel):
+    """E36: whether calls must be signed. Omitted: keep the current setting."""
+
+    require_signature: bool | None = None
 
 
 class RunRequest(BaseModel):

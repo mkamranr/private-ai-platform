@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Signed workflow webhooks (E36)
+- **Prove the body and the moment.** Enabling or rotating a workflow webhook now also issues a signing secret. A caller signs `<timestamp>.<body>` with HMAC-SHA256 and sends `X-Workflow-Timestamp` and `X-Workflow-Signature: sha256=…`, as for Stripe or GitHub webhooks. A changed body, a timestamp more than 5 minutes off, or a signature already used is refused.
+- **Opt in per workflow.** *Require signed calls* (or `{"require_signature": true}` when rotating) refuses unsigned calls; otherwise unsigned calls still work but a bad signature does not. The console shows a ready `curl` + `openssl` example.
+- **Upgrade.** Migration `e6a8c0d2f4b5`. Existing webhooks keep working unsigned; rotate one to get its signing secret.
+
 ### Tools can belong to a team (E35)
 - **Team tools.** A tool can now have an owning team, like a model or knowledge base: register it with `team_id`, or move it with `PUT /scope` (`resource_type: "tool"`). Other teams do not see it, and only that team's agents may be granted it; a shared agent may use only shared tools. Checked when an agent is saved or moved and at every run.
 - **Fix: workflows can be moved between teams.** `PUT /scope` refused `resource_type: "workflow"` with 422, although it was documented.

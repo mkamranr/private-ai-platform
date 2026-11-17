@@ -709,7 +709,7 @@ Under `/api/v1`, authenticated with the platform JWT unless noted. See
 | POST | `/workflows/{id}/publish` | `workflow.edit`. `note`; 422 with `details.problems` when the draft is invalid |
 | POST | `/workflows/{id}/status` | `workflow.edit`. `PUBLISHED`, `PAUSED` or `ARCHIVED` |
 | GET | `/workflows/{id}/versions` | `workflow.view`. Newest first |
-| POST / DELETE | `/workflows/{id}/webhook` | `workflow.edit`. POST returns the token once |
+| POST / DELETE | `/workflows/{id}/webhook` | `workflow.edit`. POST returns the token and (E36) `signing_secret` once; body `{"require_signature": bool}` optional |
 | POST | `/workflows/{id}/runs` | `workflow.execute` (`test` also needs `workflow.edit`). `input`, `trigger` (`manual`/`api`), `test`, `wait` (default true). **201** |
 | GET | `/workflows/{id}/runs` | `workflow.view`. `?status=&limit=` |
 | GET | `/workflow-runs` | `workflow.view`. Recent runs across workflows in scope |
@@ -717,7 +717,7 @@ Under `/api/v1`, authenticated with the platform JWT unless noted. See
 | POST | `/workflow-runs/{id}/cancel` | `workflow.execute` |
 | GET | `/workflow-approvals/pending` | `workflow.approve` |
 | POST | `/workflow-approvals/{id}/decide` | `workflow.approve`. `approved`, `reason`; continues the run and returns it |
-| POST | `/workflow-hooks/{id}` | **No JWT**: header `X-Workflow-Token`. JSON body is the input. **202** with the queued run; 401 for any bad token |
+| POST | `/workflow-hooks/{id}` | **No JWT**: header `X-Workflow-Token`. JSON body is the input. **202** with the queued run; 401 for any bad token. E36: `X-Workflow-Timestamp` + `X-Workflow-Signature: sha256=HMAC(secret, "ts.body")`, within 5 min, once; required when the workflow says so |
 
 Changes to existing routes, backwards-compatible: `PUT /scope` accepts
 `resource_type: "workflow"`.
