@@ -8,10 +8,11 @@ or, for schedule and webhook runs, of whoever published the version.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, Path, Query, Response, status
+from fastapi import APIRouter, Header, Path, Query, Request, Response, status
 
 from app.api.deps import (
     AuthServiceDep,
@@ -22,7 +23,7 @@ from app.api.deps import (
     require_permission,
 )
 from app.api.routing import CommittingRoute
-from app.core.errors import ValidationError
+from app.core.errors import AuthenticationError, ValidationError
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
 from app.models.workflows import Workflow, WorkflowRun
@@ -42,12 +43,14 @@ from app.schemas.workflows import (
     ValidateRequest,
     ValidateResponse,
     VersionRead,
+    WebhookRotateRequest,
     WebhookToken,
     WorkflowCreate,
     WorkflowDetail,
     WorkflowRead,
     WorkflowUpdate,
 )
+from app.services import webhook_signing
 from app.services import workflow_definition as wd
 from app.services.workflows import WorkflowService, template_definition
 
@@ -70,6 +73,7 @@ def _read(workflow: Workflow, last: WorkflowRun | None = None) -> dict[str, Any]
         "schedule_input": workflow.schedule_input or {},
         "next_run_at": workflow.next_run_at,
         "webhook_enabled": bool(workflow.webhook_token_hash),
+        "webhook_signature_required": workflow.webhook_signature_required,
         "node_count": len(wd.nodes_of(workflow.draft or {})),
         "last_run": LastRun(
             id=last.id,
@@ -316,16 +320,30 @@ async def rotate_webhook(
     actor: Annotated[User, require_permission(Perm.WORKFLOW_EDIT)],
     guard: ScopeGuardDep,
     settings: EffectiveSettingsDep,
+    payload: WebhookRotateRequest | None = None,
     workflow_id: uuid.UUID = Path(...),
 ) -> WebhookToken:
-    """A new token, shown once. The previous token stops working at once."""
+    """A new token and signing secret (E36), shown once. The previous ones stop working
+    at once. `require_signature` makes unsigned calls fail."""
     await guard.workflow(workflow_id)
-    workflow, token = await service.rotate_webhook(workflow_id, actor=actor)
+    workflow, token, secret = await service.rotate_webhook(
+        workflow_id,
+        actor=actor,
+        require_signature=payload.require_signature if payload else None,
+    )
     base = settings.platform.public_base_url.rstrip("/")
+    signing = (
+        " Sign each call with the signing secret: X-Workflow-Timestamp (Unix seconds) and "
+        "X-Workflow-Signature: sha256=HMAC-SHA256(secret, '<timestamp>.<raw body>')."
+        if secret
+        else ""
+    )
     return WebhookToken(
         token=token,
         url=f"{base}/api/v1/workflow-hooks/{workflow.id}",
-        message="Send it in the X-Workflow-Token header. It will not be shown again.",
+        message=("Send it in the X-Workflow-Token header. It will not be shown again." + signing),
+        signing_secret=secret,
+        signature_required=workflow.webhook_signature_required,
     )
 
 
@@ -501,16 +519,39 @@ async def decide_approval(
     summary="Trigger a workflow by webhook",
 )
 async def webhook(
+    request: Request,
     service: WorkflowServiceDep,
     body: dict[str, Any] | None = None,
     workflow_id: uuid.UUID = Path(...),
     token: Annotated[str | None, Header(alias="X-Workflow-Token")] = None,
+    timestamp: Annotated[str | None, Header(alias="X-Workflow-Timestamp")] = None,
+    signature: Annotated[str | None, Header(alias="X-Workflow-Signature")] = None,
 ) -> RunRead:
     """Queue a run of the published version with the JSON body as its input. Authenticated
     by the workflow's webhook token, not a user: the run executes with the permissions of
-    whoever published the version. Always 202 — follow the run through the API."""
-    workflow = await service.verify_webhook(workflow_id, token)
+    whoever published the version. Always 202 — follow the run through the API.
+
+    E36: signed calls (`X-Workflow-Timestamp`, `X-Workflow-Signature`) are checked over the
+    raw body, and a signature is accepted once. A workflow can require them."""
+    raw = await request.body()  # cached by Starlette: the same bytes `body` was parsed from
+    workflow = await service.verify_webhook(
+        workflow_id, token, body=raw, timestamp=timestamp, signature=signature
+    )
+    if signature and not await _first_use(request, workflow_id, signature):
+        raise AuthenticationError("Invalid webhook token.")
     if body is not None and not isinstance(body, dict):
         raise ValidationError("The webhook body is a JSON object.")
     run = await service.start(workflow, trigger="webhook", input=body or {}, actor=None)
     return RunRead.model_validate(run)
+
+
+async def _first_use(request: Request, workflow_id: uuid.UUID, signature: str) -> bool:
+    """E36: refuse a replayed signed call. Valkey remembers each accepted signature for
+    twice the timestamp tolerance, which is as long as it could be valid. Fails open while
+    Valkey is down, like the sign-in throttle: the timestamp still bounds a replay."""
+    key = "wfhook:sig:" + hashlib.sha256(f"{workflow_id}:{signature}".encode()).hexdigest()
+    try:
+        redis = request.app.state.redis.client
+        return bool(await redis.set(key, "1", nx=True, ex=2 * webhook_signing.TOLERANCE_SECONDS))
+    except Exception:
+        return True

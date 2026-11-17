@@ -1023,6 +1023,7 @@ def build_workflow_service(session: AsyncSession, app_state: Any) -> WorkflowSer
         UserRepository(session),
         audit,
         engine,
+        cipher=getattr(app_state, "secret_cipher", None),
     )
 
 

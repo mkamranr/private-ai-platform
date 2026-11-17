@@ -88,7 +88,7 @@ dashboard real signals.
 - [x] Approvals: approval nodes and HIGH/CRITICAL tools pause the run; a decision resumes it inline; no self-approval unless the node allows it; audited. Workflow steps appear on the existing Approvals page beside agent tool calls (separate API, shared inbox in the console).
 - [x] Runs carry the starter's permissions (the publisher's for schedule and webhook runs); tool permissions are checked against them. Team scope for workflows, runs and approvals; definitions' knowledge base and model references checked on save and publish; `PUT /scope` accepts `workflow`.
 - [x] Admin: Workflows page with templates, builder (node list with typed forms, connection table, JSON view, auto-laid-out graph, validate), test and published runs, run trace with a coloured graph, triggers and versions. Doc: [docs/workflows.md](../workflows.md).
-- [ ] No drag-and-drop canvas, typed per-node schemas, parallel branches, sub-workflows, loops or webhook body signatures. See workflows.md.
+- [ ] No drag-and-drop canvas, typed per-node schemas, parallel branches, sub-workflows or loops. ~~No webhook body signatures.~~ Closed in E36. See workflows.md.
 
 ## E7: Operations UI and release hardening (P0 for air-gapped production)
 
@@ -339,6 +339,14 @@ dashboard real signals.
 - [x] Fix: `PUT /scope` accepted no `workflow` (missing from `ResourceTypeLiteral`, so 422) although the service, docs and permission table supported it.
 - [x] Console: team chip on tools. Tests: `tests/api/test_team_tools.py`. Docs: teams.md, tools.md, api.md.
 - [ ] Skills and MCP servers stay platform-wide; tools discovered from an MCP server start shared. No console control to move a resource between teams (API only, as for every kind).
+
+## E36: Signed workflow webhooks (closes the E6 webhook-signature item)
+
+- [x] `app/services/webhook_signing.py`: HMAC-SHA256 over `<timestamp>.<raw body>` (`sha256=` hex, several accepted), 5-minute tolerance either way. Pure; unit-tested.
+- [x] Migration `e6a8c0d2f4b5`: `workflows.webhook_secret_encrypted` (Fernet, like tool credentials) and `webhook_signature_required`. Rotation issues token and secret together (`signing_secret`, once); `require_signature` on rotate; disabling deletes both.
+- [x] `/workflow-hooks/{id}`: a signature is checked over the raw body when required or when sent; an accepted signature is remembered in Valkey for 10 min and refused again (fails open). Every refusal is the same 401 as a bad token; the reason is logged.
+- [x] Console: *Require signed calls* switch and a signed `curl`/`openssl` example (checked to match). Tests: `tests/unit/test_webhook_signing.py`, `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls-e36).
+- [ ] Webhooks enabled before E36 have no secret until rotated. One secret at a time (no overlap window when rotating). Replay protection depends on Valkey.
 
 ## Phase acceptance (applies to each)
 

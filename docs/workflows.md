@@ -207,6 +207,34 @@ curl -X POST https://ai.example.internal/api/v1/workflow-hooks/<workflow-id> \
 - A missing workflow, a workflow with no webhook and a wrong token all get the same 401,
   so the endpoint does not reveal which workflows exist.
 
+#### Signed calls (E36)
+
+The token says who may call; it does not prove the body arrived unchanged, and a captured
+call could be sent again. Enabling or rotating a webhook also issues a **signing secret**
+(`signing_secret`, shown once, stored encrypted). A signed call adds two headers:
+
+```bash
+BODY='{"order": "SO-88140", "amount": 1450}'; TS=$(date +%s)
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')
+curl -X POST https://ai.example.internal/api/v1/workflow-hooks/<workflow-id> \
+  -H "X-Workflow-Token: wfh_..." \
+  -H "X-Workflow-Timestamp: $TS" -H "X-Workflow-Signature: sha256=$SIG" \
+  -H "Content-Type: application/json" -d "$BODY"
+```
+
+- The signature is HMAC-SHA256 of `<timestamp>.<raw body>`, the scheme Stripe and GitHub
+  use. Several comma-separated `sha256=` values may be sent; one matching is enough.
+- A timestamp more than **5 minutes** from the platform's clock is refused, and a
+  signature already accepted is refused for 10 minutes after (remembered in Valkey; while
+  Valkey is down only the timestamp limits a replay).
+- `POST /workflows/{id}/webhook` with `{"require_signature": true}` makes the workflow
+  refuse unsigned calls; omit it to keep the current setting. Without it, unsigned calls
+  still work, but a signature that is sent must be valid.
+- Every refusal is the same 401 as a wrong token; the reason is logged
+  (`workflow_webhook_signature_refused`), not returned.
+- Rotating replaces token and secret together; disabling the webhook deletes both.
+- Upgrade: webhooks enabled before E36 have no secret until rotated.
+
 ## The worker
 
 The workflow worker runs inside the API process, like the ingestion worker, when

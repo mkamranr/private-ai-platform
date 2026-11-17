@@ -19,6 +19,7 @@ import datetime as dt
 import hashlib
 import hmac
 import secrets
+import time
 import uuid
 from typing import Any
 
@@ -34,6 +35,7 @@ from app.core.errors import (
 )
 from app.core.logging import get_logger
 from app.core.permissions import PERMISSION_CATALOGUE
+from app.core.security import SecretCipher
 from app.models.audit import AuditAction
 from app.models.auth import User
 from app.models.workflows import (
@@ -52,6 +54,7 @@ from app.repositories.workflows import (
     WorkflowRunRepository,
     WorkflowVersionRepository,
 )
+from app.services import webhook_signing
 from app.services import workflow_definition as wd
 from app.services.audit import AuditService
 from app.services.workflow_engine import WorkflowEngine
@@ -213,7 +216,10 @@ class WorkflowService:
         users: UserRepository,
         audit: AuditService,
         engine: WorkflowEngine,
+        cipher: SecretCipher | None = None,
     ) -> None:
+        #: E36: encrypts webhook signing secrets. None: webhooks are issued unsigned.
+        self._cipher = cipher
         self._settings = settings
         self._workflows = workflows
         self._versions = versions
@@ -402,11 +408,26 @@ class WorkflowService:
             workflow.next_run_at = None
 
     # ------------------------------------------------------------------ webhook
-    async def rotate_webhook(self, workflow_id: uuid.UUID, *, actor: User) -> tuple[Workflow, str]:
-        """A new webhook token, returned once; the previous one stops working."""
+    async def rotate_webhook(
+        self,
+        workflow_id: uuid.UUID,
+        *,
+        actor: User,
+        require_signature: bool | None = None,
+    ) -> tuple[Workflow, str, str | None]:
+        """A new webhook token and (E36) signing secret, returned once; the previous ones
+        stop working. ``require_signature`` None keeps the current setting."""
         workflow = await self.get(workflow_id)
         token = "wfh_" + secrets.token_urlsafe(32)
         workflow.webhook_token_hash = hash_token(token)
+        secret: str | None = None
+        if self._cipher is not None:
+            secret = webhook_signing.new_secret()
+            workflow.webhook_secret_encrypted = self._cipher.encrypt(secret)
+        if require_signature is not None:
+            if require_signature and secret is None:
+                raise ConflictError("Signed webhooks need the platform's encryption key.")
+            workflow.webhook_signature_required = require_signature
         await self._flush(workflow)
         await self._audit.record(
             AuditAction.WORKFLOW_WEBHOOK_ROTATED,
@@ -414,13 +435,18 @@ class WorkflowService:
             username=actor.username,
             resource_type="workflow",
             resource_id=str(workflow.id),
-            metadata={"name": workflow.name, "enabled": True},
+            metadata={
+                "name": workflow.name,
+                "enabled": True,
+                "signature_required": workflow.webhook_signature_required,
+            },
         )
-        return workflow, token
+        return workflow, token, secret
 
     async def disable_webhook(self, workflow_id: uuid.UUID, *, actor: User) -> Workflow:
         workflow = await self.get(workflow_id)
         workflow.webhook_token_hash = None
+        workflow.webhook_secret_encrypted = None
         await self._flush(workflow)
         await self._audit.record(
             AuditAction.WORKFLOW_WEBHOOK_ROTATED,
@@ -432,14 +458,43 @@ class WorkflowService:
         )
         return workflow
 
-    async def verify_webhook(self, workflow_id: uuid.UUID, token: str | None) -> Workflow:
-        """The workflow, if ``token`` is its webhook token. One answer for every failure,
-        so the endpoint does not reveal which workflows exist or have webhooks."""
+    async def verify_webhook(
+        self,
+        workflow_id: uuid.UUID,
+        token: str | None,
+        *,
+        body: bytes = b"",
+        timestamp: str | None = None,
+        signature: str | None = None,
+        now: float | None = None,
+    ) -> Workflow:
+        """The workflow, if ``token`` is its webhook token and, when the workflow requires
+        one or the caller sent one (E36), the signature is valid and fresh. One answer for
+        every failure, so the endpoint does not reveal which workflows exist or have
+        webhooks, nor which check failed (that is logged)."""
         workflow = await self._workflows.get(workflow_id)
         expected = workflow.webhook_token_hash if workflow else None
         presented = hash_token(token or "")
         if workflow is None or not expected or not hmac.compare_digest(expected, presented):
             raise AuthenticationError("Invalid webhook token.")
+        # A signature sent is checked even when not required: a sender that signs expects
+        # a tampered body to be refused.
+        if workflow.webhook_signature_required or signature or timestamp:
+            try:
+                if not workflow.webhook_secret_encrypted or self._cipher is None:
+                    raise webhook_signing.SignatureError("no signing secret")
+                webhook_signing.verify(
+                    self._cipher.decrypt(workflow.webhook_secret_encrypted),
+                    body=body,
+                    timestamp=timestamp,
+                    signature=signature,
+                    now=time.time() if now is None else now,
+                )
+            except webhook_signing.SignatureError as exc:
+                log.info(
+                    "workflow_webhook_signature_refused", workflow=str(workflow_id), why=str(exc)
+                )
+                raise AuthenticationError("Invalid webhook token.") from exc
         return workflow
 
     # ------------------------------------------------------------------ runs
