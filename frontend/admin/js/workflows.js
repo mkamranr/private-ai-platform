@@ -963,15 +963,26 @@ function renderTriggersTab() {
         <h6>Webhook</h6>
         <p class="small text-secondary">Another system starts a run by POSTing a JSON body,
           which becomes the run's input. It runs with the permissions of whoever published
-          the version. The token is shown once; rotating it stops the old one at once.</p>
+          the version. The token is shown once; rotating it stops the old one at once,
+          unless you keep it working for a while so callers can switch.</p>
         <div class="mb-3">${d.webhook_enabled ? '<span class="pill pill-ok">Enabled</span>' : '<span class="pill pill-idle">Disabled</span>'}
-          ${d.webhook_enabled && d.webhook_signature_required ? '<span class="pill pill-ok">Signed calls only</span>' : ''}</div>
+          ${d.webhook_enabled && d.webhook_signature_required ? '<span class="pill pill-ok">Signed calls only</span>' : ''}
+          ${d.webhook_previous_valid_until ? `<span class="pill pill-warn" title="The token and secret replaced by the last rotation">Old token works until ${esc(new Date(d.webhook_previous_valid_until).toLocaleString())}</span>` : ''}</div>
         <div id="wf-hook-token"></div>
         ${edit ? `<div class="form-check form-switch mb-2">
           <input class="form-check-input" type="checkbox" id="wf-hook-signed" ${d.webhook_signature_required ? 'checked' : ''}>
           <label class="form-check-label small" for="wf-hook-signed">Require signed calls
             (HMAC-SHA256 of the body, with a timestamp; replays are refused). Applied when
             the token is issued.</label>
+        </div>` : ''}
+        ${edit && d.webhook_enabled ? `<div class="d-flex align-items-center gap-2 mb-2 small">
+          <label for="wf-hook-overlap" class="text-secondary">When rotating, keep the old token working for</label>
+          <select id="wf-hook-overlap" class="form-select form-select-sm" style="width:auto">
+            <option value="0" selected>No time (stops now)</option>
+            <option value="60">1 hour</option>
+            <option value="1440">24 hours</option>
+            <option value="10080">7 days</option>
+          </select>
         </div>` : ''}
         ${edit ? `<div class="d-flex gap-2">
           <button class="btn btn-sm btn-primary" id="wf-hook-rotate">${d.webhook_enabled ? 'Rotate token' : 'Enable webhook'}</button>
@@ -996,10 +1007,16 @@ function renderTriggersTab() {
   if (clear) clear.onclick = () => guard(clear, () => saveCron(''));
   const rotate = document.getElementById('wf-hook-rotate');
   if (rotate) rotate.onclick = () => guard(rotate, async () => {
-    if (d.webhook_enabled && !confirm('Rotate the token? Callers using the current one start failing now.')) return;
+    // E41: an overlap keeps the replaced token and secret working while callers switch.
+    const overlap = Number(document.getElementById('wf-hook-overlap')?.value || 0);
+    const warning = overlap
+      ? 'Rotate the token? The current one keeps working for the time chosen, then stops.'
+      : 'Rotate the token? Callers using the current one start failing now.';
+    if (d.webhook_enabled && !confirm(warning)) return;
     const requireSignature = document.getElementById('wf-hook-signed')?.checked ?? false;
     const hook = await api(`/workflows/${wf.selected}/webhook`, {
-      method: 'POST', body: JSON.stringify({ require_signature: requireSignature }),
+      method: 'POST',
+      body: JSON.stringify({ require_signature: requireSignature, overlap_minutes: overlap }),
     });
     wf.detail = await api(`/workflows/${wf.selected}`);
     renderDetail();

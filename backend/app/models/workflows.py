@@ -129,6 +129,11 @@ class Workflow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     webhook_signature_required: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false(), nullable=False
     )
+    #: E41: the token and secret replaced by the last rotation, still accepted until
+    #: ``webhook_previous_until`` so callers can switch without dropped calls.
+    webhook_previous_token_hash: Mapped[str | None] = mapped_column(String(64))
+    webhook_previous_secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    webhook_previous_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")

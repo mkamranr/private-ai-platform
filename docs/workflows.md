@@ -236,6 +236,13 @@ curl -X POST https://ai.example.internal/api/v1/workflow-hooks/<workflow-id> \
 - Every refusal is the same 401 as a wrong token; the reason is logged
   (`workflow_webhook_signature_refused`), not returned.
 - Rotating replaces token and secret together; disabling the webhook deletes both.
+- **Rotating without dropped calls (E41).** Send `{"overlap_minutes": N}` (up to 10080,
+  7 days; the console offers 1 hour, 24 hours and 7 days) to keep the replaced token and
+  secret working for N minutes while callers switch. Each token is checked with its own
+  secret: the old token signed with the new secret is refused. The response's
+  `previous_valid_until`, and the workflow's `webhook_previous_valid_until`, say when the
+  old pair stops. Rotating again keeps only the pair just replaced, and disabling the
+  webhook ends the overlap at once. The default, 0, stops the old pair immediately.
 - Upgrade: webhooks enabled before E36 have no secret until rotated.
 
 ## The worker
