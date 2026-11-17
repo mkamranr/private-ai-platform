@@ -129,6 +129,16 @@ class NotificationChannel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # -- email -----------------------------------------------------------------
     recipients: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
 
+    # -- quiet hours (E42) -------------------------------------------------------
+    #: A daily window, "HH:MM" to "HH:MM" in ``quiet_timezone``, when only CRITICAL
+    #: alerts are sent; the rest wait until it ends. Both NULL: no quiet hours.
+    quiet_start: Mapped[str | None] = mapped_column(String(5))
+    quiet_end: Mapped[str | None] = mapped_column(String(5))
+    #: ``UTC``, an offset such as ``+04:00``, or an IANA name the server can resolve.
+    quiet_timezone: Mapped[str] = mapped_column(
+        String(64), default="UTC", server_default="UTC", nullable=False
+    )
+
     # -- health ----------------------------------------------------------------
     last_success_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     last_failure_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))

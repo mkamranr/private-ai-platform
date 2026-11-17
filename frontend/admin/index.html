@@ -1807,6 +1807,16 @@
             <div class="form-label small text-secondary mb-1">From these sources <span class="text-secondary">(none ticked means all)</span></div>
             <div id="notify-sources"></div>
           </div>
+          <div class="mb-3">
+            <div class="form-label small text-secondary mb-1">Quiet hours <span class="text-secondary">(optional: only Critical alerts are sent; the rest wait until the end)</span></div>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <input type="time" class="form-control form-control-sm" style="width:auto" id="notify-quiet-start" aria-label="Quiet from">
+              <span class="small text-secondary">to</span>
+              <input type="time" class="form-control form-control-sm" style="width:auto" id="notify-quiet-end" aria-label="Quiet until">
+              <input class="form-control form-control-sm" style="width:9rem" id="notify-quiet-zone" maxlength="64"
+                     value="UTC" aria-label="Time zone" title="UTC, an offset such as +04:00, or a zone name such as Asia/Dubai">
+            </div>
+          </div>
           <label class="form-label small text-secondary" for="notify-description">Note <span class="text-secondary">(optional)</span></label>
           <input class="form-control" id="notify-description" maxlength="500" placeholder="e.g. Paged out of hours">
           <div class="alert alert-danger small py-2 mt-3 mb-0 d-none" id="notify-error"></div>

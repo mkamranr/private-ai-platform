@@ -390,7 +390,7 @@ class InfrastructureWorker:
                 )
                 result = await dispatcher.run()
                 await session.commit()
-            if result.queued or result.sent or result.failed or result.retrying:
+            if result.queued or result.sent or result.failed or result.retrying or result.held:
                 log.info(
                     "notifications_dispatched",
                     queued=result.queued,
@@ -398,6 +398,7 @@ class InfrastructureWorker:
                     retrying=result.retrying,
                     failed=result.failed,
                     deferred=result.deferred,
+                    held=result.held,
                 )
         except Exception:
             log.exception("notification_dispatch_failed")

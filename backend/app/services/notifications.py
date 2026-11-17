@@ -52,6 +52,7 @@ from app.repositories.notifications import (
     NotificationChannelRepository,
     NotificationDeliveryRepository,
 )
+from app.services import quiet_hours
 from app.services.alerts import AlertService
 from app.services.audit import AuditService
 from app.services.notification_senders import (
@@ -107,6 +108,19 @@ def mask_url(url: str) -> str:
 
 def _rank(severity: str) -> int:
     return SEVERITY_RANK.get(AlertSeverity(severity), 0) if severity in set(AlertSeverity) else 0
+
+
+def _quiet_until(channel: NotificationChannel, now: dt.datetime) -> dt.datetime | None:
+    """End of the channel's current quiet window (E42), or None. A zone that stopped
+    resolving (the server lost its time zone data) holds nothing: sending late at night
+    beats never sending."""
+    try:
+        return quiet_hours.quiet_until(
+            channel.quiet_start, channel.quiet_end, channel.quiet_timezone, now
+        )
+    except quiet_hours.QuietHoursError:
+        log.warning("notification_quiet_hours_unusable", channel=channel.name)
+        return None
 
 
 def retry_delay(attempts: int) -> dt.timedelta:
@@ -291,7 +305,29 @@ class NotificationService:
             "has_signing_secret": channel.has_signing_secret,
             "has_authorization": channel.has_authorization,
             "recipients": list(channel.recipients),
+            "quiet_hours": (
+                f"{channel.quiet_start}-{channel.quiet_end} {channel.quiet_timezone}"
+                if channel.quiet_start
+                else None
+            ),
         }
+
+    @staticmethod
+    def _set_quiet(channel: NotificationChannel, data: dict[str, Any]) -> None:
+        """Apply E42 quiet hours from ``data``: omitted keys keep their value, an empty
+        start and end remove the window. Validated as a whole, so a half-window or a zone
+        this server cannot resolve is refused when saved, not at 3 a.m."""
+        start = data.get("quiet_start", channel.quiet_start)
+        end = data.get("quiet_end", channel.quiet_end)
+        zone = data.get("quiet_timezone") or channel.quiet_timezone or "UTC"
+        start = start.strip() or None if isinstance(start, str) else start
+        end = end.strip() or None if isinstance(end, str) else end
+        try:
+            quiet_hours.validate(start, end, zone)
+        except quiet_hours.QuietHoursError as exc:
+            raise ValidationError(str(exc), details={"field": "quiet_hours"}) from exc
+        channel.quiet_start, channel.quiet_end = start, end
+        channel.quiet_timezone = zone.strip()
 
     # -- writes ----------------------------------------------------------------
     async def create(self, data: dict[str, Any], *, actor: User) -> NotificationChannel:
@@ -324,6 +360,7 @@ class NotificationService:
                     "URL, signing secret and authorization apply to webhook channels only."
                 )
             channel.recipients = self._recipients(data.get("recipients") or [])
+        self._set_quiet(channel, data)
         self._channels.add(channel)
         await self._channels.flush()
         await self._channels.session.refresh(channel)
@@ -370,6 +407,8 @@ class NotificationService:
                 )
             if changes.get("recipients") is not None:
                 channel.recipients = self._recipients(changes["recipients"])
+        if {"quiet_start", "quiet_end", "quiet_timezone"} & changes.keys():
+            self._set_quiet(channel, changes)
 
         if channel.enabled and not was_enabled:
             # Turned back on: start from now rather than replaying what it missed.
@@ -469,6 +508,8 @@ class DispatchResult:
     failed: int = 0
     retrying: int = 0
     deferred: int = 0
+    #: Held for a channel's quiet hours (E42).
+    held: int = 0
     pruned: int = 0
     notes: list[str] = field(default_factory=list)
 
@@ -585,6 +626,14 @@ class NotificationDispatcher:
             if channel.id in failed_this_run:
                 result.deferred += 1  # not an attempt: retried at the next run
                 continue
+            # E42: inside the channel's quiet hours only CRITICAL goes out. The rest wait
+            # for the window to end; holding is not an attempt.
+            if delivery.event != DeliveryEvent.TEST and delivery.severity != AlertSeverity.CRITICAL:
+                until = _quiet_until(channel, now)
+                if until is not None:
+                    delivery.next_attempt_at = until
+                    result.held += 1
+                    continue
             alert = alerts.get(delivery.alert_id) if delivery.alert_id else None
             if alert is None:
                 delivery.status = DeliveryStatus.CANCELLED

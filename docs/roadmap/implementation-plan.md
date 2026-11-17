@@ -154,7 +154,7 @@ dashboard real signals.
 - [x] Outbox (`notification_deliveries`) with a dispatcher job (`notification_dispatch`, 30 s): retries with back-off up to `max_attempts`, a failing channel deferred for the rest of a run, a `notification_channel_failing` alert after three failures, 30-day history.
 - [x] API under `/notifications` with permission `notification.manage` (ADMIN, SUPER_ADMIN); test send; audited create, update, delete and test. Alerts page: channels, recent notifications, add/edit form. Metric `ai_platform_notifications_total`.
 - [x] Migration `c4e8a1f2d6b9` upgrades and downgrades cleanly. Doc: [docs/notifications.md](../notifications.md).
-- [ ] No digests or quiet hours, per-team routing, PagerDuty native API, HTML email or SMS.
+- [ ] No digests ~~or quiet hours~~ (quiet hours since E42), per-team routing, PagerDuty native API, HTML email or SMS.
 
 ## E14: Auth hardening
 
@@ -386,6 +386,14 @@ dashboard real signals.
 - [x] `verify_webhook` accepts the previous token until the window ends, each token checked with its own secret.
 - [x] Console: *When rotating, keep the old token working for* (none, 1 h, 24 h, 7 days) and a badge while the old token works. Tests: `TestOverlap` in `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls-e36).
 - [ ] One previous pair at a time; the window cannot be ended early except by rotating again or disabling.
+
+## E42: Quiet hours for notification channels (closes the E13 quiet-hours item)
+
+- [x] `app/services/quiet_hours.py` (pure): `HH:MM` windows, past midnight, in `UTC`, a fixed offset or an IANA zone; a zone the server cannot resolve is refused on save with a hint to use an offset.
+- [x] Migration `b1d3f5a7c9e0`: `notification_channels.quiet_start`, `quiet_end`, `quiet_timezone` (default `UTC`). API fields on create, update and read; audited.
+- [x] Dispatcher: inside the window, non-CRITICAL deliveries (not tests) move to the window's end without an attempt (`held` in the run result and log).
+- [x] Console: quiet hours on the channel form and in the channel's rules line. Tests: `tests/unit/test_quiet_hours.py`, `tests/api/test_quiet_hours.py`. Doc: [notifications.md](../notifications.md#how-delivery-works).
+- [ ] One window a day, the same every day (no weekends or holidays); no digest of what was held.
 
 ## Phase acceptance (applies to each)
 

@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Quiet hours for notification channels (E42)
+- **Only critical at night.** A notification channel can now have quiet hours, for example 22:00 to 07:00: during them it sends only CRITICAL alerts. Everything else is held, not dropped, and sent when the window ends.
+- **In your time zone.** The window is read in `UTC`, a fixed offset such as `+04:00`, or a zone name such as `Asia/Dubai` when the server has time zone data. A name it cannot resolve is refused when you save, not ignored at night.
+- Set it on the channel form on the Alerts page, or with `quiet_start`, `quiet_end` and `quiet_timezone` in the API.
+- **Upgrade.** Migration `b1d3f5a7c9e0` adds three columns to `notification_channels`. Existing channels have no quiet hours.
+
 ### Rotate a workflow webhook without dropped calls (E41)
 - **Overlap window.** Rotating a workflow webhook can now keep the old token and signing secret working for a while (`overlap_minutes`, up to 7 days; the console offers 1 hour, 24 hours or 7 days), so callers can move to the new pair without failed calls. Each token is only accepted with its own secret. The workflow shows when the old token stops.
 - The default is unchanged: without an overlap, the old pair stops at once.

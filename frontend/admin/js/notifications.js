@@ -35,7 +35,8 @@ function channelTarget(c) {
 
 function channelRules(c) {
   const from = c.sources.length ? c.sources.map((s) => esc(titleCase(s))).join(', ') : 'every source';
-  return `${esc(titleCase(c.min_severity))} and above · ${from}${c.notify_resolved ? ' · with resolutions' : ''}`;
+  const quiet = c.quiet_start ? ` · quiet ${esc(c.quiet_start)}–${esc(c.quiet_end)} ${esc(c.quiet_timezone)} (Critical only)` : '';
+  return `${esc(titleCase(c.min_severity))} and above · ${from}${c.notify_resolved ? ' · with resolutions' : ''}${quiet}`;
 }
 
 function notifyChannelsCard(data) {
@@ -156,6 +157,9 @@ function openNotifyModal(channel = null) {
     document.getElementById('notify-resolved').checked = channel.notify_resolved;
     document.getElementById('notify-format').value = channel.payload_format;
     document.getElementById('notify-verify-tls').checked = channel.verify_tls;
+    document.getElementById('notify-quiet-start').value = channel.quiet_start || '';
+    document.getElementById('notify-quiet-end').value = channel.quiet_end || '';
+    document.getElementById('notify-quiet-zone').value = channel.quiet_timezone || 'UTC';
     document.getElementById('notify-recipients').value = channel.recipients.join('\n');
   }
   notifyKindFields(kind.value);
@@ -174,6 +178,10 @@ onModalSubmit('notify-form', 'notify-error', async () => {
     min_severity: value('notify-severity'),
     notify_resolved: document.getElementById('notify-resolved').checked,
     sources: [...document.querySelectorAll('#notify-sources input:checked')].map((i) => i.value),
+    // E42: both blank removes quiet hours; the server checks the times and the zone.
+    quiet_start: value('notify-quiet-start') || (id ? '' : null),
+    quiet_end: value('notify-quiet-end') || (id ? '' : null),
+    quiet_timezone: value('notify-quiet-zone') || 'UTC',
   };
   if (!id) body.kind = kind;
   if (kind === 'webhook') {
