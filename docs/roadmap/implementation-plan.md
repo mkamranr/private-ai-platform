@@ -205,7 +205,7 @@ dashboard real signals.
 - [x] Dashboard model and deployment counts and the gateway section follow scope; `UsageRepository.hourly_series` takes `where`.
 - [x] Definitions import: no version added to another team's agent; agents whose references their team cannot use are skipped with the reason.
 - [x] No migration. Tests: `tests/api/test_team_scoping_e18.py`. Doc: [teams.md](../teams.md#what-an-agent-or-workflow-may-use-e18).
-- [ ] Quotas, circuit breakers, tools, skills, MCP servers and fleet figures stay platform-wide by design. Agent tool grants are not team-checked.
+- [ ] Quotas, circuit breakers, skills, MCP servers and fleet figures stay platform-wide by design. ~~Agent tool grants are not team-checked.~~ Closed in E35 (tools can belong to a team).
 
 ## E19: Platform model calls accounted (closes the E17 open item)
 
@@ -330,6 +330,15 @@ dashboard real signals.
 - [x] `AgentRunService._persisting` checks the budget on each `LLM_REQUEST` (emitted before the call) with the run's tokens so far; refused → the run is FAILED with the message, a `RUN_FAILED` event with the refusal is stored and streamed, and the runtime is closed before the call. Not the first call of a new run (checked at start); the first call after an approval is checked. Not for `agent:` calls through `/v1`.
 - [x] No migration, no interface change (`AgentRuntime` untouched). Tests: `tests/api/test_agent_budget_midrun.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
 - [ ] The call that crosses a budget still finishes (checked before, not during, a call). `agent:` runs through `/v1` are admitted once by the gateway and not stopped mid-run. Workflow agent steps are single calls and are checked per step (E24).
+
+## E35: Tools can belong to a team (closes the E18 tool-grant item)
+
+- [x] Migration `d5f7b9c1e3a4`: `tools.team_id` (FK `teams`, RESTRICT, indexed); every existing tool stays shared.
+- [x] `GET /tools` follows scope; another team's tool is 404 to update, test or delete; `team_id` on register; `PUT /scope` moves tools (`tool.manage`). Team deletion counts owned tools.
+- [x] `TeamReferences.unavailable(tools=...)`: an agent may be granted only shared tools and its team's. Checked on create and new version (422, `details.uses`; a tool the builder cannot see is 404), on `PUT /scope` for an agent (409), at every run (409) and in the definitions import (skipped with the reason).
+- [x] Fix: `PUT /scope` accepted no `workflow` (missing from `ResourceTypeLiteral`, so 422) although the service, docs and permission table supported it.
+- [x] Console: team chip on tools. Tests: `tests/api/test_team_tools.py`. Docs: teams.md, tools.md, api.md.
+- [ ] Skills and MCP servers stay platform-wide; tools discovered from an MCP server start shared. No console control to move a resource between teams (API only, as for every kind).
 
 ## Phase acceptance (applies to each)
 

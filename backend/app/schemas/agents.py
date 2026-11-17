@@ -40,6 +40,13 @@ class ToolCreateRequest(BaseModel):
         description="Stored Fernet-encrypted and never returned.",
     )
     timeout_seconds: int = Field(default=30, ge=1, le=300)
+    team_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Owning team (E35). Omit for a shared tool any agent may be granted. A team's "
+            "tool may be granted only to that team's agents."
+        ),
+    )
 
 
 class ToolRead(ORMModel):
@@ -56,6 +63,8 @@ class ToolRead(ORMModel):
     timeout_seconds: int
     mcp_server_id: uuid.UUID | None = None
     discovered_at: dt.datetime | None = None
+    #: Owning team (E35); null means shared.
+    team_id: uuid.UUID | None = None
     created_at: dt.datetime
     # Never `credentials_encrypted`, and never `config` — config can hold a SQL template
     # or header set that reveals internal topology, and the private keys the platform

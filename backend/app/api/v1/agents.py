@@ -73,8 +73,10 @@ def _tool_read(tool: Tool) -> ToolRead:
 async def list_tools(
     service: ToolRegistryDep,
     _actor: Annotated[User, require_permission(Perm.TOOL_VIEW)],
+    scope: ScopeDep,
 ) -> list[ToolRead]:
-    return [_tool_read(t) for t in await service.list_tools()]
+    # E35: shared tools plus those of the caller's teams.
+    return [_tool_read(t) for t in scope.filter(await service.list_tools())]
 
 
 @router.post(
@@ -87,28 +89,30 @@ async def register_tool(
     payload: ToolCreateRequest,
     service: ToolRegistryDep,
     actor: Annotated[User, require_permission(Perm.TOOL_MANAGE)],
+    guard: ScopeGuardDep,
 ) -> ToolRead:
     """Catalogue a tool an agent may then be granted.
 
     Registering grants nothing. A tool becomes reachable only when an agent version lists
     it *and* the invoking user holds its `required_permission` (§10).
     """
-    return _tool_read(
-        await service.register_tool(
-            name=payload.name,
-            display_name=payload.display_name,
-            description=payload.description,
-            tool_type=payload.type,
-            parameters_schema=payload.parameters_schema,
-            required_permission=payload.required_permission,
-            risk_level=payload.risk_level,
-            endpoint=payload.endpoint,
-            config=payload.config,
-            credentials=payload.credentials,
-            timeout_seconds=payload.timeout_seconds,
-            actor=actor,
-        )
+    await guard.assignable(payload.team_id)
+    tool = await service.register_tool(
+        name=payload.name,
+        display_name=payload.display_name,
+        description=payload.description,
+        tool_type=payload.type,
+        parameters_schema=payload.parameters_schema,
+        required_permission=payload.required_permission,
+        risk_level=payload.risk_level,
+        endpoint=payload.endpoint,
+        config=payload.config,
+        credentials=payload.credentials,
+        timeout_seconds=payload.timeout_seconds,
+        actor=actor,
     )
+    await guard.place(tool, payload.team_id)
+    return _tool_read(tool)
 
 
 @router.put("/tools/{tool_id}", response_model=ToolRead, summary="Update a tool")
@@ -116,11 +120,13 @@ async def update_tool(
     payload: ToolUpdateRequest,
     service: ToolRegistryDep,
     actor: Annotated[User, require_permission(Perm.TOOL_MANAGE)],
+    guard: ScopeGuardDep,
     tool_id: uuid.UUID = Path(...),
 ) -> ToolRead:
     """Change what an operator may change. Not the type or parameter schema — those
     define what the tool is, and altering them under an agent already granted it would
     silently change what that agent can do."""
+    await guard.tool(tool_id)
     return _tool_read(await service.update_tool(tool_id, payload, actor=actor))
 
 
@@ -128,10 +134,12 @@ async def update_tool(
 async def test_tool(
     service: ToolRegistryDep,
     _actor: Annotated[User, require_permission(Perm.TOOL_MANAGE)],
+    guard: ScopeGuardDep,
     tool_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
     """Validate the definition against its executor, so a broken endpoint or credential
     surfaces now rather than three tool calls into someone's conversation."""
+    await guard.tool(tool_id)
     return MessageResponse(message=await service.test_tool(tool_id))
 
 
@@ -139,8 +147,10 @@ async def test_tool(
 async def delete_tool(
     service: ToolRegistryDep,
     actor: Annotated[User, require_permission(Perm.TOOL_MANAGE)],
+    guard: ScopeGuardDep,
     tool_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
+    await guard.tool(tool_id)
     await service.delete_tool(tool_id, actor=actor)
     return MessageResponse(message="Tool deleted. Agents granted it lose access immediately.")
 
@@ -384,12 +394,14 @@ async def create_agent(
     # runs with the platform's reach, so it must not become a way round team scope.
     await guard.model_name(payload.model)
     await guard.knowledge_base_refs(payload.knowledge_base_ids)
-    # E18: and against the agent's own team, which is what it will run as.
+    await guard.tool_refs(payload.tool_ids)
+    # E18: and against the agent's own team, which is what it will run as (tools: E35).
     await guard.require_usable(
         "agent",
         payload.team_id,
         models=[payload.model],
         knowledge_bases=payload.knowledge_base_ids,
+        tools=payload.tool_ids,
     )
     agent, version = await service.create_agent(
         slug=payload.slug,
@@ -446,11 +458,14 @@ async def update_agent(
         await guard.model_name(payload.model)
     if payload.knowledge_base_ids is not None:
         await guard.knowledge_base_refs(payload.knowledge_base_ids)
+    if payload.tool_ids is not None:
+        await guard.tool_refs(payload.tool_ids)
     await guard.require_usable(
         "agent",
         await guard.team_of("agent", agent_id),
         models=[payload.model] if payload.model is not None else [],
         knowledge_bases=payload.knowledge_base_ids or [],
+        tools=payload.tool_ids or [],
     )
     agent, version = await service.update_agent(agent_id, payload, actor=actor)
     detail = AgentDetail.model_validate(agent)

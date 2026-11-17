@@ -112,6 +112,8 @@ class AgentRunService:
             agent.team_id,
             models=[version.model],
             knowledge_bases=version.knowledge_base_ids or [],
+            # E35: a tool moved into another team since the agent was saved.
+            tools=[t.tool_id for t in version.tools],
         )
         if problems:
             raise ConflictError(describe("agent", agent.team_id, problems))

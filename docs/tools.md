@@ -21,6 +21,14 @@ Type and parameter schema cannot be changed after registration: they define what
 *is*, and altering them under an agent already granted it would silently change what that
 agent can do.
 
+**Team tools (E35).** A tool can belong to a team (`team_id` when registering, or
+`PUT /scope` with `resource_type: "tool"`). Members of other teams do not see it, and it
+may be granted only to agents of that team; a shared agent may use only shared tools.
+This is checked when an agent is saved, when it is moved, and at every run. Moving a tool
+into a team therefore stops shared agents that use it at their next run, with a message
+saying which tool. Existing and discovered tools are shared. See
+[teams.md](teams.md#what-an-agent-or-workflow-may-use-e18).
+
 **The §10 authorisation pipeline — including the intersection rule that makes agents safe
 — is documented in [agents.md](agents.md#the-tool-pipeline-10).** Read that before adding
 an executor.

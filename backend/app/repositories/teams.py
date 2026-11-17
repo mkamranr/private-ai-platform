@@ -10,7 +10,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.agents import Agent, AgentRun
+from app.models.agents import Agent, AgentRun, Tool
 from app.models.auth import User
 from app.models.knowledge import Document, KnowledgeBase
 from app.models.models_registry import ApiClient, ApiKey, Model, ModelAlias, ModelDeployment
@@ -26,6 +26,7 @@ OWNED_TABLES: tuple[tuple[str, type], ...] = (
     ("agents", Agent),
     ("knowledge_bases", KnowledgeBase),
     ("workflows", Workflow),
+    ("tools", Tool),
 )
 
 
@@ -136,6 +137,20 @@ class ScopeLookupRepository:
 
     async def agent(self, ident: uuid.UUID) -> tuple[bool, uuid.UUID | None]:
         return await self._one(select(Agent.team_id).where(Agent.id == ident))
+
+    async def tool(self, ident: uuid.UUID) -> tuple[bool, uuid.UUID | None]:
+        return await self._one(select(Tool.team_id).where(Tool.id == ident))
+
+    async def tool_teams(
+        self, ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[str, uuid.UUID | None]]:
+        """Name and owning team of each tool that exists (E35)."""
+        if not ids:
+            return {}
+        rows = await self.session.execute(
+            select(Tool.id, Tool.name, Tool.team_id).where(Tool.id.in_(ids))
+        )
+        return {row.id: (row.name, row.team_id) for row in rows}
 
     async def run(self, ident: uuid.UUID) -> tuple[bool, uuid.UUID | None]:
         return await self._one(
