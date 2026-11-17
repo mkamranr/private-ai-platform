@@ -64,6 +64,17 @@ deliveries that are due.
   days.
 - **Test.** *Send test* sends a message straight away and shows the receiver's answer. It
   is recorded as a delivery and in the audit log.
+- **Quiet hours (E42).** A channel can name a daily window, for example 22:00 to 07:00,
+  when only **CRITICAL** alerts are sent. Anything else that comes due in the window is
+  held, not dropped: it waits until the window ends and is then sent as its first attempt
+  (held messages are not retries). A window whose end is before its start runs past
+  midnight. Resolutions of a CRITICAL alert still go out; a test send is never held.
+  - The window is read in the channel's time zone: `UTC`, a fixed offset such as `+04:00`,
+    or a zone name such as `Asia/Dubai`. A name needs the server's time zone data, which a
+    slim container may not have, so a name the server cannot resolve is refused when the
+    channel is saved; use an offset instead. An offset does not follow daylight saving.
+  - API: `quiet_start` and `quiet_end` (`HH:MM`, both or neither) and `quiet_timezone` on
+    create and update; empty strings for both remove the window. Audited as `quiet_hours`.
 
 Only one control-plane instance runs the workers (see `WORKERS__ENABLED`). Deliveries are
 locked with `FOR UPDATE SKIP LOCKED`, so a second instance would not double-send, but it
@@ -204,9 +215,10 @@ Audit actions:
 
 ## Not built
 
-- **Digests and quiet hours.** Each event is its own message. During an incident with many
-  alerts, a chat channel receives one message per alert. A minimum severity, or a source
-  filter, keeps busy channels quiet.
+- **Digests.** Each event is its own message, and messages held by quiet hours go out
+  one by one when the window ends. During an incident with many alerts, a chat channel
+  receives one message per alert. A minimum severity, or a source filter, keeps busy
+  channels quiet.
 - **Per-team routing.** Channels see every alert that matches their filter, whichever team
   owns the resource.
 - **Paging services' native APIs**, such as PagerDuty's Events API. Use a JSON webhook to

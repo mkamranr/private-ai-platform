@@ -34,6 +34,12 @@ class ChannelCreate(BaseModel):
     timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     # email
     recipients: list[str] = Field(default_factory=list, max_length=50)
+    # quiet hours (E42): only CRITICAL alerts are sent between these times
+    quiet_start: str | None = Field(default=None, max_length=5, description="HH:MM")
+    quiet_end: str | None = Field(default=None, max_length=5, description="HH:MM")
+    quiet_timezone: str = Field(
+        default="UTC", max_length=64, description="UTC, an offset such as +04:00, or an IANA name"
+    )
 
 
 class ChannelUpdate(BaseModel):
@@ -55,6 +61,10 @@ class ChannelUpdate(BaseModel):
     verify_tls: bool | None = None
     timeout_seconds: float | None = Field(default=None, gt=0, le=60)
     recipients: list[str] | None = Field(default=None, max_length=50)
+    #: E42. An empty string for both start and end removes quiet hours.
+    quiet_start: str | None = Field(default=None, max_length=5)
+    quiet_end: str | None = Field(default=None, max_length=5)
+    quiet_timezone: str | None = Field(default=None, max_length=64)
 
 
 class ChannelRead(BaseModel):
@@ -77,6 +87,9 @@ class ChannelRead(BaseModel):
     verify_tls: bool
     timeout_seconds: float
     recipients: list[str]
+    quiet_start: str | None = None
+    quiet_end: str | None = None
+    quiet_timezone: str = "UTC"
     last_success_at: dt.datetime | None
     last_failure_at: dt.datetime | None
     last_error: str | None
