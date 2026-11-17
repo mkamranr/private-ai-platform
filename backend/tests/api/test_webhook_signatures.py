@@ -7,6 +7,7 @@ signature it has already accepted.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import time
 import uuid
@@ -134,3 +135,90 @@ class TestCalls:
             f"/api/v1/workflow-hooks/{workflow['id']}", content=body, headers=old
         )
         assert response.status_code == 401
+
+
+async def _rotate(client, tokens, builder, workflow_id: str, **body) -> dict:
+    response = await client.post(
+        f"/api/v1/workflows/{workflow_id}/webhook",
+        headers=auth_header(tokens, builder),
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def _call(client, workflow_id: str, hook: dict, body: bytes) -> int:
+    headers = _signed(hook["token"], hook["signing_secret"], body)
+    response = await client.post(
+        f"/api/v1/workflow-hooks/{workflow_id}", content=body, headers=headers
+    )
+    return response.status_code
+
+
+class TestOverlap:
+    """E41: a rotation can keep the replaced token and secret working for a while."""
+
+    async def test_both_pairs_work_during_the_overlap(self, client, tokens, builder) -> None:
+        workflow, old = await _hook(client, tokens, builder, require=True)
+        new = await _rotate(client, tokens, builder, workflow["id"], overlap_minutes=60)
+        assert new["previous_valid_until"] is not None
+
+        assert await _call(client, workflow["id"], old, b'{"n": 1}') == 202
+        assert await _call(client, workflow["id"], new, b'{"n": 2}') == 202
+
+        detail = await client.get(
+            f"/api/v1/workflows/{workflow['id']}", headers=auth_header(tokens, builder)
+        )
+        assert detail.json()["webhook_previous_valid_until"] is not None
+
+    async def test_a_token_is_checked_with_its_own_secret(self, client, tokens, builder) -> None:
+        workflow, old = await _hook(client, tokens, builder, require=True)
+        new = await _rotate(client, tokens, builder, workflow["id"], overlap_minutes=60)
+        crossed = {"token": old["token"], "signing_secret": new["signing_secret"]}
+        assert await _call(client, workflow["id"], crossed, b"{}") == 401
+
+    async def test_without_an_overlap_the_old_pair_stops_at_once(
+        self, client, tokens, builder
+    ) -> None:
+        workflow, old = await _hook(client, tokens, builder, require=True)
+        new = await _rotate(client, tokens, builder, workflow["id"])
+        assert new["previous_valid_until"] is None
+        assert await _call(client, workflow["id"], old, b"{}") == 401
+
+    async def test_the_old_pair_stops_when_the_window_ends(
+        self, client, tokens, builder, session: AsyncSession
+    ) -> None:
+        workflow, old = await _hook(client, tokens, builder, require=True)
+        await _rotate(client, tokens, builder, workflow["id"], overlap_minutes=60)
+        stored = await session.get(Workflow, uuid.UUID(workflow["id"]))
+        assert stored is not None and stored.webhook_previous_until is not None
+        stored.webhook_previous_until = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+        await session.flush()
+
+        assert await _call(client, workflow["id"], old, b"{}") == 401
+
+    async def test_rotating_again_keeps_only_the_pair_just_replaced(
+        self, client, tokens, builder
+    ) -> None:
+        workflow, first = await _hook(client, tokens, builder, require=True)
+        second = await _rotate(client, tokens, builder, workflow["id"], overlap_minutes=60)
+        await _rotate(client, tokens, builder, workflow["id"], overlap_minutes=60)
+        assert await _call(client, workflow["id"], first, b"{}") == 401
+        assert await _call(client, workflow["id"], second, b'{"s": 1}') == 202
+
+    async def test_disabling_ends_the_overlap(self, client, tokens, builder) -> None:
+        workflow, old = await _hook(client, tokens, builder, require=True)
+        await _rotate(client, tokens, builder, workflow["id"], overlap_minutes=60)
+        await client.delete(
+            f"/api/v1/workflows/{workflow['id']}/webhook", headers=auth_header(tokens, builder)
+        )
+        assert await _call(client, workflow["id"], old, b"{}") == 401
+
+    async def test_the_overlap_is_bounded(self, client, tokens, builder) -> None:
+        workflow, _ = await _hook(client, tokens, builder)
+        response = await client.post(
+            f"/api/v1/workflows/{workflow['id']}/webhook",
+            headers=auth_header(tokens, builder),
+            json={"overlap_minutes": 7 * 24 * 60 + 1},
+        )
+        assert response.status_code == 422

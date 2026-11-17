@@ -8,6 +8,7 @@ or, for schedule and webhook runs, of whoever published the version.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import uuid
 from typing import Annotated, Any
@@ -74,6 +75,12 @@ def _read(workflow: Workflow, last: WorkflowRun | None = None) -> dict[str, Any]
         "next_run_at": workflow.next_run_at,
         "webhook_enabled": bool(workflow.webhook_token_hash),
         "webhook_signature_required": workflow.webhook_signature_required,
+        "webhook_previous_valid_until": (
+            workflow.webhook_previous_until
+            if workflow.webhook_previous_until
+            and workflow.webhook_previous_until > dt.datetime.now(dt.UTC)
+            else None
+        ),
         "node_count": len(wd.nodes_of(workflow.draft or {})),
         "last_run": LastRun(
             id=last.id,
@@ -324,12 +331,14 @@ async def rotate_webhook(
     workflow_id: uuid.UUID = Path(...),
 ) -> WebhookToken:
     """A new token and signing secret (E36), shown once. The previous ones stop working
-    at once. `require_signature` makes unsigned calls fail."""
+    at once, or after `overlap_minutes` (E41) so callers can switch without dropped
+    calls. `require_signature` makes unsigned calls fail."""
     await guard.workflow(workflow_id)
     workflow, token, secret = await service.rotate_webhook(
         workflow_id,
         actor=actor,
         require_signature=payload.require_signature if payload else None,
+        overlap_minutes=payload.overlap_minutes if payload else 0,
     )
     base = settings.platform.public_base_url.rstrip("/")
     signing = (
@@ -344,6 +353,7 @@ async def rotate_webhook(
         message=("Send it in the X-Workflow-Token header. It will not be shown again." + signing),
         signing_secret=secret,
         signature_required=workflow.webhook_signature_required,
+        previous_valid_until=workflow.webhook_previous_until,
     )
 
 

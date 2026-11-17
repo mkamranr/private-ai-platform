@@ -61,6 +61,8 @@ class WorkflowRead(BaseModel):
     webhook_enabled: bool = False
     #: E36: unsigned webhook calls are refused.
     webhook_signature_required: bool = False
+    #: E41: a rotation's replaced token and secret still work until then.
+    webhook_previous_valid_until: dt.datetime | None = None
     node_count: int = 0
     last_run: LastRun | None = None
     created_at: dt.datetime
@@ -123,12 +125,17 @@ class WebhookToken(BaseModel):
     #: encryption key to keep it with.
     signing_secret: str | None = None
     signature_required: bool = False
+    #: E41: until when the replaced token and secret still work. None: they stopped now.
+    previous_valid_until: dt.datetime | None = None
 
 
 class WebhookRotateRequest(BaseModel):
     """E36: whether calls must be signed. Omitted: keep the current setting."""
 
     require_signature: bool | None = None
+    #: E41: keep the replaced token and secret working this long (up to 7 days), so
+    #: callers can switch without dropped calls. 0, the default: they stop at once.
+    overlap_minutes: int = Field(default=0, ge=0, le=7 * 24 * 60)
 
 
 class RunRequest(BaseModel):

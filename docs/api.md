@@ -709,7 +709,7 @@ Under `/api/v1`, authenticated with the platform JWT unless noted. See
 | POST | `/workflows/{id}/publish` | `workflow.edit`. `note`; 422 with `details.problems` when the draft is invalid |
 | POST | `/workflows/{id}/status` | `workflow.edit`. `PUBLISHED`, `PAUSED` or `ARCHIVED` |
 | GET | `/workflows/{id}/versions` | `workflow.view`. Newest first |
-| POST / DELETE | `/workflows/{id}/webhook` | `workflow.edit`. POST returns the token and (E36) `signing_secret` once; body `{"require_signature": bool}` optional |
+| POST / DELETE | `/workflows/{id}/webhook` | `workflow.edit`. POST returns the token and (E36) `signing_secret` once; body `{"require_signature": bool, "overlap_minutes": 0-10080}` optional; with an overlap (E41) the replaced token and secret keep working until `previous_valid_until` |
 | POST | `/workflows/{id}/runs` | `workflow.execute` (`test` also needs `workflow.edit`). `input`, `trigger` (`manual`/`api`), `test`, `wait` (default true). **201** |
 | GET | `/workflows/{id}/runs` | `workflow.view`. `?status=&limit=` |
 | GET | `/workflow-runs` | `workflow.view`. Recent runs across workflows in scope |

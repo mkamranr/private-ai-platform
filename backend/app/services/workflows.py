@@ -414,10 +414,23 @@ class WorkflowService:
         *,
         actor: User,
         require_signature: bool | None = None,
+        overlap_minutes: int = 0,
     ) -> tuple[Workflow, str, str | None]:
-        """A new webhook token and (E36) signing secret, returned once; the previous ones
-        stop working. ``require_signature`` None keeps the current setting."""
+        """A new webhook token and (E36) signing secret, returned once.
+
+        The previous ones stop working at once, or (E41) after ``overlap_minutes``, so a
+        caller can switch to the new pair without dropped calls. Rotating again inside a
+        window ends it: only the pair just replaced is kept. ``require_signature`` None
+        keeps the current setting."""
         workflow = await self.get(workflow_id)
+        if overlap_minutes > 0 and workflow.webhook_token_hash:
+            workflow.webhook_previous_token_hash = workflow.webhook_token_hash
+            workflow.webhook_previous_secret_encrypted = workflow.webhook_secret_encrypted
+            workflow.webhook_previous_until = dt.datetime.now(dt.UTC) + dt.timedelta(
+                minutes=overlap_minutes
+            )
+        else:
+            _clear_previous(workflow)
         token = "wfh_" + secrets.token_urlsafe(32)
         workflow.webhook_token_hash = hash_token(token)
         secret: str | None = None
@@ -439,6 +452,7 @@ class WorkflowService:
                 "name": workflow.name,
                 "enabled": True,
                 "signature_required": workflow.webhook_signature_required,
+                "overlap_minutes": overlap_minutes if workflow.webhook_previous_until else 0,
             },
         )
         return workflow, token, secret
@@ -447,6 +461,7 @@ class WorkflowService:
         workflow = await self.get(workflow_id)
         workflow.webhook_token_hash = None
         workflow.webhook_secret_encrypted = None
+        _clear_previous(workflow)
         await self._flush(workflow)
         await self._audit.record(
             AuditAction.WORKFLOW_WEBHOOK_ROTATED,
@@ -473,18 +488,33 @@ class WorkflowService:
         every failure, so the endpoint does not reveal which workflows exist or have
         webhooks, nor which check failed (that is logged)."""
         workflow = await self._workflows.get(workflow_id)
-        expected = workflow.webhook_token_hash if workflow else None
-        presented = hash_token(token or "")
-        if workflow is None or not expected or not hmac.compare_digest(expected, presented):
+        if workflow is None:
             raise AuthenticationError("Invalid webhook token.")
+        presented = hash_token(token or "")
+        # E41: during a rotation's overlap the replaced token and secret still work. Each
+        # token is checked with its own secret, so the old token does not unlock signing
+        # with the new secret, or the other way round.
+        pairs = [(workflow.webhook_token_hash, workflow.webhook_secret_encrypted)]
+        if self._previous_valid(workflow, now):
+            pairs.append(
+                (workflow.webhook_previous_token_hash, workflow.webhook_previous_secret_encrypted)
+            )
+        matched = [
+            secret
+            for expected, secret in pairs
+            if expected and hmac.compare_digest(expected, presented)
+        ]
+        if not matched:
+            raise AuthenticationError("Invalid webhook token.")
+        encrypted = matched[0]
         # A signature sent is checked even when not required: a sender that signs expects
         # a tampered body to be refused.
         if workflow.webhook_signature_required or signature or timestamp:
             try:
-                if not workflow.webhook_secret_encrypted or self._cipher is None:
+                if not encrypted or self._cipher is None:
                     raise webhook_signing.SignatureError("no signing secret")
                 webhook_signing.verify(
-                    self._cipher.decrypt(workflow.webhook_secret_encrypted),
+                    self._cipher.decrypt(encrypted),
                     body=body,
                     timestamp=timestamp,
                     signature=signature,
@@ -496,6 +526,13 @@ class WorkflowService:
                 )
                 raise AuthenticationError("Invalid webhook token.") from exc
         return workflow
+
+    @staticmethod
+    def _previous_valid(workflow: Workflow, now: float | None) -> bool:
+        until = workflow.webhook_previous_until
+        if until is None or not workflow.webhook_previous_token_hash:
+            return False
+        return (time.time() if now is None else now) < until.timestamp()
 
     # ------------------------------------------------------------------ runs
     async def start(
@@ -678,3 +715,10 @@ class WorkflowService:
         if run is None:
             return None
         return await self._engine.advance(run)
+
+
+def _clear_previous(workflow: Workflow) -> None:
+    """Forget the pair a rotation replaced (E41): its overlap is over or was not asked for."""
+    workflow.webhook_previous_token_hash = None
+    workflow.webhook_previous_secret_encrypted = None
+    workflow.webhook_previous_until = None

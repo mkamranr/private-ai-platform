@@ -346,7 +346,7 @@ dashboard real signals.
 - [x] Migration `e6a8c0d2f4b5`: `workflows.webhook_secret_encrypted` (Fernet, like tool credentials) and `webhook_signature_required`. Rotation issues token and secret together (`signing_secret`, once); `require_signature` on rotate; disabling deletes both.
 - [x] `/workflow-hooks/{id}`: a signature is checked over the raw body when required or when sent; an accepted signature is remembered in Valkey for 10 min and refused again (fails open). Every refusal is the same 401 as a bad token; the reason is logged.
 - [x] Console: *Require signed calls* switch and a signed `curl`/`openssl` example (checked to match). Tests: `tests/unit/test_webhook_signing.py`, `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls-e36).
-- [ ] Webhooks enabled before E36 have no secret until rotated. One secret at a time (no overlap window when rotating). Replay protection depends on Valkey.
+- [ ] Webhooks enabled before E36 have no secret until rotated. ~~One secret at a time (no overlap window when rotating).~~ Overlap since E41. Replay protection depends on Valkey.
 
 ## E37: Longer dashboard range (closes the E8 7-day limit)
 
@@ -378,6 +378,14 @@ dashboard real signals.
 - [x] Console: *p95 latency* and *First token (p50)* columns on the Chargeback page.
 - [x] No migration. Tests: `tests/api/test_chargeback_timings.py`. Doc: [chargeback.md](../chargeback.md#timings-e40).
 - [ ] Agent (`agent:`) and voice calls still carry no first-token timings, so they count in latency only.
+
+## E41: Webhook rotation with an overlap (closes the E36 overlap item)
+
+- [x] Migration `a9c1e3f5b7d8`: `workflows.webhook_previous_token_hash`, `webhook_previous_secret_encrypted` (Fernet) and `webhook_previous_until`.
+- [x] `POST /workflows/{id}/webhook` takes `overlap_minutes` (0 to 10080, default 0 = stop at once) and returns `previous_valid_until`; `WorkflowRead.webhook_previous_valid_until`. Rotating again keeps only the pair just replaced; disabling clears it. Audited with the overlap.
+- [x] `verify_webhook` accepts the previous token until the window ends, each token checked with its own secret.
+- [x] Console: *When rotating, keep the old token working for* (none, 1 h, 24 h, 7 days) and a badge while the old token works. Tests: `TestOverlap` in `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls-e36).
+- [ ] One previous pair at a time; the window cannot be ended early except by rotating again or disabling.
 
 ## Phase acceptance (applies to each)
 

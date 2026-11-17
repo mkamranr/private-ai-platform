@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Rotate a workflow webhook without dropped calls (E41)
+- **Overlap window.** Rotating a workflow webhook can now keep the old token and signing secret working for a while (`overlap_minutes`, up to 7 days; the console offers 1 hour, 24 hours or 7 days), so callers can move to the new pair without failed calls. Each token is only accepted with its own secret. The workflow shows when the old token stops.
+- The default is unchanged: without an overlap, the old pair stops at once.
+- **Upgrade.** Migration `a9c1e3f5b7d8` adds three nullable columns to `workflows`.
+
 ### Timings in chargeback reports (E40)
 - **Cost and speed side by side.** Chargeback rows and totals now carry mean and p95 latency, median and p95 time to first token, median output tokens per second, and how many streamed calls those come from. The page adds *p95 latency* and *First token (p50)* columns.
 - **Exports too.** The CSV gains six columns at the end, after `estimate`, so existing spreadsheets keep their layout. A figure that was not measured is empty (or `null` in the API), never 0.
