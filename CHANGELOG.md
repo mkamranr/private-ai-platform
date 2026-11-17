@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Tools can belong to a team (E35)
+- **Team tools.** A tool can now have an owning team, like a model or knowledge base: register it with `team_id`, or move it with `PUT /scope` (`resource_type: "tool"`). Other teams do not see it, and only that team's agents may be granted it; a shared agent may use only shared tools. Checked when an agent is saved or moved and at every run.
+- **Fix: workflows can be moved between teams.** `PUT /scope` refused `resource_type: "workflow"` with 422, although it was documented.
+- **Upgrade.** Migration `d5f7b9c1e3a4` adds `tools.team_id`. Every existing tool stays shared, so nothing changes until a tool is moved. Moving a tool into a team stops shared agents that use it at their next run, with a message naming the tool.
+
 ### A running agent stops at the budget (E34)
 - **No more runs that overspend.** With platform budgets enforced (E24), every model call an agent run makes is now checked before it is made, counting the run's own tokens so far. A run that reaches its team's or model's budget stops there: FAILED with *Stopped before the next model call* and the budget's message, also shown in its trace. Before, only the start was checked.
 - Runs resumed after an approval are checked before their first call. `agent:` models called through `/v1` are unchanged (the gateway admits them once).

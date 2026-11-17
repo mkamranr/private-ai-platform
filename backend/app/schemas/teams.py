@@ -9,7 +9,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 TeamRoleLiteral = Literal["member", "owner"]
-ResourceTypeLiteral = Literal["model", "alias", "api_client", "agent", "knowledge_base"]
+# `workflow` was movable by the service since E6 but missing here, so PUT /scope refused it
+# with 422 (fixed in E35, with `tool`).
+ResourceTypeLiteral = Literal[
+    "model", "alias", "api_client", "agent", "knowledge_base", "workflow", "tool"
+]
 
 
 class TeamCreateRequest(BaseModel):

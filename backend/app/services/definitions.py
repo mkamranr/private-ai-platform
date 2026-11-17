@@ -208,6 +208,7 @@ class DefinitionImporter:
                 team_id,
                 models=[str(spec.get("model") or "enterprise-chat")],
                 knowledge_bases=[str(k) for k in spec.get("knowledge_bases") or []],
+                tools=tool_ids,
             )
             if problems:
                 results.append(

@@ -368,8 +368,8 @@ The response echoes the **alias**, never the underlying model (§13).
 | POST | `/runs/{run_id}/approve` | `tool.approve` |
 | GET | `/skills` | `skill.view` |
 | POST / PUT / DELETE | `/skills[/{id}]` | `skill.manage` |
-| GET | `/tools` | `tool.view` |
-| POST / PUT / DELETE | `/tools[/{id}]` | `tool.manage` |
+| GET | `/tools` | `tool.view`. Shared tools and your teams' (E35) |
+| POST / PUT / DELETE | `/tools[/{id}]` | `tool.manage`. `team_id` on create (E35); another team's tool is 404 |
 | POST | `/tools/{id}/test` | `tool.manage` |
 | GET | `/mcp/servers` | `mcp.view` |
 | POST / PUT / DELETE | `/mcp/servers[/{id}]` | `mcp.manage` |
@@ -622,7 +622,7 @@ Under `/api/v1`, authenticated with the platform JWT. See [teams.md](teams.md).
 | POST | `/teams/{id}/members` | `team.manage` or team owner — `user_id`, `role` (`member`/`owner`) |
 | PATCH | `/teams/{id}/members/{user_id}` | `team.manage` or team owner — change the team role |
 | DELETE | `/teams/{id}/members/{user_id}` | `team.manage` or team owner |
-| PUT | `/scope` | the resource's manage permission — move a model, alias, API client, agent or knowledge base to a team (`team_id`) or to shared (`null`) |
+| PUT | `/scope` | the resource's manage permission — move a model, alias, API client, agent, knowledge base, workflow or tool (E35) to a team (`team_id`) or to shared (`null`) |
 
 Changes to existing routes, all backwards-compatible:
 

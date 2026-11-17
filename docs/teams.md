@@ -22,6 +22,7 @@ These resources carry an optional `team_id`:
 | agents | runs belong to their agent's team |
 | knowledge bases | documents belong to their base's team |
 | workflows (E6) | runs and approvals belong to their workflow's team |
+| tools (E35) | a team's tool may be granted only to that team's agents |
 
 - **`team_id` empty: shared.** Anyone who holds the resource's permission can see it.
 - **`team_id` = T: owned by team T.** Only members of T can see it, plus callers whose
@@ -35,7 +36,7 @@ can see.
 
 ## Creating into a team
 
-Create requests for the six resources above accept an optional `team_id`:
+Create requests for the resources above accept an optional `team_id`:
 
 - Omit it to create a shared resource, as before.
 - To set a team, you must be a member of that team, unless you hold `scope.all`.
@@ -53,7 +54,9 @@ Since E18 an agent or workflow is also checked against **its own team**, because
 what it runs as. It may use shared resources and its own team's, never another team's,
 whoever saved it. In particular a **shared** agent or workflow may use only **shared**
 models, aliases and knowledge bases: otherwise it would offer one team's model to
-everyone. This is the rule an API key already follows.
+everyone. This is the rule an API key already follows. Since E35 an agent's **tools** are
+checked the same way: a team's tool may be granted only to that team's agents, and a
+shared agent only shared tools. Granting a tool you cannot see is 404.
 
 It is checked:
 
@@ -84,7 +87,9 @@ To move a resource you need all of these:
 
 - the permission that changes that kind of resource: `model.register` (model),
   `model.deploy` (alias), `apikey.manage` (API client), `agent.edit` (agent),
-  `knowledge.manage` (knowledge base), `workflow.edit` (workflow);
+  `knowledge.manage` (knowledge base), `workflow.edit` (workflow), `tool.manage` (tool,
+  E35). (`workflow` was refused by `PUT /scope` with 422 until E35: the request schema left
+  it out.);
 - sight of the resource;
 - membership of both the team it leaves and the team it joins, unless you hold
   `scope.all`.
@@ -175,8 +180,11 @@ that no other role has it.
 ## Not team-scoped
 
 - **Quotas and circuit breakers** are platform settings, managed with `quota.*`.
-- **Tools, skills and MCP servers** are a platform catalogue. An agent's tool grants are
-  governed by `tool.*` permissions and the §10 pipeline.
+- **Skills and MCP servers** are a platform catalogue. Tools are too unless moved into a
+  team (E35): every existing tool, and every tool an MCP server's discovery creates, starts
+  shared. Moving a tool does not move its MCP server; discovery leaves a moved tool's team
+  alone. Beyond team scope, an agent's tool calls are governed by `tool.*` permissions and
+  the §10 pipeline.
 - **Fleet figures** (nodes, GPUs, backends, dependencies) are platform-wide.
 
 ## Verifying

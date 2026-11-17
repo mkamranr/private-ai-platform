@@ -913,7 +913,7 @@ function toolRow(tool) {
 
   return `<tr class="${tool.enabled && !neverRuns ? '' : 'opacity-75'}">
     <td>
-      <div class="fw-medium mono">${esc(tool.name)}</div>
+      <div class="fw-medium mono">${esc(tool.name)} ${teamChip(tool.team_id)}</div>
       <div class="small text-secondary text-truncate" style="max-width:26rem"
            title="${esc(tool.description)}">${esc(tool.description)}</div>
       ${noParameters && !neverRuns

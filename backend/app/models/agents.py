@@ -116,6 +116,11 @@ class Tool(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: Set on tools created by discovery, so a re-discovery can reconcile them without
     #: touching anything an operator registered by hand.
     discovered_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Owning team (E35). NULL means shared: any agent may be granted it, as every tool
+    #: could before E35. A team's tool may be granted only to that team's agents.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), index=True
+    )
 
     server: Mapped[McpServer | None] = relationship(back_populates="tools")
 
