@@ -612,13 +612,16 @@ While the token is good, the second step is skipped. Audit records `mfa: trusted
 **Turning two-factor off**, or an administrator's reset, deletes the account's passkeys
 and trusted browsers.
 
-**Not covered.** The developer portal and the voice assistant ask for the code, not a
-passkey, and do not offer *Trust this browser*. Directory and single sign-on accounts have
-no platform second factor, so no passkeys either.
+**Not covered.** The developer portal and the voice assistant accept a passkey at the
+code step since E33, but do not offer *Trust this browser*, and passkeys are added in the
+console only. Directory and single sign-on accounts have no platform second factor, so no
+passkeys either.
 
 ### Signing in with a passkey alone (E30)
 
-The console's sign-in page has **Sign in with a passkey**. No username, password or code
+The console's sign-in page has **Sign in with a passkey**, and since E33 so do the
+developer portal and the voice assistant (one shared script, `/js/passkey.js`; all three
+are served from the same origin, so the same passkeys work). No username, password or code
 is asked for: the browser offers the passkeys it holds for this site, the person unlocks
 one with the device's PIN or biometric, and the passkey names the account
 (`POST /auth/passkey/options`, then `POST /auth/passkey/verify`).
@@ -651,9 +654,10 @@ one with the device's PIN or biometric, and the passkey names the account
 * **A proof of work, not a CAPTCHA (E29).** It slows repeated guessing from one address
   but does not tell a person from a program; a distributed guesser spread over many
   addresses meets only the per-account lockout.
-* **TOTP and passkeys.** Passkeys also sign in alone since E30, in the console only. No
-  push approval or SMS. The developer portal and voice assistant accept only codes. The platform asks
-  for no second factor from directory or single sign-on accounts.
+* **TOTP and passkeys.** Passkeys also sign in alone since E30, in the console, and since
+  E33 in the developer portal and voice assistant (which also accept one at the code
+  step). Passkeys are added, and browsers trusted, in the console only. No push approval
+  or SMS. The platform asks for no second factor from directory or single sign-on accounts.
 * **The per-address throttle fails open** while Valkey is down.
 
 

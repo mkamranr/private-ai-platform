@@ -15,7 +15,8 @@
  * sent with the password next time. Only its hash is stored on the server; signing out
  * everywhere or changing the password makes it worthless.
  *
- * Relies on admin.js globals: api, token, showApp, esc, alert, guard, currentUser.
+ * Relies on admin.js globals: api, token, showApp, esc, alert, guard, currentUser, and
+ * the WebAuthn helpers in /js/passkey.js.
  */
 
 let mfaChallenge = null;  // { mfa_token, enrolment_required, username, ... } while open
@@ -40,76 +41,7 @@ function forgetDeviceToken(username) {
   catch { /* nothing stored */ }
 }
 
-function b64urlToBuffer(value) {
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0)).buffer;
-}
-
-function bufferToB64url(buffer) {
-  let text = '';
-  new Uint8Array(buffer).forEach((b) => { text += String.fromCharCode(b); });
-  return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function passkeysInBrowser() {
-  return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
-}
-
-/** The server's JSON options -> what navigator.credentials wants (ArrayBuffers). */
-function decodeCreationOptions(options) {
-  if (PublicKeyCredential.parseCreationOptionsFromJSON) {
-    return PublicKeyCredential.parseCreationOptionsFromJSON(options);
-  }
-  return {
-    ...options,
-    challenge: b64urlToBuffer(options.challenge),
-    user: { ...options.user, id: b64urlToBuffer(options.user.id) },
-    excludeCredentials: (options.excludeCredentials || [])
-      .map((c) => ({ ...c, id: b64urlToBuffer(c.id) })),
-  };
-}
-
-function decodeRequestOptions(options) {
-  if (PublicKeyCredential.parseRequestOptionsFromJSON) {
-    return PublicKeyCredential.parseRequestOptionsFromJSON(options);
-  }
-  return {
-    ...options,
-    challenge: b64urlToBuffer(options.challenge),
-    allowCredentials: (options.allowCredentials || [])
-      .map((c) => ({ ...c, id: b64urlToBuffer(c.id) })),
-  };
-}
-
-/** A PublicKeyCredential -> JSON the server can verify. */
-function credentialJSON(credential) {
-  if (typeof credential.toJSON === 'function') return credential.toJSON();
-  const r = credential.response;
-  const response = { clientDataJSON: bufferToB64url(r.clientDataJSON) };
-  if (r.attestationObject) {
-    response.attestationObject = bufferToB64url(r.attestationObject);
-    response.transports = typeof r.getTransports === 'function' ? r.getTransports() : [];
-  } else {
-    response.authenticatorData = bufferToB64url(r.authenticatorData);
-    response.signature = bufferToB64url(r.signature);
-    response.userHandle = r.userHandle ? bufferToB64url(r.userHandle) : null;
-  }
-  return {
-    id: credential.id,
-    rawId: bufferToB64url(credential.rawId),
-    type: credential.type,
-    response,
-    clientExtensionResults: credential.getClientExtensionResults(),
-  };
-}
-
-/** The browser's own refusals ("cancelled", "timed out") in plain words. */
-function passkeyBrowserError(err) {
-  if (err && err.name === 'NotAllowedError') return 'The passkey request was cancelled or timed out.';
-  if (err && err.name === 'InvalidStateError') return 'That passkey is already on your account.';
-  return (err && err.message) || 'The passkey did not work.';
-}
+/* WebAuthn helpers (passkeysInBrowser, credentialJSON, ...) are in /js/passkey.js (E33). */
 
 /* ---------------------------------------------------------------- sign-in step */
 

@@ -82,6 +82,12 @@ class TestOptions:
         assert body["public_key"]["allowCredentials"] == []
         assert body["public_key"]["userVerification"] == "required"
 
+    async def test_an_empty_json_body_is_accepted(self, client: AsyncClient) -> None:
+        """E33: the shared /js/passkey.js posts ``{}`` from the portal and voice pages."""
+        r = await client.post(OPTIONS, json={})
+        assert r.status_code == 200, r.text
+        assert r.json()["challenge_token"]
+
     async def test_new_passkeys_are_discoverable_where_possible(
         self, client: AsyncClient, unprivileged_user
     ) -> None:

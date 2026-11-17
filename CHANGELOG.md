@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Passkeys in the developer portal and voice assistant (E33)
+- **Sign in with a passkey** now also on the developer portal and the voice assistant: no username, password or code. At the code step both also offer *Use a passkey instead* when the account has one.
+- The same passkeys work everywhere: the three pages share one origin and now one script (`/js/passkey.js`). Passkeys are still added, and browsers trusted, in the console.
+- **Upgrade.** Nothing to do: no migration, no setting.
+
 ### Documents a budget refused are retried automatically (E32)
 - **No more manual re-ingest after a budget resets.** With platform budgets enforced (E24), a document whose embedding a used-up team or model budget refused is still marked FAILED with the reason, and now also says when it will be retried: just after the budget resets. The ingestion worker then queues it again by itself.
 - **Bounded.** A budget still used up refuses it again with a new time, so it costs one check per reset. Other failures are not retried. Re-ingesting by hand cancels the pending retry.

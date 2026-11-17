@@ -224,7 +224,7 @@ dashboard real signals.
 - [x] Turning MFA off or an admin reset deletes passkeys and trusted browsers. Audit: `USER_PASSKEY_ADDED`, `USER_PASSKEY_REMOVED`, `USER_DEVICE_TRUSTED`, `USER_DEVICE_FORGOTTEN`, sign-ins with `mfa: passkey` / `trusted_device`.
 - [x] Console: *Use a passkey* and *Trust this browser* on the code step; passkeys and trusted browsers on the account dialog.
 - [x] Migration `a8c4e2f6b9d1`. Tests: `tests/api/test_passkeys.py`, with a software authenticator producing real attestations and signatures. Doc: [security.md](../security.md#passkeys-and-trusted-browsers-e20).
-- [ ] ~~Second factor only, no passwordless sign-in.~~ Passwordless in the console since E30. The developer portal and voice assistant accept codes only. Changing the public host name strands existing passkeys.
+- [ ] ~~Second factor only, no passwordless sign-in.~~ Passwordless in the console since E30, ~~the developer portal and voice assistant accept codes only~~ (passkeys there since E33). Changing the public host name strands existing passkeys.
 
 ## E21: Embedding calls accounted (closes the E19 open item)
 
@@ -299,7 +299,7 @@ dashboard real signals.
 - [x] Throttled per address like any sign-in; a refused answer counts toward the address only. Registration now asks for discoverable credentials (`residentKey: preferred`).
 - [x] Console: *Sign in with a passkey* on the sign-in page.
 - [x] No migration. Tests: `tests/api/test_passkey_signin.py`. Doc: [security.md](../security.md#signing-in-with-a-passkey-alone-e30).
-- [ ] Console only (the developer portal and voice assistant use passwords). Passkeys added before E30 may need re-adding to be discoverable. No passkey-only accounts: a password and TOTP remain.
+- [ ] ~~Console only (the developer portal and voice assistant use passwords).~~ Closed in E33. Passkeys added before E30 may need re-adding to be discoverable. No passkey-only accounts: a password and TOTP remain.
 
 ## E31: Off-host backup copies to S3-compatible storage (closes the E23 open item)
 
@@ -316,6 +316,13 @@ dashboard real signals.
 - [x] Manual re-ingest clears `retry_at`; `DocumentRead.retry_at`; the console shows when it retries.
 - [x] Tests: `tests/api/test_budget_reingest.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
 - [ ] Only embedding refusals (the only platform call ingestion makes). Retries are logged, not audited. No cap: a budget that never resets (removed quota aside) keeps a document waiting, one check per reset.
+
+## E33: Passkeys in the developer portal and voice assistant (closes the E20/E30 item)
+
+- [x] `frontend/admin/js/passkey.js`: the WebAuthn helpers moved out of `mfa.js` (base64url, option decoding, `credentialJSON`, browser errors) plus `passkeySignIn(post)` and `passkeyMfaAnswer(post, mfaToken)`. Loaded by the console, the developer portal and the voice assistant (same origin, so the same relying party and passkeys).
+- [x] Developer portal: *Sign in with a passkey*, and *Use a passkey instead* at the code step when the account has one; passkey 401s are sign-in errors, not an expired session. Voice assistant: the same two buttons on the sign-in card.
+- [x] No backend change (the E20/E30 endpoints). Test: `/auth/passkey/options` accepts the `{}` body the shared script sends. Node smoke check of both flows.
+- [ ] Passkeys are added and browsers trusted in the console only; no browser end-to-end test (no headless browser with a virtual authenticator in this environment).
 
 ## Phase acceptance (applies to each)
 

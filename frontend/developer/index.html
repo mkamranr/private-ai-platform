@@ -49,9 +49,16 @@
                >Code from your authenticator app, or a recovery code</label>
         <input class="form-control font-monospace" id="mfa-code" inputmode="numeric"
                autocomplete="one-time-code" maxlength="32">
+        <!-- E33: or a passkey, when the account has one. -->
+        <button type="button" id="mfa-passkey" class="btn btn-link btn-sm px-0 d-none"
+                >Use a passkey instead</button>
       </div>
       <div id="login-error" class="alert alert-danger py-2 small d-none"></div>
       <button class="btn btn-primary" type="submit" id="login-submit">Sign in</button>
+      <!-- E33: no username, password or code: the passkey chosen names the account. -->
+      <button type="button" id="login-passkey" class="btn btn-outline-secondary mt-2 d-none"
+              title="No password or code: unlock a passkey you added to your account"
+              >Sign in with a passkey</button>
       <div id="sso-slot" class="mt-2"></div>
     </form>
   </div>
@@ -175,4 +182,5 @@
 
 <script src="/developer/vendor/bootstrap.bundle.min.js"></script>
 <script src="/js/pow.js"></script>
+<script src="/js/passkey.js"></script>
 <script src="/developer/js/portal.js"></script>
