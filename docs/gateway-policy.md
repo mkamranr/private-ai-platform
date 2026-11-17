@@ -202,7 +202,7 @@ crosses a budget finishes and the next one is refused. Concurrency limits do not
 
 | Call | When its budget is used up |
 |---|---|
-| Agent run started in the console or API (`agent.run`) | `POST /agents/{id}/execute` answers **429** with the budget's message and `Retry-After`; no run is created. A run already going is not stopped, nor a run resumed after an approval |
+| Agent run started in the console or API (`agent.run`) | `POST /agents/{id}/execute` answers **429** with the budget's message and `Retry-After`; no run is created. A run already going is **stopped before its next model call** (E34, below), and so is a run resumed after an approval |
 | Agent through `/v1` (`agent:<slug>`) | refused by the gateway's own admission, as before |
 | Workflow LLM step | the step **fails** with the budget's message; the workflow's `error` edges apply as for any failed step |
 | Ingestion | the document is marked **FAILED** with the budget's message and retried automatically once the budget resets (E32, below) |
@@ -210,6 +210,17 @@ crosses a budget finishes and the next one is refused. Concurrency limits do not
 | Agent retrieval and memory | the run continues without the retrieved context or memory, as when the embedding model is down |
 
 The setting is read on every call, so switching it on or off takes effect at once.
+
+**Running agents stop at the budget (E34).** An agent run's tokens are recorded when
+the run stops, so the budget counters do not see them while it runs. Each model call in
+a run is therefore checked before it is made with the run's own tokens so far counted as
+used: a run that reaches its team's or model's budget (per minute, day or month) stops
+there, **FAILED** with *Stopped before the next model call:* and the budget's message,
+and a `RUN_FAILED` event carrying the refusal in its trace. The model call it was about
+to make is not made; a tool call the model had asked for is not run. The tokens it did
+spend are recorded as usual. A run resumed after an approval is checked before its first
+call. `agent:` calls through `/v1` are not stopped: the gateway admitted them against the
+key's quotas when they started.
 
 **Refused documents are retried (E32).** A document whose embedding a budget refused
 records when to try again: the refusal's `Retry-After` (the next minute, midnight UTC or

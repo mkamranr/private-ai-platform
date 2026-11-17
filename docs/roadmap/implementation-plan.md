@@ -255,7 +255,7 @@ dashboard real signals.
 - [x] Runtime setting `gateway.enforce_platform_budgets` (off by default; read on every call). `GatewayPolicy.check` checks team and model token budgets without taking a slot or a charge; `GatewayService.check_internal_budget` resolves the answering model and raises `RateLimitError` (429, `Retry-After`).
 - [x] Checked before the call in `AgentRunService.start` (not for `agent:` calls through `/v1`, which the gateway admitted; not on resume), in the workflow LLM step (a refusal fails the step with the message), and in `embed_with` (every platform embedding: ingestion, search, retrieval, memory). The ingestion worker reads runtime settings per call.
 - [x] No migration. Tests: `tests/api/test_platform_quota_enforcement.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
-- [ ] A running agent is not stopped mid-run when it crosses a budget; ~~a refused document is not retried automatically when the budget resets~~ (closed in E32).
+- [ ] ~~A running agent is not stopped mid-run when it crosses a budget~~ (closed in E34); ~~a refused document is not retried automatically when the budget resets~~ (closed in E32).
 
 ## E25: Lockout for directory accounts (closes the E14 open item)
 
@@ -323,6 +323,13 @@ dashboard real signals.
 - [x] Developer portal: *Sign in with a passkey*, and *Use a passkey instead* at the code step when the account has one; passkey 401s are sign-in errors, not an expired session. Voice assistant: the same two buttons on the sign-in card.
 - [x] No backend change (the E20/E30 endpoints). Test: `/auth/passkey/options` accepts the `{}` body the shared script sends. Node smoke check of both flows.
 - [ ] Passkeys are added and browsers trusted in the console only; no browser end-to-end test (no headless browser with a virtual authenticator in this environment).
+
+## E34: A running agent stops at the budget (closes the E24 agent item)
+
+- [x] `GatewayPolicy.check(subjects, pending_tokens)` and `GatewayService.check_internal_budget(..., pending_tokens)`: tokens spent but not yet recorded count as used (minute, day and month). 0 keeps the E24 behaviour.
+- [x] `AgentRunService._persisting` checks the budget on each `LLM_REQUEST` (emitted before the call) with the run's tokens so far; refused → the run is FAILED with the message, a `RUN_FAILED` event with the refusal is stored and streamed, and the runtime is closed before the call. Not the first call of a new run (checked at start); the first call after an approval is checked. Not for `agent:` calls through `/v1`.
+- [x] No migration, no interface change (`AgentRuntime` untouched). Tests: `tests/api/test_agent_budget_midrun.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
+- [ ] The call that crosses a budget still finishes (checked before, not during, a call). `agent:` runs through `/v1` are admitted once by the gateway and not stopped mid-run. Workflow agent steps are single calls and are checked per step (E24).
 
 ## Phase acceptance (applies to each)
 
