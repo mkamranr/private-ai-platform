@@ -78,7 +78,8 @@
   expire. Shell and Python execution are never allowed.
 - **Workflows.** Versioned workflows with LLM, retrieval, tool, HTTP, condition,
   transform, approval and delay steps. They can start manually, from the API, on a cron schedule
-  or from a webhook, and every step is traced.
+  or from a webhook, and every step is traced. Webhook calls can be required to carry an
+  HMAC signature with a timestamp, so a changed, stale or replayed call is refused.
 
 ### Knowledge and retrieval (RAG)
 - **Knowledge bases.** Upload PDF, Word, PowerPoint, CSV, HTML and text files, or scanned
@@ -98,16 +99,18 @@
 ### Security and access
 - **Sign-in.** Local accounts, OIDC single sign-on and LDAP/Active Directory, plus
   two-factor authentication with an authenticator app or a passkey, and optional
-  trusted browsers. Admins can be required to use it, or everyone can.
+  trusted browsers. Admins can be required to use it, or everyone can. A passkey can
+  also sign in on its own, in the console, the developer portal and the voice assistant.
 - **Hardening.** Account lockout, sign-in throttling, refresh-token rotation with theft
   detection, and *sign out everywhere*.
-- **Roles and teams.** Role-based permissions and team-owned models, keys, agents and
-  knowledge bases. One visibility rule is enforced everywhere, the gateway included.
+- **Roles and teams.** Role-based permissions and team-owned models, keys, agents,
+  tools, workflows and knowledge bases. One visibility rule is enforced everywhere, the gateway included.
 - **Audit trail.** Who did what, when and from where, for every change and every refusal.
 
 ### Operations
 - **Dashboard.** Fleet, models, gateway traffic, alerts, knowledge, agents and workflows
-  on one page. A figure that wasn't measured shows as unavailable, never as zero.
+  on one page, over the last hour up to the last 90 days. A figure that wasn't measured
+  shows as unavailable, never as zero.
 - **Alerts and notifications.** In-app alerts, sent to chat webhooks, ticketing systems
   or email, with retries and signed payloads.
 - **Backups and upgrades from the browser.** Scheduled and verified backups, restore,
