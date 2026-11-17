@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -48,6 +49,13 @@ class Reminder:
     message: str
     resource_type: str
     resource_id: str
+    #: For the per-approver emails (E39): ``tool`` or ``workflow``, the approval's id, the
+    #: owning team (None = shared), and someone who may not decide it (a workflow run's
+    #: starter, unless the step allows self-approval).
+    kind: str = "tool"
+    approval_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
+    excluded_user: uuid.UUID | None = None
 
 
 def _left(expires_at: dt.datetime, now: dt.datetime) -> str:
@@ -63,6 +71,8 @@ class ApprovalReminders:
         self._session = session
         self._alerts = alerts
         self._repo = repo
+        #: The reminders the last :meth:`run` raised, for the approver emails (E39).
+        self.due: list[Reminder] = []
 
     async def run(
         self, *, ttl_hours: int, reminder_hours: int, now: dt.datetime | None = None
@@ -81,6 +91,7 @@ class ApprovalReminders:
                 *await self._workflow_steps(since, ttl, now),
             ]
 
+        self.due = due
         for reminder in due:
             await self._alerts.raise_alert(
                 fingerprint=reminder.fingerprint,
@@ -103,7 +114,7 @@ class ApprovalReminders:
         self, since: dt.datetime, ttl: dt.timedelta, now: dt.datetime
     ) -> list[Reminder]:
         rows = await self._session.execute(
-            select(ToolExecution, Agent.display_name)
+            select(ToolExecution, Agent.display_name, Agent.team_id)
             .join(AgentRun, AgentRun.id == ToolExecution.run_id)
             .join(Agent, Agent.id == AgentRun.agent_id)
             .where(
@@ -114,7 +125,7 @@ class ApprovalReminders:
             .limit(BATCH)
         )
         reminders = []
-        for call, agent_name in rows.all():
+        for call, agent_name, team_id in rows.all():
             expires = call.requested_at + ttl
             reminders.append(
                 Reminder(
@@ -132,6 +143,9 @@ class ApprovalReminders:
                     ),
                     resource_type="tool_execution",
                     resource_id=str(call.id),
+                    kind="tool",
+                    approval_id=call.id,
+                    team_id=team_id,
                 )
             )
         return reminders
@@ -140,7 +154,7 @@ class ApprovalReminders:
         self, since: dt.datetime, ttl: dt.timedelta, now: dt.datetime
     ) -> list[Reminder]:
         rows = await self._session.execute(
-            select(WorkflowApproval, Workflow.name)
+            select(WorkflowApproval, Workflow.name, Workflow.team_id, WorkflowRun.started_by)
             .join(WorkflowRun, WorkflowRun.id == WorkflowApproval.run_id)
             .join(Workflow, Workflow.id == WorkflowRun.workflow_id)
             .where(
@@ -151,7 +165,7 @@ class ApprovalReminders:
             .limit(BATCH)
         )
         reminders = []
-        for approval, workflow_name in rows.all():
+        for approval, workflow_name, team_id, started_by in rows.all():
             expires = approval.requested_at + ttl
             reminders.append(
                 Reminder(
@@ -169,6 +183,10 @@ class ApprovalReminders:
                     ),
                     resource_type="workflow_approval",
                     resource_id=str(approval.id),
+                    kind="workflow",
+                    approval_id=approval.id,
+                    team_id=team_id,
+                    excluded_user=None if approval.allow_self_approval else started_by,
                 )
             )
         return reminders

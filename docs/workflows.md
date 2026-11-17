@@ -174,6 +174,9 @@ is `HIGH` or `CRITICAL` risk does the same before calling it. The risk levels co
 - **Reminders (E22):** `agents.approval_reminder_hours` (default 24) before expiry, the
   step raises a reminder alert (source `approvals`) quoting its message, for the Alerts
   page and subscribed notification channels. See [agents.md](agents.md#reminders-e22).
+  With `agents.approval_reminder_email_approvers` on, it is also emailed to each person
+  who could decide it, never to the run's starter unless the step allows self-approval
+  ([E39](agents.md#reminder-emails-to-each-approver-e39)).
 
 ## Triggers
 

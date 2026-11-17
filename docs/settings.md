@@ -40,6 +40,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `auth.mfa_remember_days` | Security | days "trust this browser" skips the two-factor step, 0–365; 0 turns it off and stops existing tokens (E20, [security.md](security.md#passkeys-and-trusted-browsers-e20)) | next sign-in |
 | `agents.approval_ttl_hours` | Security | hours an agent or workflow approval waits before it expires and its run fails; 0 = never (E17, [agents.md](agents.md#expiry-e17)) | next expiry check (15 min) |
 | `agents.approval_reminder_hours` | Security | hours before that expiry an approval raises a reminder alert (source `approvals`); 0 = off (E22, [agents.md](agents.md#reminders-e22)) | next expiry check (15 min) |
+| `agents.approval_reminder_email_approvers` | Security | also email each reminder to every person who can decide it, once each, at most 25 per approval; needs the mail server (E39, [agents.md](agents.md#reminder-emails-to-each-approver-e39)) | next expiry check (15 min) |
 
 **Deliberately not editable:**
 

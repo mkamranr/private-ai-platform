@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Reminder emails to each approver (E39)
+- **Tell the people who can decide.** With `agents.approval_reminder_email_approvers` on (Settings page, *Security*; off by default), each approval reminder (E22) is also emailed to every person who could decide it: active accounts with `tool.approve` or `workflow.approve` that can see the agent's or workflow's team. A workflow run's starter is left out unless the step allows self-approval.
+- **Once each, and never stale.** Each person is emailed once per approval, at most 25 people per approval. Sends are retried like notification channels, and one not yet sent when the approval is decided or expires is cancelled.
+- **Upgrade.** Migration `f7b9d1e3a5c6` adds the `approver_reminders` outbox. Needs the notification mail server (`NOTIFICATIONS__SMTP_HOST`); nothing changes until the setting is turned on.
+
 ### Reranking calls accounted (E38)
 - **Reranks on the books.** Every rerank a knowledge search, agent or workflow retrieval, playground query or RAG evaluation runs now writes a usage row (`<purpose>.rerank`), charged to the person and to the bases' team, and counted toward team and model budgets like embeddings (E21). Before, reranking was invisible to usage, budgets and chargeback.
 - **Real token counts only.** Tokens are what the engine reports: vLLM's `/v1/rerank` does; Hugging Face TEI does not, and then the call is recorded with 0 tokens rather than a guess.
