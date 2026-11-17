@@ -66,6 +66,33 @@ def _left(expires_at: dt.datetime, now: dt.datetime) -> str:
     return f"{hours} hours"
 
 
+def _waited(requested_at: dt.datetime, now: dt.datetime) -> str:
+    """'3 days', '5 hours', '1 hour'. Rounded down, so it never overstates the wait."""
+    hours = int((now - requested_at).total_seconds() // 3600)
+    if hours >= 48:
+        return f"{hours // 24} days"
+    return "1 hour" if hours <= 1 else f"{hours} hours"
+
+
+def _wording(
+    subject: str, requested_at: dt.datetime, ttl: dt.timedelta | None, now: dt.datetime
+) -> tuple[str, str]:
+    """The title, and the sentence that ends the message: when it expires (E22), or, when
+    nothing expires it, how long it has waited (E43)."""
+    if ttl is None:
+        return (
+            f"{subject} has waited {_waited(requested_at, now)}",
+            "Approvals never expire on this platform, so the run waits until someone "
+            "decides on the Approvals page.",
+        )
+    expires = requested_at + ttl
+    return (
+        f"{subject} expires in {_left(expires, now)}",
+        f"Unless someone decides on the Approvals page by {expires:%Y-%m-%d %H:%M} UTC, it "
+        "expires and the run fails.",
+    )
+
+
 class ApprovalReminders:
     def __init__(self, session: AsyncSession, alerts: AlertService, repo: AlertRepository) -> None:
         self._session = session
@@ -75,17 +102,30 @@ class ApprovalReminders:
         self.due: list[Reminder] = []
 
     async def run(
-        self, *, ttl_hours: int, reminder_hours: int, now: dt.datetime | None = None
+        self,
+        *,
+        ttl_hours: int,
+        reminder_hours: int,
+        waiting_hours: int = 0,
+        now: dt.datetime | None = None,
     ) -> int:
         """Raise a reminder for each approval expiring within ``reminder_hours`` and clear
-        the rest. Returns how many reminders are open."""
+        the rest. Returns how many reminders are open.
+
+        E43: while approvals never expire (``ttl_hours`` 0), ``waiting_hours`` above 0
+        reminds about each approval that has waited at least that long instead."""
         now = now or dt.datetime.now(dt.UTC)
         due: list[Reminder] = []
+        ttl: dt.timedelta | None = None
+        since: dt.datetime | None = None
         if ttl_hours > 0 and reminder_hours > 0:
             ttl = dt.timedelta(hours=ttl_hours)
             # Requested before this, an approval expires within reminder_hours. A reminder
             # window as long as the expiry itself reminds from the first moment.
             since = now - max(ttl - dt.timedelta(hours=reminder_hours), dt.timedelta(0))
+        elif ttl_hours == 0 and waiting_hours > 0:
+            since = now - dt.timedelta(hours=waiting_hours)
+        if since is not None:
             due = [
                 *await self._agent_calls(since, ttl, now),
                 *await self._workflow_steps(since, ttl, now),
@@ -111,7 +151,7 @@ class ApprovalReminders:
         return len(due)
 
     async def _agent_calls(
-        self, since: dt.datetime, ttl: dt.timedelta, now: dt.datetime
+        self, since: dt.datetime, ttl: dt.timedelta | None, now: dt.datetime
     ) -> list[Reminder]:
         rows = await self._session.execute(
             select(ToolExecution, Agent.display_name, Agent.team_id)
@@ -126,21 +166,18 @@ class ApprovalReminders:
         )
         reminders = []
         for call, agent_name, team_id in rows.all():
-            expires = call.requested_at + ttl
+            subject = f"Approval for {call.tool_name} ({agent_name})"
+            asked = (
+                f"The agent {agent_name!r} is waiting for someone to approve or reject a "
+                f"{call.risk_level} call to {call.tool_name!r}, requested "
+                f"{call.requested_at:%Y-%m-%d %H:%M} UTC."
+            )
+            title, ending = _wording(subject, call.requested_at, ttl, now)
             reminders.append(
                 Reminder(
                     fingerprint=f"approval:tool:{call.id}",
-                    title=(
-                        f"Approval for {call.tool_name} ({agent_name}) expires in "
-                        f"{_left(expires, now)}"
-                    ),
-                    message=(
-                        f"The agent {agent_name!r} is waiting for someone to approve or reject "
-                        f"a {call.risk_level} call to {call.tool_name!r}, requested "
-                        f"{call.requested_at:%Y-%m-%d %H:%M} UTC. Unless someone decides on the "
-                        f"Approvals page by {expires:%Y-%m-%d %H:%M} UTC, it expires and the run "
-                        "fails."
-                    ),
+                    title=title,
+                    message=f"{asked} {ending}",
                     resource_type="tool_execution",
                     resource_id=str(call.id),
                     kind="tool",
@@ -151,7 +188,7 @@ class ApprovalReminders:
         return reminders
 
     async def _workflow_steps(
-        self, since: dt.datetime, ttl: dt.timedelta, now: dt.datetime
+        self, since: dt.datetime, ttl: dt.timedelta | None, now: dt.datetime
     ) -> list[Reminder]:
         rows = await self._session.execute(
             select(WorkflowApproval, Workflow.name, Workflow.team_id, WorkflowRun.started_by)
@@ -166,21 +203,18 @@ class ApprovalReminders:
         )
         reminders = []
         for approval, workflow_name, team_id, started_by in rows.all():
-            expires = approval.requested_at + ttl
+            subject = f"Approval for step {approval.node_id} ({workflow_name})"
+            asked = (
+                f"The workflow {workflow_name!r} is waiting at step "
+                f"{approval.node_id!r}: {approval.message[:300]}\n"
+                f"Requested {approval.requested_at:%Y-%m-%d %H:%M} UTC."
+            )
+            title, ending = _wording(subject, approval.requested_at, ttl, now)
             reminders.append(
                 Reminder(
                     fingerprint=f"approval:workflow:{approval.id}",
-                    title=(
-                        f"Approval for step {approval.node_id} ({workflow_name}) expires in "
-                        f"{_left(expires, now)}"
-                    ),
-                    message=(
-                        f"The workflow {workflow_name!r} is waiting at step "
-                        f"{approval.node_id!r}: {approval.message[:300]}\n"
-                        f"Requested {approval.requested_at:%Y-%m-%d %H:%M} UTC. Unless someone "
-                        f"decides on the Approvals page by {expires:%Y-%m-%d %H:%M} UTC, it "
-                        "expires and the run fails."
-                    ),
+                    title=title,
+                    message=f"{asked} {ending}",
                     resource_type="workflow_approval",
                     resource_id=str(approval.id),
                     kind="workflow",

@@ -212,6 +212,15 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next expiry check (within 15 minutes)",
     ),
     RuntimeSetting(
+        "agents.approval_reminder_waiting_hours",
+        "security",
+        "Remind about approvals that never expire (hours)",
+        "Only while approvals never expire (expiry 0): an approval that has waited this "
+        'long raises a reminder alert (source "approvals"), and an email to its '
+        "approvers when that is on. Cleared once someone decides. 0 turns these off.",
+        "Next expiry check (within 15 minutes)",
+    ),
+    RuntimeSetting(
         "agents.approval_reminder_email_approvers",
         "security",
         "Email reminders to each approver",

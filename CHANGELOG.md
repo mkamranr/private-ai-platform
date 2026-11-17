@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Reminders for approvals that never expire (E43)
+- **Nothing waits forever unnoticed.** With approval expiry turned off (`agents.approval_ttl_hours` 0), set `agents.approval_reminder_waiting_hours` (Settings page, *Security*) to raise a reminder for each approval that has waited that long, such as *Approval for create_ticket (IT Helpdesk) has waited 3 days*. It reaches the Alerts page, subscribed channels and, when on, each approver's email, and clears once someone decides.
+- **Upgrade.** Nothing to do: no migration, and it is off by default.
+
 ### Quiet hours for notification channels (E42)
 - **Only critical at night.** A notification channel can now have quiet hours, for example 22:00 to 07:00: during them it sends only CRITICAL alerts. Everything else is held, not dropped, and sent when the window ends.
 - **In your time zone.** The window is read in `UTC`, a fixed offset such as `+04:00`, or a zone name such as `Asia/Dubai` when the server has time zone data. A name it cannot resolve is refused when you save, not ignored at night.

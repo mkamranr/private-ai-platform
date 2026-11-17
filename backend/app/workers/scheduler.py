@@ -220,6 +220,7 @@ class InfrastructureWorker:
                 await reminders.run(
                     ttl_hours=settings.agents.approval_ttl_hours,
                     reminder_hours=settings.agents.approval_reminder_hours,
+                    waiting_hours=settings.agents.approval_reminder_waiting_hours,
                 )
                 await session.commit()
         except Exception:

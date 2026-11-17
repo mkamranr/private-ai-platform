@@ -135,7 +135,11 @@ With the defaults, a reminder appears after 48 hours of waiting, 24 hours before
 - It clears at the next check after someone approves or rejects, or after the approval
   expires.
 - A reminder window as long as the expiry reminds as soon as an approval is requested.
-  While approvals never expire (`agents.approval_ttl_hours` = 0) there are no reminders.
+- **Approvals that never expire (E43).** While `agents.approval_ttl_hours` is 0, set
+  `agents.approval_reminder_waiting_hours` (default 0, off) to remind about each approval
+  that has waited that long, for example *Approval for create_ticket (IT Helpdesk) has
+  waited 3 days*. It is the same alert, cleared the same way, and emailed to approvers
+  when that is on (E39). While approvals do expire, this setting is ignored.
 - At most 200 reminders per kind are raised per check.
 
 ### Reminder emails to each approver (E39)
