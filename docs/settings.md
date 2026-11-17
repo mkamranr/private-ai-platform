@@ -77,7 +77,7 @@ The effective settings are cached per process for up to 10 seconds.
 
 ## Dashboard
 
-`GET /dashboard?window_hours=1..168` still returns everything in one response, and each
+`GET /dashboard?window_hours=1..2160` (up to 90 days since E37) still returns everything in one response, and each
 section still needs its own permission. E8 adds:
 
 | Section | Permission | What it shows |
@@ -105,12 +105,20 @@ health check. The page prints them under the tiles. The dependency probes are ca
 15 seconds so that a dependency that is down cannot slow every refresh; `checked_at` says
 when they ran.
 
+**Longer ranges (E37).** Up to 7 days the traffic chart (`gateway.series`) has a point per
+hour. Past that it has a point per UTC day, bucketed by the database, so 90 days is 91
+bars rather than 2,160. `gateway.bucket` says which (`"hour"` or `"day"`), and each
+point's `hour` is the start of its bucket. The totals, the error rate and requests per
+minute cover the whole range either way. `GET /monitoring/overview` takes the same range.
+A long range reads every usage record in it, so on a busy platform a 90-day view is
+slower than a 24-hour one.
+
 **Team scope.** Knowledge, agent and workflow counts include only the resources the
 caller's team scope covers, which is the same rule their list pages follow (E3).
 
 **Refresh controls.** The page has:
 
-- a time range: last hour, 6 hours, 24 hours or 7 days;
+- a time range: last hour, 6 hours, 24 hours, 7, 30 or 90 days;
 - a Refresh button;
 - an Auto-refresh switch. Turning it off pauses the 5-second poll on this page.
 
@@ -119,7 +127,7 @@ caller's team scope covers, which is the same rule their list pages follow (E3).
 - Runtime-editable settings beyond the list above. Each one needs its consumer moved to
   read per request first, and the table above documents that contract.
 - Per-team or per-user preferences. These are platform settings only.
-- A dashboard time range beyond 7 days. The hourly series would stop being readable, and
-  longer views belong in Grafana.
+- A dashboard range beyond 90 days, or a remembered range per user or team. The range
+  resets to 24 hours on each visit.
 - Time to first token (TTFT) and throughput. The gateway does not record TTFT yet. The
   Prometheus histograms carry latency.

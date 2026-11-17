@@ -20,7 +20,8 @@ async def dashboard(
     service: DashboardServiceDep,
     scope: ScopeDep,
     actor: Annotated[User, require_permission(Perm.MONITORING_VIEW)],
-    window_hours: Annotated[int, Query(ge=1, le=168)] = 24,
+    # Up to 90 days (E37); past 7 days the chart has a bar per day.
+    window_hours: Annotated[int, Query(ge=1, le=2160)] = 24,
 ) -> DashboardResponse:
     """Everything the landing page shows, in one response.
 

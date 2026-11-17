@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from app.services.dashboard import fill_hourly_gaps
+from app.services.dashboard import bucket_for, fill_hourly_gaps
 
 
 def hour(h: int) -> dt.datetime:
@@ -96,3 +96,49 @@ class TestFillHourlyGaps:
             until=hour(12),
         )
         assert [p["requests"] for p in filled] == [0, 7, 0]
+
+
+def day(d: int, h: int = 0) -> dt.datetime:
+    return dt.datetime(2026, 8, d, h, 0, tzinfo=dt.UTC)
+
+
+class TestDailyBuckets:
+    """Past 7 days the chart has a bar per UTC day (E37)."""
+
+    def test_the_bar_size_follows_the_range(self) -> None:
+        assert bucket_for(1) == "hour"
+        assert bucket_for(168) == "hour"
+        assert bucket_for(169) == "day"
+        assert bucket_for(2160) == "day"
+
+    def test_every_day_of_the_window_with_zeros_between(self) -> None:
+        filled = fill_hourly_gaps(
+            [
+                {"hour": day(2), "requests": 3, "tokens": 30},
+                {"hour": day(5), "requests": 1, "tokens": 4},
+            ],
+            since=day(1, 15),
+            until=day(6, 9),
+            unit="day",
+        )
+        assert [p["hour"] for p in filled] == [day(d) for d in range(1, 7)]
+        assert [p["requests"] for p in filled] == [0, 3, 0, 0, 1, 0]
+
+    def test_a_ninety_day_window_is_ninety_one_bars_not_two_thousand(self) -> None:
+        until = day(31, 10)
+        filled = fill_hourly_gaps(
+            [], since=until - dt.timedelta(hours=2160), until=until, unit="day"
+        )
+        # The first and last days are partial, so 90 days touch 91 calendar days.
+        assert len(filled) == 91
+
+    def test_a_row_in_another_zone_lands_on_its_utc_day(self) -> None:
+        late = dt.datetime(2026, 8, 3, 1, 0, tzinfo=dt.timezone(dt.timedelta(hours=4)))
+        filled = fill_hourly_gaps(
+            [{"hour": late, "requests": 2, "tokens": 2}],
+            since=day(1),
+            until=day(3),
+            unit="day",
+        )
+        # 01:00 at UTC+4 on the 3rd is 21:00 UTC on the 2nd.
+        assert [p["requests"] for p in filled] == [0, 2, 0]

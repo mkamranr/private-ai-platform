@@ -108,7 +108,7 @@ dashboard real signals.
 - [x] Runtime settings registry (`services/runtime_settings.py`): 10 settings that are read per request or per run, validated by the same pydantic models as the environment, stored in the existing `system_settings` table (no migration), cached per process for at most 10 s, audited (`SETTING_UPDATED`, `SETTING_RESET`). `GET/PUT/DELETE /settings`.
 - [x] Settings page: runtime settings with their effective, deployment and default values, and a curated, redacted, read-only list of deployment settings by category. Doc: [docs/settings.md](../settings.md).
 - [x] Fixed: the E7 redaction allowlist named token-lifetime fields that do not exist, so the real ones were over-redacted in Diagnostics.
-- [ ] No range beyond 7 days; no per-team preferences. (TTFT and throughput arrived in E16.)
+- [ ] ~~No range beyond 7 days~~ (E37: up to 90 days); no per-team preferences. (TTFT and throughput arrived in E16.)
 
 ## E9: Chargeback (closes plan §14 "Advanced chargeback")
 
@@ -347,6 +347,13 @@ dashboard real signals.
 - [x] `/workflow-hooks/{id}`: a signature is checked over the raw body when required or when sent; an accepted signature is remembered in Valkey for 10 min and refused again (fails open). Every refusal is the same 401 as a bad token; the reason is logged.
 - [x] Console: *Require signed calls* switch and a signed `curl`/`openssl` example (checked to match). Tests: `tests/unit/test_webhook_signing.py`, `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls-e36).
 - [ ] Webhooks enabled before E36 have no secret until rotated. One secret at a time (no overlap window when rotating). Replay protection depends on Valkey.
+
+## E37: Longer dashboard range (closes the E8 7-day limit)
+
+- [x] `GET /dashboard` and `GET /monitoring/overview` take `window_hours` up to 2160 (90 days).
+- [x] Past 7 days the traffic series has a point per UTC day: `UsageRepository.hourly_series(unit="day")` buckets with `date_trunc(unit, recorded_at, 'UTC')`, and `fill_hourly_gaps(unit="day")` fills the days. `gateway.bucket` says `hour` or `day`; the point key stays `hour` (the bucket's start), so existing callers keep working.
+- [x] Console: *Last 30 days* and *Last 90 days*; daily bars are labelled by date. Tests: `tests/unit/test_dashboard_series.py`, `tests/api/test_dashboard_range.py`. Doc: [settings.md](../settings.md#dashboard).
+- [ ] No range past 90 days and no remembered range per user or team. No rollup table: a long range reads every usage record in it.
 
 ## Phase acceptance (applies to each)
 

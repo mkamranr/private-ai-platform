@@ -402,7 +402,7 @@ async function renderDashboard({ force = false } = {}) {
       <div class="row g-3">
         <div class="col-lg-7">
           <div class="stat-card">
-            <div class="card-title-sm">Gateway traffic</div>
+            <div class="card-title-sm">Gateway traffic${data.gateway.bucket === 'day' ? ' per day (UTC)' : ' per hour'}</div>
             <canvas id="usage-chart" height="130"></canvas>
             <div id="usage-chart-empty" class="empty-state d-none">
               <div class="empty-state-text">
@@ -457,10 +457,10 @@ async function renderDashboard({ force = false } = {}) {
           </table>` : '<div class="small text-secondary">Nothing recorded yet.</div>'}
       </div>` : ''}`;
 
-  if (data.gateway) drawUsageChart(data.gateway.series);
+  if (data.gateway) drawUsageChart(data.gateway.series, data.gateway.bucket);
 }
 
-function drawUsageChart(series) {
+function drawUsageChart(series, bucket = 'hour') {
   const canvas = document.getElementById('usage-chart');
   if (!canvas) return;
   if (usageChart) usageChart.destroy();
@@ -476,7 +476,10 @@ function drawUsageChart(series) {
   usageChart = new Chart(canvas, {
     type: 'bar',
     data: {
-      labels: series.map((p) => new Date(p.hour).toLocaleTimeString([], { hour: '2-digit' })),
+      // Past 7 days a bar is a UTC day (E37), so it is labelled with its date, not an hour.
+      labels: series.map((p) => (bucket === 'day'
+        ? new Date(p.hour).toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' })
+        : new Date(p.hour).toLocaleTimeString([], { hour: '2-digit' }))),
       datasets: [
         // Capped width. The series is gap-filled server-side so a quiet platform still
         // spans its window, but a one-hour window would otherwise put a single category
