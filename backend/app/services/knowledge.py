@@ -87,9 +87,16 @@ EMBED_BATCH = 32
 
 
 class Reranker(Protocol):
-    """Scores passages against a query, in input order (E5)."""
+    """Scores passages against a query, in input order (E5), charged as asked (E38)."""
 
-    async def __call__(self, query: str, passages: list[str], model: str) -> list[float]: ...
+    async def __call__(
+        self,
+        query: str,
+        passages: list[str],
+        model: str,
+        *,
+        charge: EmbeddingCharge | None = None,
+    ) -> list[float]: ...
 
 
 class ObjectStorage(Protocol):
@@ -892,7 +899,7 @@ class KnowledgeService:
         ``fallback_threshold``.
 
         Each base's query embedding is accounted (E21) as ``purpose`` to ``user_id`` and
-        that base's team.
+        that base's team. The rerank is accounted too (E38), as ``<purpose>.rerank``.
         """
         trace = RetrievalTrace()
         active = [b for b in bases if b.enabled]
@@ -983,7 +990,12 @@ class KnowledgeService:
             trace.reranker = model
             started = time.perf_counter()
             try:
-                scores = await self._rerank(query, [c.text for c in trace.candidates], model)
+                scores = await self._rerank(
+                    query,
+                    [c.text for c in trace.candidates],
+                    model,
+                    charge=_rerank_charge(purpose, active, trace.candidates, user_id),
+                )
                 if len(scores) != len(trace.candidates):
                     raise RuntimeError(f"{len(scores)} scores for {len(trace.candidates)} passages")
             except Exception as exc:
@@ -1031,3 +1043,24 @@ class KnowledgeService:
                 f"The model {model!r} returned no embedding. It may not be an embedding model."
             )
         return len(vectors[0])
+
+
+def _rerank_charge(
+    purpose: str,
+    bases: list[KnowledgeBase],
+    candidates: list[SearchResult],
+    user_id: uuid.UUID | None,
+) -> EmbeddingCharge:
+    """Whom one rerank is charged to (E38).
+
+    One call scores passages from every base searched, so it cannot be split per base the
+    way the query embeddings are. It goes to the bases' team when the passages all come
+    from bases of one team, and to no team otherwise: charging one team for another's
+    passages would be wrong, and a shared base belongs to nobody.
+    """
+    names = sorted({c.knowledge_base for c in candidates})
+    teams = {b.team_id for b in bases if b.name in names}
+    team_id = teams.pop() if len(teams) == 1 else None
+    return EmbeddingCharge(
+        f"{purpose}.rerank"[:64], ("kb:" + ",".join(names))[:128], user_id=user_id, team_id=team_id
+    )

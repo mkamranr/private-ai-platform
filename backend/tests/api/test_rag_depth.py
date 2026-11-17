@@ -159,9 +159,13 @@ class FakeReranker:
     def __init__(self) -> None:
         self.fail = False
         self.calls: list[tuple[str, int, str]] = []
+        self.charges: list[Any] = []
 
-    async def __call__(self, query: str, passages: list[str], model: str) -> list[float]:
+    async def __call__(
+        self, query: str, passages: list[str], model: str, *, charge: Any = None
+    ) -> list[float]:
         self.calls.append((query, len(passages), model))
+        self.charges.append(charge)
         if self.fail:
             raise RuntimeError("reranker runtime unreachable")
         wanted = set(_terms(query))

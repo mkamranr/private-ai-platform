@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Reranking calls accounted (E38)
+- **Reranks on the books.** Every rerank a knowledge search, agent or workflow retrieval, playground query or RAG evaluation runs now writes a usage row (`<purpose>.rerank`), charged to the person and to the bases' team, and counted toward team and model budgets like embeddings (E21). Before, reranking was invisible to usage, budgets and chargeback.
+- **Real token counts only.** Tokens are what the engine reports: vLLM's `/v1/rerank` does; Hugging Face TEI does not, and then the call is recorded with 0 tokens rather than a guess.
+- With `gateway.enforce_platform_budgets` on, a rerank over budget is skipped and the results stay in vector order with a warning.
+- **Upgrade.** Nothing to do: no migration.
+
 ### Dashboard looks back 90 days (E37)
 - **Longer ranges.** The dashboard's range now offers *Last 30 days* and *Last 90 days* (`window_hours` up to 2160, also on `GET /monitoring/overview`). Before, it stopped at 7 days.
 - **A bar per day past a week.** Beyond 7 days the traffic chart has one bar per UTC day instead of one per hour. `gateway.bucket` in the response says which; the series' fields are unchanged.
