@@ -212,6 +212,16 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next expiry check (within 15 minutes)",
     ),
     RuntimeSetting(
+        "agents.approval_reminder_email_approvers",
+        "security",
+        "Email reminders to each approver",
+        "When a reminder is raised, also email each person who can decide that approval: "
+        "active accounts holding tool.approve or workflow.approve that can see the agent's "
+        "or workflow's team (at most 25 per approval), once each. Needs the mail server "
+        "(NOTIFICATIONS__SMTP_HOST).",
+        "Next expiry check (within 15 minutes)",
+    ),
+    RuntimeSetting(
         "ops.backup_interval_hours",
         "operations",
         "Scheduled backup every (hours)",

@@ -240,7 +240,7 @@ dashboard real signals.
 - [x] `app/services/approval_reminders.py`, run by the `approval_expiry` job after expiry: one WARNING alert per pending agent tool call or workflow approval expiring within the window (`approval:tool:<id>`, `approval:workflow:<id>`), title refreshed with the time left (rounded up), cleared once the approval is no longer pending. At most 200 per kind per check.
 - [x] Alert source `approvals` in `KNOWN_SOURCES`, so notification channels can subscribe; delivered once per channel by the E13 outbox.
 - [x] No migration. Tests: `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders-e22).
-- [ ] Reminders go to channels, not to individual approvers (approvers are not modelled). No reminder for approvals that never expire.
+- [ ] ~~Reminders go to channels, not to individual approvers (approvers are not modelled).~~ Emailed to each approver since E39. No reminder for approvals that never expire.
 
 ## E23: Backup retention by age and off-host copies (closes the E12 open item)
 
@@ -362,6 +362,14 @@ dashboard real signals.
 - [x] `KnowledgeService.retrieve` charges each rerank as `<purpose>.rerank` to the caller and, when every scored passage came from bases of one team, that team (`_rerank_charge`).
 - [x] No migration. Tests: `tests/unit/test_rerank_usage.py`, `tests/api/test_rerank_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#reranking-e38).
 - [ ] An engine that reports no tokens (TEI) records 0 tokens for the call. A rerank over bases of several teams is charged to no team.
+
+## E39: Reminder emails to each approver (closes the E22 approver item)
+
+- [x] Runtime setting `agents.approval_reminder_email_approvers` (default off).
+- [x] `app/services/approver_reminders.py`: approvers are active users with `tool.approve` / `workflow.approve` (or superusers) who can see the resource's team (member, `scope.all`, superuser; shared = every holder), minus a workflow run's starter unless the step allows self-approval. At most 25 per approval, explicit holders first.
+- [x] Outbox `approver_reminders` (migration `f7b9d1e3a5c6`), unique per approval and person; sent with the notification mail server and back-off; cancelled when the approval is decided or expires, the account is turned off, or the setting is off; finished rows pruned after 30 days. Run by the `approval_expiry` job after the E22 reminders, in its own transaction.
+- [x] `Reminder` carries the kind, approval id, team and excluded starter. Tests: `tests/api/test_approver_reminders.py`. Doc: [agents.md](../agents.md#reminder-emails-to-each-approver-e39).
+- [ ] Email only (no chat direct messages); no per-person opt-out; the link goes to the console's Alerts page.
 
 ## Phase acceptance (applies to each)
 

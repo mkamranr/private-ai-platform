@@ -73,6 +73,7 @@ from app.repositories.teams import TeamRepository
 from app.services.alerts import AlertService
 from app.services.approval_expiry import ApprovalExpiry
 from app.services.approval_reminders import ApprovalReminders
+from app.services.approver_reminders import ApproverReminders
 from app.services.audit import AuditService
 from app.services.backup_schedule import BackupScheduler
 from app.services.budgets import BudgetWatcher, CostBudgetService
@@ -215,13 +216,27 @@ class InfrastructureWorker:
                     AuditRepository(session), session_factory=self._session_factory
                 )
                 alert_repo = AlertRepository(session)
-                await ApprovalReminders(session, AlertService(alert_repo, audit), alert_repo).run(
+                reminders = ApprovalReminders(session, AlertService(alert_repo, audit), alert_repo)
+                await reminders.run(
                     ttl_hours=settings.agents.approval_ttl_hours,
                     reminder_hours=settings.agents.approval_reminder_hours,
                 )
                 await session.commit()
         except Exception:
             log.exception("approval_reminders_failed")
+            return
+        # And to each approver's own address, when that is turned on (E39). Separate, so
+        # a mail problem never undoes the reminder alerts committed above.
+        try:
+            async with self._session_factory() as session:
+                await ApproverReminders(
+                    session,
+                    EmailSender(self._settings.notifications),
+                    self._settings.notifications,
+                ).run(reminders.due, enabled=settings.agents.approval_reminder_email_approvers)
+                await session.commit()
+        except Exception:
+            log.exception("approver_reminders_failed")
 
     async def purge_metrics(self) -> None:
         try:

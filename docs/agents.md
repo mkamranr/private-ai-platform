@@ -136,8 +136,35 @@ With the defaults, a reminder appears after 48 hours of waiting, 24 hours before
   expires.
 - A reminder window as long as the expiry reminds as soon as an approval is requested.
   While approvals never expire (`agents.approval_ttl_hours` = 0) there are no reminders.
-- Reminders go to channels, not to individual approvers: the platform does not know who is
-  meant to decide. At most 200 reminders per kind are raised per check.
+- At most 200 reminders per kind are raised per check.
+
+### Reminder emails to each approver (E39)
+
+Turn on `agents.approval_reminder_email_approvers` (Settings page, *Security*; off by
+default) and each reminder is also emailed to the people who could decide it, at the same
+check that raises the alert:
+
+- active accounts holding `tool.approve` (an agent's tool call) or `workflow.approve`
+  (a workflow step), and superusers;
+- who can see the agent's or workflow's team: its members, holders of `scope.all`, and
+  superusers. A shared agent or workflow asks every holder;
+- not whoever started the workflow run, unless the step allows self-approval, because they
+  could not decide it. A superuser who started it is still asked.
+
+At most 25 people per approval: explicit holders first, then superusers, by username.
+Each person is emailed **once per approval**, however many checks repeat the reminder.
+The email goes to the address on the account, through the mail server the notification
+channels use (`NOTIFICATIONS__SMTP_*`). Without one, nothing is queued and the worker logs
+`approver_reminders_no_mail_server`.
+
+Sends go through an outbox (`approver_reminders`, migration `f7b9d1e3a5c6`) and are
+retried with the channels' back-off up to `NOTIFICATIONS__MAX_ATTEMPTS`. One still waiting
+when its approval is decided or expires, when the account is turned off, or when the
+setting is turned off is cancelled rather than sent. Finished rows are deleted after 30
+days. A failed send is logged by account id, never by address.
+
+The channel reminders above are unchanged: point a channel at the approvers' chat as well,
+or instead.
 
 ## Teams: what an agent may use (E18)
 

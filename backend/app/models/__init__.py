@@ -72,6 +72,7 @@ from app.models.models_registry import (
     UsageRecord,
 )
 from app.models.notifications import (
+    ApproverReminder,
     ChannelKind,
     DeliveryEvent,
     DeliveryStatus,
@@ -135,6 +136,7 @@ __all__ = [
     "ApiClient",
     "ApiKey",
     "ApprovalState",
+    "ApproverReminder",
     "AuditAction",
     "AuditLog",
     "AuditResult",

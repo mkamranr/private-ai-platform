@@ -200,3 +200,46 @@ class NotificationDelivery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return f"<NotificationDelivery {self.event} {self.status}>"
+
+
+class ApproverReminder(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """One reminder email to one person who can decide one approval (expansion E39).
+
+    E22 reminds through channels: an alert that a team's chat or a shared mailbox hears.
+    This is the same reminder sent to each approver's own address. It is an outbox like
+    ``notification_deliveries``: queued by the expiry job, retried with back-off, and
+    unique per approval and person, so each approver hears about an approval once.
+    """
+
+    __tablename__ = "approver_reminders"
+    __table_args__ = (
+        UniqueConstraint("kind", "approval_id", "user_id", name="uq_approver_reminders_key"),
+        CheckConstraint("kind IN ('tool','workflow')", name="approver_reminder_kind"),
+        CheckConstraint(
+            "status IN ('pending','sent','failed','cancelled')",
+            name="approver_reminder_status",
+        ),
+        Index("ix_approver_reminders_due", "status", "next_attempt_at"),
+    )
+
+    #: ``tool`` (an agent's tool call, ``tool_executions.id``) or ``workflow`` (a paused
+    #: step, ``workflow_approvals.id``). Not a foreign key: either table may be the one.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    approval_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    #: What was said, for the record; the address is read from the user when sending.
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    sent_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:
+        return f"<ApproverReminder {self.kind} {self.status}>"
