@@ -19,7 +19,7 @@ from app.models.workflows import WorkflowApproval
 from app.repositories.audit import AuditRepository
 from app.repositories.operations import AlertRepository
 from app.services.alerts import AlertService
-from app.services.approval_reminders import SOURCE, ApprovalReminders, _left
+from app.services.approval_reminders import SOURCE, ApprovalReminders, _left, _waited
 from app.services.audit import AuditService
 from app.services.notifications import KNOWN_SOURCES
 from tests.api.test_approval_expiry import _waiting_run
@@ -126,6 +126,59 @@ class TestAgentApprovals:
         _, call = await _waiting_run(session, superuser, age_hours=500)
         assert await _reminders(session).run(ttl_hours=0, reminder_hours=REMIND) == 0
         assert await _alert(session, f"approval:tool:{call.id}") is None
+
+
+class TestApprovalsThatNeverExpire:
+    """E43: with expiry off, a reminder after an approval has waited long enough."""
+
+    async def test_a_long_wait_raises_a_reminder(
+        self, session: AsyncSession, superuser: User
+    ) -> None:
+        _, call = await _waiting_run(session, superuser, age_hours=75)
+        reminders = _reminders(session)
+        await reminders.run(ttl_hours=0, reminder_hours=REMIND, waiting_hours=48)
+
+        alert = await _alert(session, f"approval:tool:{call.id}")
+        assert alert is not None and alert.state == AlertState.ACTIVE
+        assert alert.title.endswith("has waited 3 days")
+        assert "never expire" in (alert.message or "")
+        assert "expires and the run fails" not in (alert.message or "")
+        # The approver emails (E39) get it too.
+        assert any(r.approval_id == call.id for r in reminders.due)
+
+    async def test_a_shorter_wait_is_not_reminded(
+        self, session: AsyncSession, superuser: User
+    ) -> None:
+        _, call = await _waiting_run(session, superuser, age_hours=10)
+        await _reminders(session).run(ttl_hours=0, reminder_hours=REMIND, waiting_hours=48)
+        assert await _alert(session, f"approval:tool:{call.id}") is None
+
+    async def test_ignored_while_approvals_expire(
+        self, session: AsyncSession, superuser: User
+    ) -> None:
+        # Expiry on: the E22 window decides, and a 10-hour-old approval is not yet in it.
+        _, call = await _waiting_run(session, superuser, age_hours=10)
+        await _reminders(session).run(ttl_hours=TTL, reminder_hours=REMIND, waiting_hours=1)
+        assert await _alert(session, f"approval:tool:{call.id}") is None
+
+    async def test_deciding_clears_it(self, session: AsyncSession, superuser: User) -> None:
+        _, call = await _waiting_run(session, superuser, age_hours=75)
+        reminders = _reminders(session)
+        await reminders.run(ttl_hours=0, reminder_hours=REMIND, waiting_hours=48)
+        await session.execute(
+            update(ToolExecution)
+            .where(ToolExecution.id == call.id)
+            .values(approval_state=ApprovalState.REJECTED)
+        )
+        await reminders.run(ttl_hours=0, reminder_hours=REMIND, waiting_hours=48)
+        alert = await _alert(session, f"approval:tool:{call.id}")
+        assert alert is not None and alert.state == AlertState.RESOLVED
+
+    def test_the_wait_is_never_overstated(self) -> None:
+        now = dt.datetime(2026, 1, 3, tzinfo=dt.UTC)
+        assert _waited(now - dt.timedelta(hours=1, minutes=59), now) == "1 hour"
+        assert _waited(now - dt.timedelta(hours=47, minutes=59), now) == "47 hours"
+        assert _waited(now - dt.timedelta(hours=71), now) == "2 days"
 
     async def test_a_window_as_long_as_the_expiry_reminds_at_once(
         self, session: AsyncSession, superuser: User

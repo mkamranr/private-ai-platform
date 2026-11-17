@@ -240,7 +240,7 @@ dashboard real signals.
 - [x] `app/services/approval_reminders.py`, run by the `approval_expiry` job after expiry: one WARNING alert per pending agent tool call or workflow approval expiring within the window (`approval:tool:<id>`, `approval:workflow:<id>`), title refreshed with the time left (rounded up), cleared once the approval is no longer pending. At most 200 per kind per check.
 - [x] Alert source `approvals` in `KNOWN_SOURCES`, so notification channels can subscribe; delivered once per channel by the E13 outbox.
 - [x] No migration. Tests: `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders-e22).
-- [ ] ~~Reminders go to channels, not to individual approvers (approvers are not modelled).~~ Emailed to each approver since E39. No reminder for approvals that never expire.
+- [ ] ~~Reminders go to channels, not to individual approvers (approvers are not modelled).~~ Emailed to each approver since E39. ~~No reminder for approvals that never expire.~~ Since E43, after a set wait.
 
 ## E23: Backup retention by age and off-host copies (closes the E12 open item)
 
@@ -394,6 +394,13 @@ dashboard real signals.
 - [x] Dispatcher: inside the window, non-CRITICAL deliveries (not tests) move to the window's end without an attempt (`held` in the run result and log).
 - [x] Console: quiet hours on the channel form and in the channel's rules line. Tests: `tests/unit/test_quiet_hours.py`, `tests/api/test_quiet_hours.py`. Doc: [notifications.md](../notifications.md#how-delivery-works).
 - [ ] One window a day, the same every day (no weekends or holidays); no digest of what was held.
+
+## E43: Reminders for approvals that never expire (closes the last E22 open item)
+
+- [x] Runtime setting `agents.approval_reminder_waiting_hours` (default 0 = off), used only while `approval_ttl_hours` is 0.
+- [x] `ApprovalReminders.run(waiting_hours=)`: approvals pending at least that long raise the same `approvals` alert, titled *… has waited N hours/days* (rounded down) and saying approvals never expire; cleared once decided; handed to the approver emails (E39). No migration.
+- [x] Tests: `TestApprovalsThatNeverExpire` in `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders-e22).
+- [ ] One reminder per approval, refreshed each check; no escalation after a longer wait.
 
 ## Phase acceptance (applies to each)
 

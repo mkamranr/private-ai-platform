@@ -632,6 +632,9 @@ class AgentsSettings(BaseModel):
     #: Hours before that expiry an approval raises a reminder alert (source
     #: ``approvals``, E22). 0 = no reminders. Ignored while approvals never expire.
     approval_reminder_hours: int = Field(default=24, ge=0, le=8760)
+    #: While approvals never expire (``approval_ttl_hours`` 0), remind about an approval
+    #: that has waited this many hours (E43). 0 = no such reminders, as before.
+    approval_reminder_waiting_hours: int = Field(default=0, ge=0, le=8760)
     #: Also email each person who can decide an approval when its reminder is raised
     #: (E39): active, holding ``tool.approve`` or ``workflow.approve``, able to see the
     #: agent's or workflow's team. Off by default; needs a mail server.
