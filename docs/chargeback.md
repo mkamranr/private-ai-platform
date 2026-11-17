@@ -101,6 +101,25 @@ A caller without `scope.all` sees rows for their own teams and for shared usage 
 Totals cover every row the caller may see, even when the response returns only the first
 1,000.
 
+### Timings (E40)
+
+Each row, the idle row and the totals also say how fast that usage was served, from the
+same calls as its cost:
+
+| Field | Meaning |
+|---|---|
+| `avg_latency_ms`, `latency_p95_ms` | mean and 95th percentile of request latency |
+| `ttft_p50_ms`, `ttft_p95_ms` | median and 95th percentile time to first token |
+| `output_tps_p50` | median output tokens per second |
+| `timed_streams` | how many calls the TTFT and throughput figures come from |
+
+TTFT and throughput are measured on streamed calls only (E16, see
+[gateway-policy.md](gateway-policy.md#timings-e16)), so a row with no streamed calls has
+`null` there and `timed_streams` 0. A row with no calls (idle capacity) has `null`
+latency. The totals' percentiles are computed over every call the caller may see, not from
+the rows: a percentile of percentiles is not a percentile. The page shows *p95 latency* and
+*First token (p50)* columns, with "—" where nothing was measured.
+
 ## Export
 
 `POST /chargeback/export` (same parameters) returns every row as CSV, including idle
@@ -110,6 +129,9 @@ capacity:
   row count). The data leaves the platform.
 - Each row carries the currency, the period and `estimate=true`.
 - Unpriced amounts are empty cells, not 0.
+- **Timings (E40)** are the last six columns (`avg_latency_ms` to `timed_streams`), after
+  `estimate`, so a spreadsheet built on the earlier columns keeps working. An unmeasured
+  figure is an empty cell, not 0.
 - **Formula-safe.** End-user names come from request bodies. A cell starting with `=`, `+`,
   `-`, `@`, a tab or a carriage return is prefixed with `'`, so a spreadsheet does not run
   `=HYPERLINK(...)` planted by a caller.

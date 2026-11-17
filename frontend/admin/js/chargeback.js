@@ -70,6 +70,19 @@ function hoursText(h) {
   return h ? `${h.toLocaleString(undefined, { maximumFractionDigits: 2 })} h` : '—';
 }
 
+// Timings (E40): "—" when nothing was measured, never 0. TTFT is from streamed calls only.
+function msCell(value, title) {
+  return value === null || value === undefined
+    ? `<span class="text-secondary" title="${esc(title)}">—</span>`
+    : `<span class="num">${esc(Math.round(value).toLocaleString())} ms</span>`;
+}
+
+function timingCells(r) {
+  const streams = r.timed_streams ? `${fmtInt(r.timed_streams)} streamed call(s)` : 'No streamed calls';
+  return `<td class="text-end">${msCell(r.latency_p95_ms, 'No calls')}</td>
+    <td class="text-end" title="${esc(streams)}">${msCell(r.ttft_p50_ms, 'No streamed calls')}</td>`;
+}
+
 function cbRow(r, currency, group) {
   const flags = [];
   if (r.unpriced_requests) flags.push(`<span class="chip" title="Calls with no applicable rate">${fmtInt(r.unpriced_requests)} unpriced</span>`);
@@ -89,6 +102,7 @@ function cbRow(r, currency, group) {
     <td class="text-end">${hoursText(r.gpu_hours)}</td>
     <td class="text-end">${r.gpu_hours ? moneyCell(r.gpu_cost, currency, 'No GPU-hour rate for this model') : '<span class="text-secondary">—</span>'}</td>
     <td class="text-end fw-medium">${moneyCell(r.total_cost, currency)}</td>
+    ${timingCells(r)}
   </tr>`;
 }
 
@@ -109,11 +123,14 @@ function cbReportCard(report) {
     <td class="text-end">${hoursText(t.gpu_hours)}</td>
     <td class="text-end">${t.gpu_hours ? moneyCell(t.gpu_cost, c) : '—'}</td>
     <td class="text-end">${moneyCell(t.total_cost, c)}</td>
+    ${timingCells(t)}
   </tr>`;
   const head = `<th>${esc(CB_GROUP_HEAD[report.group_by])}</th><th class="text-end">Requests</th>
     <th class="text-end">Prompt tokens</th><th class="text-end">Completion tokens</th>
     <th class="text-end">Token cost</th><th class="text-end">GPU time</th>
-    <th class="text-end">GPU cost</th><th class="text-end">Total</th>`;
+    <th class="text-end">GPU cost</th><th class="text-end">Total</th>
+    <th class="text-end" title="95th percentile of request latency">p95 latency</th>
+    <th class="text-end" title="Median time to first token, streamed calls only">First token (p50)</th>`;
   return sectionCard(`Cost by ${CB_GROUP_HEAD[report.group_by].toLowerCase()}`,
     `${report.start} to ${report.end} (UTC). ${report.note}`,
     tableHtml(head, rows.map((r) => cbRow(r, c, report.group_by)).join('') + foot));

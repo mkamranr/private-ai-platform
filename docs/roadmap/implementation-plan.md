@@ -186,7 +186,7 @@ dashboard real signals.
 - [x] Prometheus histograms `ai_platform_gateway_request_duration_seconds` and `ai_platform_gateway_output_tokens_per_second`, with Grafana panels beside the existing TTFT one.
 - [x] Console: a "First token (p50)" dashboard card (p95, tok/s, stream count); First token, p95 latency and Tok/s columns on Usage & Quotas. "—" when unmeasured.
 - [x] Tests: `tests/api/test_gateway_timings.py` (stored timings, role-only chunk, exclusions, exact percentiles, null with buffered-only traffic). Doc: [gateway-policy.md](../gateway-policy.md#timings-e16).
-- [ ] `agent:` and voice calls are not timed (agent calls are recorded since E17, without timings). No buffered TTFT. Timings are not in chargeback exports.
+- [ ] `agent:` and voice calls are not timed (agent calls are recorded since E17, without timings). No buffered TTFT. ~~Timings are not in chargeback exports.~~ In chargeback reports and exports since E40.
 
 ## E17: Approval expiry and agent usage (closes two agents.md known gaps)
 
@@ -370,6 +370,14 @@ dashboard real signals.
 - [x] Outbox `approver_reminders` (migration `f7b9d1e3a5c6`), unique per approval and person; sent with the notification mail server and back-off; cancelled when the approval is decided or expires, the account is turned off, or the setting is off; finished rows pruned after 30 days. Run by the `approval_expiry` job after the E22 reminders, in its own transaction.
 - [x] `Reminder` carries the kind, approval id, team and excluded starter. Tests: `tests/api/test_approver_reminders.py`. Doc: [agents.md](../agents.md#reminder-emails-to-each-approver-e39).
 - [ ] Email only (no chat direct messages); no per-person opt-out; the link goes to the console's Alerts page.
+
+## E40: Timings in chargeback reports and exports (closes the E16 chargeback item)
+
+- [x] `ChargebackRepository.timings`: mean and p95 latency, p50/p95 TTFT, median tok/s and `timed_streams` per report group, keyed like the report's lines, in one grouped query (not per model and rate, whose percentiles could not be combined); `group=None` for the totals.
+- [x] Rows, the idle row and the totals carry the six fields (null when unmeasured). The CSV appends them after `estimate`, empty when unmeasured.
+- [x] Console: *p95 latency* and *First token (p50)* columns on the Chargeback page.
+- [x] No migration. Tests: `tests/api/test_chargeback_timings.py`. Doc: [chargeback.md](../chargeback.md#timings-e40).
+- [ ] Agent (`agent:`) and voice calls still carry no first-token timings, so they count in latency only.
 
 ## Phase acceptance (applies to each)
 

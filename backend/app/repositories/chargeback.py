@@ -20,6 +20,7 @@ from app.models.infrastructure import GpuAllocation
 from app.models.models_registry import ApiClient, ApiKey, Model, UsageRecord
 from app.models.teams import Team
 from app.repositories.base import BaseRepository
+from app.repositories.models_registry import timing_columns, timing_values
 
 #: Report dimensions, and how each names its rows.
 GROUPS = ("team", "api_key", "user", "end_user", "model")
@@ -151,6 +152,43 @@ class ChargebackRepository:
             stmt = stmt.outerjoin(target, condition)
         stmt = stmt.group_by(*key_cols, *label_cols, c.c.model, c.c.rate_id)
         return [dict(row._mapping) for row in (await self.session.execute(stmt)).all()]
+
+    async def timings(
+        self, *, group: str | None, start: dt.datetime, end: dt.datetime, where: Any = None
+    ) -> dict[tuple[Any, ...], dict[str, Any]]:
+        """Latency and streaming timings in ``[start, end)`` per ``group`` (E40).
+
+        Keyed like the report's lines: ``(model,)``, ``(end_user, trusted)`` or
+        ``(<group>_id,)``; ``group=None`` gives one entry, ``()``, over everything. A
+        separate query from :meth:`usage`, which also splits by model and rate: a
+        percentile of those parts would not be the group's percentile.
+        """
+        key_cols: list[Any]
+        if group is None:
+            key_cols = []
+        elif group == "model":
+            key_cols = [UsageRecord.model]
+        elif group == "end_user":
+            key_cols = [UsageRecord.end_user, UsageRecord.end_user_trusted]
+        elif group in {"team", "api_key", "user"}:
+            key_cols = [getattr(UsageRecord, f"{group}_id")]
+        else:  # pragma: no cover - the API validates the group
+            raise ValueError(group)
+        stmt = select(
+            *key_cols, func.avg(UsageRecord.latency_ms).label("avg_latency_ms"), *timing_columns()
+        ).where(UsageRecord.recorded_at >= start, UsageRecord.recorded_at < end)
+        if where is not None:
+            stmt = stmt.where(where)
+        if key_cols:
+            stmt = stmt.group_by(*key_cols)
+        out: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for row in (await self.session.execute(stmt)).all():
+            values = timing_values(row)
+            values["avg_latency_ms"] = (
+                None if row.avg_latency_ms is None else round(float(row.avg_latency_ms), 2)
+            )
+            out[tuple(row[: len(key_cols)])] = values
+        return out
 
     async def tokens_by_model(self, *, start: dt.datetime, end: dt.datetime) -> dict[str, int]:
         """Every caller's tokens per model, unscoped: the denominator GPU time is shared

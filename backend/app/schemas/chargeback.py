@@ -73,6 +73,14 @@ class ChargebackRow(BaseModel):
     total_cost: Decimal | None
     unpriced_requests: int
     partial_requests: int
+    #: Timings (E40). None when nothing was measured; TTFT and tok/s are from streamed
+    #: calls only, and ``timed_streams`` says how many.
+    avg_latency_ms: float | None = None
+    latency_p95_ms: float | None = None
+    ttft_p50_ms: float | None = None
+    ttft_p95_ms: float | None = None
+    output_tps_p50: float | None = None
+    timed_streams: int = 0
 
 
 class ChargebackTotals(BaseModel):
@@ -85,6 +93,14 @@ class ChargebackTotals(BaseModel):
     total_cost: Decimal | None
     unpriced_requests: int
     partial_requests: int
+    #: Timings (E40). None when nothing was measured; TTFT and tok/s are from streamed
+    #: calls only, and ``timed_streams`` says how many.
+    avg_latency_ms: float | None = None
+    latency_p95_ms: float | None = None
+    ttft_p50_ms: float | None = None
+    ttft_p95_ms: float | None = None
+    output_tps_p50: float | None = None
+    timed_streams: int = 0
 
 
 class ChargebackReport(BaseModel):
