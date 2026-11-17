@@ -139,7 +139,7 @@ function workflowRow(w) {
   const last = w.last_run;
   return `<tr class="${w.id === wf.selected ? 'table-active' : ''}">
     <td><a href="#" class="fw-medium" data-wf-open="${esc(w.id)}">${esc(w.display_name)}</a>
-      ${teamChip(w.team_id)}<div class="mono small text-secondary">${esc(w.name)}</div></td>
+      ${teamControl('workflow', w.id, w.team_id, w.display_name || w.name)}<div class="mono small text-secondary">${esc(w.name)}</div></td>
     <td>${pill(w.status)}</td>
     <td class="small">${w.published_version ? `v${esc(w.published_version)}` : '<span class="text-secondary">—</span>'}</td>
     <td class="small">${triggers}</td>
@@ -197,7 +197,7 @@ function renderDetail() {
     <div class="card mb-3"><div class="card-body">
       <div class="d-flex flex-wrap align-items-start gap-2">
         <div class="me-auto min-w-0">
-          <h5 class="mb-1">${esc(d.display_name)} ${teamChip(d.team_id)}</h5>
+          <h5 class="mb-1">${esc(d.display_name)} ${teamControl('workflow', d.id, d.team_id, d.display_name)}</h5>
           <div class="small text-secondary"><span class="mono">${esc(d.name)}</span>
             ${d.description ? ` · ${esc(d.description)}` : ''}</div>
         </div>

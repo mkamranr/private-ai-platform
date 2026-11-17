@@ -338,7 +338,7 @@ dashboard real signals.
 - [x] `TeamReferences.unavailable(tools=...)`: an agent may be granted only shared tools and its team's. Checked on create and new version (422, `details.uses`; a tool the builder cannot see is 404), on `PUT /scope` for an agent (409), at every run (409) and in the definitions import (skipped with the reason).
 - [x] Fix: `PUT /scope` accepted no `workflow` (missing from `ResourceTypeLiteral`, so 422) although the service, docs and permission table supported it.
 - [x] Console: team chip on tools. Tests: `tests/api/test_team_tools.py`. Docs: teams.md, tools.md, api.md.
-- [ ] Skills and MCP servers stay platform-wide; tools discovered from an MCP server start shared. No console control to move a resource between teams (API only, as for every kind).
+- [ ] Skills and MCP servers stay platform-wide; tools discovered from an MCP server start shared. ~~No console control to move a resource between teams (API only, as for every kind).~~ A console control since E44.
 
 ## E36: Signed workflow webhooks (closes the E6 webhook-signature item)
 
@@ -401,6 +401,13 @@ dashboard real signals.
 - [x] `ApprovalReminders.run(waiting_hours=)`: approvals pending at least that long raise the same `approvals` alert, titled *… has waited N hours/days* (rounded down) and saying approvals never expire; cleared once decided; handed to the approver emails (E39). No migration.
 - [x] Tests: `TestApprovalsThatNeverExpire` in `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders-e22).
 - [ ] One reminder per approval, refreshed each check; no escalation after a longer wait.
+
+## E44: Move a resource between teams from the console (closes the E35 console item)
+
+- [x] Console: for someone who may move it, a resource's team chip becomes a button (a shared one reads *Shared*) that opens a *Move to team* dialog: Shared or a team the caller may assign to. It calls `PUT /api/v1/scope` and shows the server's refusal (for example E18's 409 for an agent or workflow whose models, bases or tools the new team cannot use) in the dialog.
+- [x] On models, aliases, API clients (from the key list), agents, tools, knowledge bases and workflows (list and detail). Shown only with the kind's permission (`TEAM_MOVE_PERMISSION`, as `ASSIGNABLE`) and when the caller could have put the resource in its current team; otherwise the plain chip.
+- [x] No backend change. Test: `test_every_kind_the_console_offers_moves_out_and_back` in `tests/api/test_teams.py` (alias, API client and knowledge base moves had no API test). Doc: [teams.md](../teams.md#moving-a-resource-between-teams).
+- [ ] API clients have no page of their own, so they are moved from a key's row; a client with no keys is moved with the API. No bulk move.
 
 ## Phase acceptance (applies to each)
 

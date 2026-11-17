@@ -96,6 +96,14 @@ To move a resource you need all of these:
 
 Each move is audited as `SCOPE_ASSIGNED`, with the team before and after.
 
+**In the console (E44).** If you may move a resource, its team chip is a button (a shared
+resource shows *Shared*). Click it, pick *Shared* or a team, and choose *Move*. It works on
+models, aliases, agents, tools, knowledge bases and workflows. For an API client, use the
+chip in its key's row on the Endpoints & Keys page. If the server refuses the move, the dialog
+shows why. For example, an agent that uses a model the new team cannot reach gets a 409.
+If you lack the permission, or could not have put the resource in its current team, you
+see a plain chip.
+
 ## The gateway
 
 An API key's scope is its **client's team**:

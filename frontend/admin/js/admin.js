@@ -612,7 +612,7 @@ function agentRow(agent) {
 
   return `<tr class="${agent.enabled ? '' : 'opacity-50'}">
     <td>
-      <div class="fw-medium">${esc(agent.display_name)} ${teamChip(agent.team_id)}</div>
+      <div class="fw-medium">${esc(agent.display_name)} ${teamControl('agent', agent.id, agent.team_id, agent.display_name)}</div>
       <div class="small text-secondary mono">agent:${esc(agent.slug)}</div>
       ${agent.enabled ? '' : '<span class="badge text-bg-dark">disabled</span>'}
     </td>
@@ -916,7 +916,7 @@ function toolRow(tool) {
 
   return `<tr class="${tool.enabled && !neverRuns ? '' : 'opacity-75'}">
     <td>
-      <div class="fw-medium mono">${esc(tool.name)} ${teamChip(tool.team_id)}</div>
+      <div class="fw-medium mono">${esc(tool.name)} ${teamControl('tool', tool.id, tool.team_id, tool.name)}</div>
       <div class="small text-secondary text-truncate" style="max-width:26rem"
            title="${esc(tool.description)}">${esc(tool.description)}</div>
       ${noParameters && !neverRuns
@@ -1536,7 +1536,7 @@ function modelRow(model) {
 
   return `<tr>
     <td>
-      <div class="fw-medium">${esc(model.name)} ${teamChip(model.team_id)}
+      <div class="fw-medium">${esc(model.name)} ${teamControl('model', model.id, model.team_id, model.name)}
         ${isExternal(model)
           ? '<span class="badge text-bg-info ms-1" title="Served by a runtime the platform '
             + 'does not start, stop or schedule">external</span>' : ''}
@@ -2173,7 +2173,7 @@ function aliasRow(alias, aliases = []) {
   ).join('');
 
   return `<tr>
-    <td><span class="mono fw-medium">${esc(alias.alias)}</span> ${teamChip(alias.team_id)}</td>
+    <td><span class="mono fw-medium">${esc(alias.alias)}</span> ${teamControl('alias', alias.id, alias.team_id, alias.alias)}</td>
     <td>
       <select class="form-select form-select-sm" data-repoint="${esc(alias.id)}"
               style="max-width:16rem">${options}</select>
@@ -2259,7 +2259,9 @@ function keyRow(key, clientNames, clientTeams = {}) {
       <div class="fw-medium">${esc(key.name)}</div>
       <div class="small text-secondary mono">${esc(key.prefix)}…</div>
     </td>
-    <td class="small">${esc(clientNames[key.client_id] || '—')} ${teamChip(clientTeams[key.client_id])}</td>
+    <td class="small">${esc(clientNames[key.client_id] || '—')} ${key.client_id
+      ? teamControl('api_client', key.client_id, clientTeams[key.client_id], clientNames[key.client_id] || 'client')
+      : ''}</td>
     <td class="small">
       ${(key.scopes || []).length
         ? key.scopes.map((s) => `<span class="badge text-bg-secondary me-1 mono">${esc(s)}</span>`).join('')
@@ -2932,7 +2934,7 @@ function baseRow(base) {
   return `<tr class="${selected ? 'table-active' : ''}">
     <td>
       <a href="#knowledge" data-kb-select="${esc(base.id)}" class="fw-medium text-decoration-none"
-         >${esc(base.display_name)}</a> ${teamChip(base.team_id)}
+         >${esc(base.display_name)}</a> ${teamControl('knowledge_base', base.id, base.team_id, base.display_name)}
       <div class="small text-secondary mono">${esc(base.name)}</div>
       ${base.description ? `<div class="small text-secondary">${esc(base.description)}</div>` : ''}
     </td>
@@ -4023,6 +4025,72 @@ const teamName = (id) => (teamCache.all.find((t) => t.id === id) || {}).name;
 const teamChip = (id) => (id
   ? `<span class="chip chip-team" title="Owned by this team">${icon('i-teams')}${esc(teamName(id) || 'team')}</span>`
   : '');
+
+/** E44: what moving each kind of resource between teams needs (as PUT /scope checks). */
+const TEAM_MOVE_PERMISSION = {
+  model: 'model.register', alias: 'model.deploy', api_client: 'apikey.manage',
+  agent: 'agent.edit', knowledge_base: 'knowledge.manage', workflow: 'workflow.edit',
+  tool: 'tool.manage',
+};
+
+/** The team chip, or, for someone who may move this resource, a button that opens the
+ *  "Move to team" dialog (E44). A shared resource shows "Shared" so it can be moved too.
+ *  Plain chip when the caller lacks the permission, has no team to offer, or could not
+ *  have put the resource in its current team (the server refuses that move as well). */
+function teamControl(type, id, teamId, name) {
+  const choices = teamCache.allTeams ? teamCache.all : teamCache.mine;
+  const movable = can(TEAM_MOVE_PERMISSION[type]) && choices.length
+    && (!teamId || choices.some((t) => t.id === teamId));
+  if (!movable) return teamChip(teamId);
+  const label = teamId ? (teamName(teamId) || 'team') : 'Shared';
+  return `<button type="button" class="chip chip-team chip-move" title="Move to another team"
+      data-team-move="${esc(type)}" data-id="${esc(id)}" data-team="${esc(teamId || '')}"
+      data-name="${esc(name)}">${icon('i-teams')}${esc(label)}</button>`;
+}
+
+function openTeamMove(button) {
+  const choices = teamCache.allTeams ? teamCache.all : teamCache.mine;
+  const select = document.getElementById('team-move-select');
+  select.innerHTML = ['<option value="">Shared (no team)</option>']
+    .concat(choices.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`)).join('');
+  select.value = button.dataset.team;
+  document.getElementById('team-move-name').textContent = button.dataset.name;
+  document.getElementById('team-move-error').classList.add('d-none');
+  const form = document.getElementById('team-move-form');
+  form.dataset.type = button.dataset.teamMove;
+  form.dataset.id = button.dataset.id;
+  form.dataset.current = button.dataset.team;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('team-move-modal')).show();
+}
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-team-move]');
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+  openTeamMove(button);
+}, true); // capture: a chip inside a clickable row opens the dialog, not the row
+
+onModalSubmit('team-move-form', 'team-move-error', async (form) => {
+  const teamId = document.getElementById('team-move-select').value || null;
+  if ((teamId || '') === form.dataset.current) {
+    closeModal('team-move-modal');
+    return;
+  }
+  // The server refuses a move that would leave an agent or workflow using something its
+  // new team cannot reach (E18); that message is shown in the dialog.
+  await api('/scope', {
+    method: 'PUT',
+    body: JSON.stringify({ resource_type: form.dataset.type, resource_id: form.dataset.id, team_id: teamId }),
+  });
+  closeModal('team-move-modal');
+  const name = document.getElementById('team-move-name').textContent;
+  alert(`Moved ${name} to ${teamId ? teamName(teamId) || 'the team' : 'shared'}.`, 'success');
+  await refresh({ force: true });
+  // The open workflow's header carries its chip too, and the list refresh leaves it alone.
+  if (form.dataset.type === 'workflow' && typeof loadDetail === 'function'
+      && wf.selected === form.dataset.id) await loadDetail();
+});
 
 /** Fill every team picker: Shared, then the teams the caller may assign to. Hidden when
  *  there is nothing to choose, so a site without teams sees no change. */
