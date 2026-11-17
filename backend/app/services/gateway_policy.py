@@ -166,18 +166,22 @@ class GatewayPolicy:
             if quota.has_token_limits:
                 admission.charges.append(_Charge(scope, subject_of[scope], quota))
 
-    async def check(self, subjects: Sequence[tuple[str, str]]) -> None:
+    async def check(self, subjects: Sequence[tuple[str, str]], pending_tokens: int = 0) -> None:
         """Refuse if a token budget for any of these subjects is used up (E24).
 
         Budgets only: no concurrency slot is taken and nothing is charged. For the
         platform's own calls when ``enforce_platform_budgets`` is on; their tokens are
         charged afterwards through :meth:`account`, like any call's.
+
+        ``pending_tokens`` (E34) are tokens already spent but not yet charged, such as an
+        agent run's earlier model calls, which are recorded when the run stops. They count
+        as used, so a long run is stopped at the budget rather than after it.
         """
         quotas = await self._quotas.applicable(subjects)
         subject_of = dict(subjects)
         for scope, quota in quotas.items():
             if quota.has_token_limits:
-                await self._check_budgets(scope, subject_of[scope], quota)
+                await self._check_budgets(scope, subject_of[scope], quota, max(0, pending_tokens))
 
     async def drop_scope(self, admission: Admission, scope: str) -> None:
         """Forget one scope's charges and slots — used when a fallback model takes over,
@@ -237,7 +241,9 @@ class GatewayPolicy:
         return {"minute": minute, "day": day, "month": month}
 
     # -- internals ---------------------------------------------------------
-    async def _check_budgets(self, scope: str, subject: str, quota: GatewayQuota) -> None:
+    async def _check_budgets(
+        self, scope: str, subject: str, quota: GatewayQuota, pending: int = 0
+    ) -> None:
         now = self._clock()
         keys = _keys(scope, subject, now)
         who = _describe(scope, subject)
@@ -248,7 +254,8 @@ class GatewayPolicy:
             except Exception as exc:
                 log.warning("quota_minute_unavailable", error=type(exc).__name__)
                 raw = None
-            if raw is not None and int(raw) >= quota.tokens_per_minute:
+            minute_used = (int(raw) if raw is not None else 0) + pending
+            if (raw is not None or pending) and minute_used >= quota.tokens_per_minute:
                 self._refuse(
                     scope,
                     "tokens_per_minute",
@@ -259,8 +266,9 @@ class GatewayPolicy:
                 )
 
         if quota.daily_tokens:
-            used = await self._budget_used(
-                keys["day"], scope, subject, _start_of_day(now), _DAY_TTL
+            used = (
+                await self._budget_used(keys["day"], scope, subject, _start_of_day(now), _DAY_TTL)
+                + pending
             )
             if used >= quota.daily_tokens:
                 tomorrow = _start_of_day(now) + dt.timedelta(days=1)
@@ -275,8 +283,11 @@ class GatewayPolicy:
                 )
 
         if quota.monthly_tokens:
-            used = await self._budget_used(
-                keys["month"], scope, subject, _start_of_month(now), _MONTH_TTL
+            used = (
+                await self._budget_used(
+                    keys["month"], scope, subject, _start_of_month(now), _MONTH_TTL
+                )
+                + pending
             )
             if used >= quota.monthly_tokens:
                 self._refuse(

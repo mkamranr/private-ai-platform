@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, RateLimitError, ValidationError
 from app.core.interfaces.agent import (
     AgentSpec,
     RunContext,
@@ -172,7 +172,8 @@ class AgentRunService:
         # `agent:` calls through /v1 are recorded by the gateway against the API key
         # (E17), and pass record_usage=False so the tokens are not counted twice.
         usage = _UsageTarget(agent, version.model) if record_usage else None
-        return run, self._persisting(run, stream, usage)
+        # The first model call was checked above, before the run existed.
+        return run, self._persisting(run, stream, usage, check_first=False)
 
     # -- approve -----------------------------------------------------------
     async def approve(
@@ -226,7 +227,9 @@ class AgentRunService:
         agent = await self._registry.get_agent(run.agent_id)
         version = await self._versions.get(run.agent_version_id)
         model = version.model if version is not None else ""
-        return run, self._persisting(run, stream, _UsageTarget(agent, model))
+        # E34: checked before the first model call after the approval too. An approval
+        # can come hours later, after the budget ran out.
+        return run, self._persisting(run, stream, _UsageTarget(agent, model), check_first=True)
 
     # -- reads -------------------------------------------------------------
     async def get_run(self, run_id: uuid.UUID) -> AgentRun:
@@ -278,7 +281,12 @@ class AgentRunService:
 
     # -- event persistence -------------------------------------------------
     async def _persisting(
-        self, run: AgentRun, stream: AsyncIterator[RunEvent], usage: _UsageTarget | None = None
+        self,
+        run: AgentRun,
+        stream: AsyncIterator[RunEvent],
+        usage: _UsageTarget | None = None,
+        *,
+        check_first: bool = True,
     ) -> AsyncIterator[RunEvent]:
         """Write each event as it passes, then hand it on.
 
@@ -289,11 +297,31 @@ class AgentRunService:
         Tokens are counted from LLM_RESPONSE events as they pass and recorded once, when
         the stream ends for any reason: completed, failed, suspended for an approval, or
         abandoned by a client that hung up (E19).
+
+        E34: with platform budgets enforced, each model call is checked before it is made
+        (on LLM_REQUEST, which the runtime emits first), counting this run's tokens so far
+        as used. A run that reaches its team's or model's budget stops there, FAILED with
+        the budget's message, instead of running on until it finishes.
         """
         started = time.perf_counter()
         prompt_tokens = completion_tokens = calls = 0
+        events = self._persist_each(run, stream)
         try:
-            async for event in self._persist_each(run, stream):
+            async for event in events:
+                if (
+                    event.type == RunEventType.LLM_REQUEST
+                    and usage is not None
+                    and self._budget is not None
+                    and (calls or check_first)
+                ):
+                    refusal = await self._refused(usage, prompt_tokens + completion_tokens)
+                    if refusal is not None:
+                        yield event
+                        yield await self._stop_for_budget(run, event, refusal)
+                        # The runtime is paused just before the call; it is not resumed.
+                        await events.aclose()  # type: ignore[attr-defined]
+                        await stream.aclose()  # type: ignore[attr-defined]
+                        return
                 if event.type == RunEventType.LLM_RESPONSE:
                     calls += 1
                     prompt_tokens += int(event.payload.get("prompt_tokens") or 0)
@@ -311,6 +339,46 @@ class AgentRunService:
                     team_id=usage.agent.team_id,
                     started=started,
                 )
+
+    async def _refused(self, usage: _UsageTarget, spent: int) -> RateLimitError | None:
+        if self._budget is None:
+            return None
+        try:
+            await self._budget(usage.model, usage.agent.team_id, pending_tokens=spent)
+        except RateLimitError as exc:
+            return exc
+        return None
+
+    async def _stop_for_budget(
+        self, run: AgentRun, request: RunEvent, refusal: RateLimitError
+    ) -> RunEvent:
+        message = f"Stopped before the next model call: {refusal.message}"
+        run.state = RunState.FAILED
+        run.error = message
+        run.finished_at = dt.datetime.now(dt.UTC)
+        run.checkpoint = {}
+        failed = RunEvent(
+            run_id=str(run.id),
+            type=RunEventType.RUN_FAILED,
+            sequence=request.sequence + 1,
+            payload={"error": message, "budget": refusal.details},
+        )
+        self._events.add(
+            AgentRunEvent(
+                run_id=run.id,
+                sequence=failed.sequence,
+                type=failed.type,
+                payload=_redact(failed.payload),
+            )
+        )
+        await self._events.flush()
+        log.warning(
+            "agent_run_stopped_by_budget",
+            run=str(run.id),
+            quota=refusal.details.get("quota"),
+            scope=refusal.details.get("scope"),
+        )
+        return failed
 
     async def _persist_each(
         self, run: AgentRun, stream: AsyncIterator[RunEvent]
@@ -340,7 +408,9 @@ class AgentRunService:
 class BudgetCheck(Protocol):
     """GatewayService.check_internal_budget (E24): raises RateLimitError when refused."""
 
-    async def __call__(self, configured_model: str, team_id: uuid.UUID | None) -> None: ...
+    async def __call__(
+        self, configured_model: str, team_id: uuid.UUID | None, pending_tokens: int = 0
+    ) -> None: ...
 
 
 class UsageRecorder(Protocol):

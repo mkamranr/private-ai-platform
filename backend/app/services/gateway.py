@@ -561,13 +561,16 @@ class GatewayService:
         except Exception:
             log.exception("internal_usage_failed", endpoint=endpoint, model=configured_model)
 
-    async def check_internal_budget(self, configured_model: str, team_id: uuid.UUID | None) -> None:
+    async def check_internal_budget(
+        self, configured_model: str, team_id: uuid.UUID | None, pending_tokens: int = 0
+    ) -> None:
         """E24: refuse a platform call whose team or model token budget is used up.
 
         Does nothing unless ``gateway.enforce_platform_budgets`` is on. Raises
         :class:`RateLimitError` (429), with the same message and details a `/v1` call
         would get. Checked before the call; the call that crosses a budget finishes, and
-        the next is refused, as for every budget.
+        the next is refused, as for every budget. ``pending_tokens``: spent but not yet
+        recorded (an agent run's earlier calls, E34); they count as used.
         """
         if not self._settings.gateway.enforce_platform_budgets:
             return
@@ -576,7 +579,7 @@ class GatewayService:
         if team_id is not None:
             subjects.append((QuotaScope.TEAM, str(team_id)))
         subjects.append((QuotaScope.MODEL, model))
-        await self._policy.check(subjects)
+        await self._policy.check(subjects, pending_tokens)
 
     async def admit_agent(self, context: GatewayContext, model_name: str) -> None:
         """Admit an `agent:` call against the key's, team's, end user's and model's

@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### A running agent stops at the budget (E34)
+- **No more runs that overspend.** With platform budgets enforced (E24), every model call an agent run makes is now checked before it is made, counting the run's own tokens so far. A run that reaches its team's or model's budget stops there: FAILED with *Stopped before the next model call* and the budget's message, also shown in its trace. Before, only the start was checked.
+- Runs resumed after an approval are checked before their first call. `agent:` models called through `/v1` are unchanged (the gateway admits them once).
+- **Upgrade.** Nothing to do: no migration; it applies only while `gateway.enforce_platform_budgets` is on.
+
 ### Passkeys in the developer portal and voice assistant (E33)
 - **Sign in with a passkey** now also on the developer portal and the voice assistant: no username, password or code. At the code step both also offer *Use a passkey instead* when the account has one.
 - The same passkeys work everywhere: the three pages share one origin and now one script (`/js/passkey.js`). Passkeys are still added, and browsers trusted, in the console.
