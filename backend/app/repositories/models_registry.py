@@ -487,13 +487,18 @@ class UsageRepository(BaseRepository[UsageRecord]):
             for row in (await self.session.execute(stmt)).all()
         ]
 
-    async def hourly_series(self, *, since: dt.datetime, where: Any = None) -> list[dict]:
-        """Requests and tokens per hour, for the dashboard chart (M21).
+    async def hourly_series(
+        self, *, since: dt.datetime, where: Any = None, unit: str = "hour"
+    ) -> list[dict]:
+        """Requests and tokens per hour, or per day, for the dashboard chart (M21, E37).
 
         Bucketed by the database. Returning raw records for the browser to bucket would
-        mean shipping a day of gateway traffic to render one sparkline.
+        mean shipping a day of gateway traffic to render one sparkline. Days are UTC days,
+        whatever the session's time zone, so they line up with the gap-filled window.
         """
-        bucket = func.date_trunc("hour", UsageRecord.recorded_at).label("hour")
+        if unit not in {"hour", "day"}:
+            raise ValueError(f"unknown bucket {unit!r}")
+        bucket = func.date_trunc(unit, UsageRecord.recorded_at, "UTC").label("hour")
         stmt = (
             select(
                 bucket,

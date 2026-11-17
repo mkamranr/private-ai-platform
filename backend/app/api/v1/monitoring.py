@@ -35,7 +35,7 @@ async def monitoring_overview(
     service: MonitoringServiceDep,
     actor: Annotated[User, require_permission(Perm.MONITORING_VIEW)],
     scope: ScopeDep,
-    window_hours: Annotated[int, Query(ge=1, le=168)] = 24,
+    window_hours: Annotated[int, Query(ge=1, le=2160)] = 24,
 ) -> MonitoringOverviewResponse:
     overview = await service.overview(window_hours=window_hours, scope=scope)
     return MonitoringOverviewResponse(

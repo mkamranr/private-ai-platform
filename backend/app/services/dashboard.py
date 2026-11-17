@@ -60,6 +60,18 @@ _health_cache: tuple[float, dict[str, Any]] | None = None
 #: enough that the hourly series fits on a screen.
 DEFAULT_WINDOW_HOURS = 24
 
+#: The longest range the dashboard offers (E37): 90 days.
+MAX_WINDOW_HOURS = 90 * 24
+
+#: Up to a week the chart has a bar per hour (168 at most). Past that it has a bar per
+#: day: 90 days of hours would be 2,160 bars, too thin to read and slow to draw.
+HOURLY_UP_TO_HOURS = 7 * 24
+
+
+def bucket_for(window_hours: int) -> str:
+    """'hour' or 'day': the chart's bar size for a window of this many hours."""
+    return "hour" if window_hours <= HOURLY_UP_TO_HOURS else "day"
+
 
 @dataclass(slots=True)
 class DashboardSummary:
@@ -209,10 +221,12 @@ class DashboardService:
         by_model = await self._usage.summary(since=since, where=where)
         requests = sum(int(row["requests"]) for row in by_model)
         errors = sum(int(row.get("errors") or 0) for row in by_model)
+        bucket = bucket_for(window_hours)
         series = fill_hourly_gaps(
-            await self._usage.hourly_series(since=since, where=where),
+            await self._usage.hourly_series(since=since, where=where, unit=bucket),
             since=since,
             until=dt.datetime.now(dt.UTC),
+            unit=bucket,
         )
         return {
             "requests": requests,
@@ -229,6 +243,7 @@ class DashboardService:
             **await self._usage.timing_totals(since=since, where=where),
             "top_models": by_model[:5],
             "series": series,
+            "bucket": bucket,
             "source": "gateway usage records",
         }
 
@@ -344,7 +359,11 @@ class DashboardService:
 
 
 def fill_hourly_gaps(
-    series: list[dict[str, Any]], *, since: dt.datetime, until: dt.datetime
+    series: list[dict[str, Any]],
+    *,
+    since: dt.datetime,
+    until: dt.datetime,
+    unit: str = "hour",
 ) -> list[dict[str, Any]]:
     """Expand a sparse hourly series to cover every hour of the window.
 
@@ -360,10 +379,11 @@ def fill_hourly_gaps(
 
     Filling here rather than in the repository keeps that query honest about what the
     database holds; presenting it over a fixed window is a property of the dashboard.
+
+    `unit="day"` (E37) does the same with a bar per UTC day, for ranges past a week. The
+    key stays `hour`: it is the start of the bucket, and renaming it would break callers.
     """
-    hour = dt.timedelta(hours=1)
-    start = since.replace(minute=0, second=0, microsecond=0)
-    end = until.replace(minute=0, second=0, microsecond=0)
+    step = dt.timedelta(days=1) if unit == "day" else dt.timedelta(hours=1)
 
     # Postgres hands back tz-aware values, but a driver or a fixture may not, and comparing
     # a naive datetime with an aware one raises. The dashboard is the page someone opens to
@@ -371,15 +391,16 @@ def fill_hourly_gaps(
     def normalise(value: dt.datetime) -> dt.datetime:
         if value.tzinfo is None:
             value = value.replace(tzinfo=dt.UTC)
-        return value.astimezone(dt.UTC).replace(minute=0, second=0, microsecond=0)
+        value = value.astimezone(dt.UTC).replace(minute=0, second=0, microsecond=0)
+        return value.replace(hour=0) if unit == "day" else value
 
     observed = {
         normalise(row["hour"]): row for row in series if isinstance(row.get("hour"), dt.datetime)
     }
 
     filled: list[dict[str, Any]] = []
-    bucket = normalise(start)
-    last = normalise(end)
+    bucket = normalise(since)
+    last = normalise(until)
     while bucket <= last:
         row = observed.get(bucket)
         filled.append(
@@ -389,7 +410,7 @@ def fill_hourly_gaps(
                 "tokens": int(row["tokens"]) if row else 0,
             }
         )
-        bucket += hour
+        bucket += step
     return filled
 
 

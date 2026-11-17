@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Dashboard looks back 90 days (E37)
+- **Longer ranges.** The dashboard's range now offers *Last 30 days* and *Last 90 days* (`window_hours` up to 2160, also on `GET /monitoring/overview`). Before, it stopped at 7 days.
+- **A bar per day past a week.** Beyond 7 days the traffic chart has one bar per UTC day instead of one per hour. `gateway.bucket` in the response says which; the series' fields are unchanged.
+- **Upgrade.** Nothing to do: no migration.
+
 ### Signed workflow webhooks (E36)
 - **Prove the body and the moment.** Enabling or rotating a workflow webhook now also issues a signing secret. A caller signs `<timestamp>.<body>` with HMAC-SHA256 and sends `X-Workflow-Timestamp` and `X-Workflow-Signature: sha256=…`, as for Stripe or GitHub webhooks. A changed body, a timestamp more than 5 minutes off, or a signature already used is refused.
 - **Opt in per workflow.** *Require signed calls* (or `{"require_signature": true}` when rotating) refuses unsigned calls; otherwise unsigned calls still work but a bad signature does not. The console shows a ready `curl` + `openssl` example.

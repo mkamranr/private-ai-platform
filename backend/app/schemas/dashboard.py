@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -79,6 +80,9 @@ class GatewaySummary(BaseModel):
     timed_streams: int = 0
     top_models: list[TopModelRow] = Field(default_factory=list)
     series: list[UsagePoint] = Field(default_factory=list)
+    #: The size of each `series` point (E37): "hour" up to 7 days, "day" beyond. Each
+    #: point's `hour` is the start of its bucket, in UTC.
+    bucket: Literal["hour", "day"] = "hour"
 
 
 class DependencyItem(BaseModel):
