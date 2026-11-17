@@ -193,6 +193,29 @@ embedding writes no row. By default quotas count these tokens like the rows abov
 never refuse them, so a document is not left unindexed because a budget ran out. A model
 server that reports no usage records 0 tokens, as it would for a `/v1/embeddings` call.
 
+### Reranking (E38)
+
+Since E38 each rerank is recorded too: one row per call, after the vector search, when a
+knowledge base has a reranker (or the playground names one). The endpoint is the
+retrieval's own with `.rerank` added:
+
+| `endpoint` | `requested_model` | `user_id` | `team_id` |
+|---|---|---|---|
+| `knowledge.search.rerank`, `retrieval.playground.rerank`, `agent.retrieve.rerank`, `workflow.retrieve.rerank`, `rag.eval.rerank` | `kb:<names>`, the bases whose passages were scored | as for that retrieval's embeddings | the bases' team when every passage scored came from bases of one team; otherwise none |
+| `platform.rerank` | the model | — | — |
+
+One call scores passages from every base searched, so unlike the query embeddings it
+cannot be split per base. It is charged to no team when the passages come from bases of
+different teams or from shared bases: charging one team for another's passages would be
+wrong.
+
+**Tokens are the engine's own count.** vLLM's `/v1/rerank` reports the input tokens it
+scored, and the row carries them as `prompt_tokens`. Hugging Face TEI's `/rerank` reports
+none: the row is still written, with its latency, person and team, but with 0 tokens
+rather than an estimate, and the gateway logs `rerank_tokens_not_reported`. A failed
+rerank writes no row; the retrieval falls back to vector order and says so in its trace.
+Budgets count these tokens like the embedding rows above.
+
 ### Enforcing budgets on the platform's own calls (E24)
 
 Turn on `gateway.enforce_platform_budgets` (Settings page, *Gateway*; off by default) to
@@ -208,6 +231,7 @@ crosses a budget finishes and the next one is refused. Concurrency limits do not
 | Ingestion | the document is marked **FAILED** with the budget's message and retried automatically once the budget resets (E32, below) |
 | Knowledge search, playground, RAG evaluation, workflow retrieval | refused with 429, or the step fails |
 | Agent retrieval and memory | the run continues without the retrieved context or memory, as when the embedding model is down |
+| Reranking (E38) | the results stay in vector order with a warning in the trace, as when the reranker is down |
 
 The setting is read on every call, so switching it on or off takes effect at once.
 

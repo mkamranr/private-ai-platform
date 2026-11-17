@@ -232,7 +232,7 @@ dashboard real signals.
 - [x] Charges: ingestion (uploader, base team), knowledge search, playground, agent and workflow retrieval, RAG eval (caller or starter, each base's team), memory write and search (person, agent's team via `MemoryEntryRepository.agent_team`), dimension probe (creator).
 - [x] Counted toward team and model token budgets, never refused.
 - [x] No migration. Tests: `tests/api/test_embedding_usage.py` (charges per call site, committed rows end to end); the workflow retrieval charge in `test_workflows.py`. Doc: [gateway-policy.md](../gateway-policy.md#embeddings-e21).
-- [ ] Reranking calls are not accounted (no token counts from rerank engines). ~~Voice speech-to-text and text-to-speech are not accounted.~~ They were recorded but attributed to nobody; attributed since E27.
+- [ ] ~~Reranking calls are not accounted (no token counts from rerank engines).~~ Accounted since E38 (tokens when the engine reports them). ~~Voice speech-to-text and text-to-speech are not accounted.~~ They were recorded but attributed to nobody; attributed since E27.
 
 ## E22: Approval reminders (closes the last E17 open item)
 
@@ -277,7 +277,7 @@ dashboard real signals.
 - [x] The voice WebSocket's transcription and synthesis calls carry the session's user and the agent's team (`voice_ws._context`), so their rows appear under that person and team in usage, chargeback and team budgets. Before, the context was empty.
 - [x] Gateway admission: a keyless call made for a team is charged to the team budget; the team budget refuses it only with `gateway.enforce_platform_budgets` on (E24). A key's team is checked as before. The voice gateway reads runtime settings.
 - [x] No migration. Tests: `tests/api/test_voice_attribution.py`. Docs: [gateway-policy.md](../gateway-policy.md), [speech.md](../speech.md).
-- [ ] Voice rows still have no first-token timings (one buffered request each); rerank calls are not accounted.
+- [ ] Voice rows still have no first-token timings (one buffered request each); ~~rerank calls are not accounted~~ (since E38).
 
 ## E28: The deployment worker stops what blocking could not (closes the E26 open item)
 
@@ -354,6 +354,14 @@ dashboard real signals.
 - [x] Past 7 days the traffic series has a point per UTC day: `UsageRepository.hourly_series(unit="day")` buckets with `date_trunc(unit, recorded_at, 'UTC')`, and `fill_hourly_gaps(unit="day")` fills the days. `gateway.bucket` says `hour` or `day`; the point key stays `hour` (the bucket's start), so existing callers keep working.
 - [x] Console: *Last 30 days* and *Last 90 days*; daily bars are labelled by date. Tests: `tests/unit/test_dashboard_series.py`, `tests/api/test_dashboard_range.py`. Doc: [settings.md](../settings.md#dashboard).
 - [ ] No range past 90 days and no remembered range per user or team. No rollup table: a long range reads every usage record in it.
+
+## E38: Reranking calls accounted (closes the E21 rerank item)
+
+- [x] `LLMProvider.rerank_scored` returns `RerankResult(scores, usage)`; `VLLMProvider` reads vLLM's `usage.total_tokens` and gives `None` for TEI, which reports none. `rerank` is unchanged.
+- [x] `app/services/rerank_usage.py`: `rerank_with` / `rerank_through`, the one route from an alias to scores (replacing `deps._rerank_through`'s body). Checks the team and model budgets first (E24), then records one keyless row through `record_internal_usage`; uncharged calls are recorded as `platform.rerank`.
+- [x] `KnowledgeService.retrieve` charges each rerank as `<purpose>.rerank` to the caller and, when every scored passage came from bases of one team, that team (`_rerank_charge`).
+- [x] No migration. Tests: `tests/unit/test_rerank_usage.py`, `tests/api/test_rerank_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#reranking-e38).
+- [ ] An engine that reports no tokens (TEI) records 0 tokens for the call. A rerank over bases of several teams is charged to no team.
 
 ## Phase acceptance (applies to each)
 

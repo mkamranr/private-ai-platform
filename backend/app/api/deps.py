@@ -151,6 +151,7 @@ from app.services.ops import OpsService
 from app.services.passkeys import PasskeyService
 from app.services.quotas import QuotaService
 from app.services.rag_eval import RagEvalService
+from app.services.rerank_usage import Reranker, rerank_through
 from app.services.retrieval import RetrievalService
 from app.services.runtime_settings import RUNTIME, RuntimeSettingsService
 from app.services.teams import ScopeGuard, TeamService, scope_for
@@ -1040,14 +1041,9 @@ def _embed_through(gateway: GatewayService) -> Any:
     return embed_through(gateway)
 
 
-def _rerank_through(gateway: GatewayService) -> Any:
-    """Reranking callable bound to one gateway (E5): same alias resolution as embedding."""
-
-    async def rerank(query: str, passages: list[str], model: str) -> list[float]:
-        provider, served_model = await gateway.provider_for_model(model)
-        return await provider.rerank(query, passages, model=served_model)
-
-    return rerank
+def _rerank_through(gateway: GatewayService) -> Reranker:
+    """Reranking callable bound to one gateway (E5), each call accounted (E38)."""
+    return rerank_through(gateway)
 
 
 def get_voice_config_store(session: SessionDep, settings: SettingsDep) -> VoiceConfigStore:

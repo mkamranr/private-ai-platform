@@ -77,6 +77,18 @@ class EmbeddingResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RerankResult:
+    """Scores in input order, and the tokens the engine reported (E38).
+
+    ``usage`` is None when the engine did not say: vLLM's ``/v1/rerank`` reports tokens,
+    Hugging Face TEI's ``/rerank`` does not, and a guessed count would be a fake one.
+    """
+
+    scores: tuple[float, ...]
+    usage: TokenUsage | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ModelDescriptor:
     """What a provider currently serves."""
 
@@ -131,6 +143,12 @@ class LLMProvider(ABC):
         without one says so rather than every implementation stubbing it.
         """
         raise NotImplementedError("This provider cannot rerank.")
+
+    async def rerank_scored(
+        self, query: str, documents: Sequence[str], *, model: str
+    ) -> RerankResult:
+        """:meth:`rerank`, with the engine's token count when it reports one (E38)."""
+        return RerankResult(tuple(await self.rerank(query, documents, model=model)))
 
     @abstractmethod
     async def list_models(self) -> list[ModelDescriptor]: ...

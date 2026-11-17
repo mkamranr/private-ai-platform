@@ -25,6 +25,7 @@ from app.core.interfaces.llm import (
     EmbeddingResult,
     LLMProvider,
     ModelDescriptor,
+    RerankResult,
     TokenUsage,
 )
 from app.core.logging import get_logger
@@ -46,6 +47,20 @@ class ProviderError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def _rerank_usage(payload: Any) -> TokenUsage | None:
+    """vLLM's rerank reports ``usage.total_tokens`` (all input); TEI reports nothing (E38).
+
+    None, not zero, when there is no count: the caller records the call either way, and
+    must be able to tell "no tokens" from "not reported".
+    """
+    if not isinstance(payload, dict):
+        return None
+    tokens = payload.get("prompt_tokens", payload.get("total_tokens"))
+    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0:
+        return None
+    return TokenUsage(prompt_tokens=tokens, total_tokens=tokens)
 
 
 def _usage(payload: dict[str, Any] | None) -> TokenUsage:
@@ -277,7 +292,13 @@ class VLLMProvider(LLMProvider):
         )
 
     async def rerank(self, query: str, documents: Sequence[str], *, model: str) -> list[float]:
-        """Score ``documents`` against ``query`` with a cross-encoder (E5).
+        """Score ``documents`` against ``query`` with a cross-encoder (E5)."""
+        return list((await self.rerank_scored(query, documents, model=model)).scores)
+
+    async def rerank_scored(
+        self, query: str, documents: Sequence[str], *, model: str
+    ) -> RerankResult:
+        """Score ``documents`` against ``query``, with the tokens the engine reported.
 
         Two wire formats exist and both are local engines: vLLM's ``/v1/rerank`` (the
         Jina/Cohere shape: ``results[].index`` and ``relevance_score``) and Hugging Face
@@ -285,7 +306,7 @@ class VLLMProvider(LLMProvider):
         a 404 falls through to the second.
         """
         if not documents:
-            return []
+            return RerankResult(())
         try:
             async with self._client() as client:
                 response = await client.post(
@@ -312,7 +333,10 @@ class VLLMProvider(LLMProvider):
             # A partial answer cannot be ordered honestly; the caller falls back to
             # vector order rather than guessing the missing scores.
             raise ProviderError("The reranker did not score every passage.")
-        return [float(score) for score in scores if score is not None]
+        return RerankResult(
+            tuple(float(score) for score in scores if score is not None),
+            _rerank_usage(body.get("usage") if isinstance(body, dict) else None),
+        )
 
     async def list_models(self) -> list[ModelDescriptor]:
         try:
