@@ -163,6 +163,11 @@ body {
 }
 .gate-card button:hover { filter: brightness(1.12); }
 .gate-card button:active { transform: translateY(1px); }
+.gate-card button.secondary {
+  margin-top: 0.7rem; background: transparent; border: 1px solid var(--line);
+  color: var(--text); font-weight: 500;
+}
+.gate-card button.secondary:disabled { opacity: 0.6; cursor: progress; }
 
 /* -- stage ----------------------------------------------------------------- */
 .stage {

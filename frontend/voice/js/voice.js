@@ -122,6 +122,7 @@ class VoiceAssistant {
     if (body.mfa_required) {
       if (body.enrolment_required) throw new Error('Your account must set up two-factor authentication before it can sign in here. Sign in to the admin console once (at the main address of this site) to set it up, then come back.');
       this.mfaToken = body.mfa_token;
+      this.mfaPasskey = !!body.passkey_available;
       return false;
     }
     token.set(body.access_token);
@@ -141,6 +142,33 @@ class VoiceAssistant {
     }
     this.mfaToken = null;
     token.set((await response.json()).access_token);
+  }
+
+  // -- passkeys (E33), through /js/passkey.js, loaded as a classic script ------
+  async _postPublic(path, body) {
+    const response = await fetch(`${API}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(data?.error?.message || `Request failed (${response.status}).`);
+    }
+    return data;
+  }
+
+  async signInWithPasskey() {
+    const pair = await window.passkeySignIn((path, body) => this._postPublic(path, body));
+    token.set(pair.access_token);
+  }
+
+  async verifyWithPasskey() {
+    const pair = await window.passkeyMfaAnswer(
+      (path, body) => this._postPublic(path, body), this.mfaToken,
+    );
+    this.mfaToken = null;
+    token.set(pair.access_token);
   }
 
   async load() {
@@ -422,6 +450,9 @@ el('signin-form').onsubmit = async (event) => {
     } else if (!(await assistant.signIn(el('username').value, el('password').value))) {
       // E15: the password was right; ask for the authenticator code.
       for (const id of ['mfa-label', 'mfa-code']) el(id).classList.remove('d-none');
+      el('mfa-passkey').classList.toggle(
+        'd-none', !assistant.mfaPasskey || !window.passkeysInBrowser());
+      el('signin-passkey').classList.add('d-none');
       el('mfa-code').focus();
       return;
     }
@@ -429,6 +460,26 @@ el('signin-form').onsubmit = async (event) => {
   } catch (err) {
     showError(err.message);
   }
+};
+
+async function passkeyEntry(button, signIn) {
+  el('error').classList.add('d-none');
+  button.disabled = true;
+  try {
+    await signIn();
+    await enter();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+el('signin-passkey').classList.toggle('d-none', !window.passkeysInBrowser());
+el('signin-passkey').onclick = (event) =>
+  passkeyEntry(event.currentTarget, () => assistant.signInWithPasskey());
+el('mfa-passkey').onclick = (event) => {
+  if (assistant.mfaToken) passkeyEntry(event.currentTarget, () => assistant.verifyWithPasskey());
 };
 
 // Press and hold, on mouse and on touch. `pointerdown` covers both, and the listener on

@@ -29,7 +29,8 @@ async function api(path, options = {}) {
     // A 401 from the login endpoint is a wrong password, not an expired session — there
     // was no session. Reporting it as one sends someone to sign in again with the same
     // credentials that just failed, and tells them nothing.
-    const signingIn = path.startsWith('/auth/login') || path.startsWith('/auth/mfa/verify');
+    const signingIn = ['/auth/login', '/auth/mfa/verify', '/auth/mfa/passkey', '/auth/passkey']
+      .some((prefix) => path.startsWith(prefix));
     if (!signingIn) {
       // Expired or revoked. Bounce to login rather than leaving the UI in a state
       // where every request silently fails.
@@ -287,6 +288,7 @@ let mfaToken = null;  // E15: set between the password and the code
 function resetMfa() {
   mfaToken = null;
   document.getElementById('mfa-row').classList.add('d-none');
+  document.getElementById('mfa-passkey').classList.add('d-none');
   document.getElementById('mfa-code').value = '';
   document.getElementById('password').disabled = false;
   document.getElementById('username').disabled = false;
@@ -325,6 +327,8 @@ document.getElementById('login-form').onsubmit = async (event) => {
       if (result.enrolment_required) throw new Error('Your account must set up two-factor authentication before it can sign in here. Sign in to the admin console once (at the main address of this site) to set it up, then come back.');
       mfaToken = result.mfa_token;
       document.getElementById('mfa-row').classList.remove('d-none');
+      document.getElementById('mfa-passkey').classList.toggle(
+        'd-none', !result.passkey_available || !passkeysInBrowser());
       document.getElementById('password').disabled = true;
       document.getElementById('username').disabled = true;
       document.getElementById('login-submit').textContent = 'Verify';
@@ -339,6 +343,38 @@ document.getElementById('login-form').onsubmit = async (event) => {
     error.textContent = err.message;
     error.classList.remove('d-none');
   }
+};
+
+/* E33: passkeys, as in the console (/js/passkey.js). */
+const postJSON = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
+
+function showLoginError(message) {
+  const error = document.getElementById('login-error');
+  error.textContent = message;
+  error.classList.remove('d-none');
+}
+
+async function passkeyButton(button, signIn) {
+  document.getElementById('login-error').classList.add('d-none');
+  button.disabled = true;
+  try {
+    const pair = await signIn();
+    resetMfa();
+    token.set(pair.access_token);
+    await showApp();
+  } catch (err) {
+    if (/sign in again|expired/i.test(err.message)) resetMfa();
+    showLoginError(err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.getElementById('login-passkey').classList.toggle('d-none', !passkeysInBrowser());
+document.getElementById('login-passkey').onclick = (event) =>
+  passkeyButton(event.currentTarget, () => passkeySignIn(postJSON));
+document.getElementById('mfa-passkey').onclick = (event) => {
+  if (mfaToken) passkeyButton(event.currentTarget, () => passkeyMfaAnswer(postJSON, mfaToken));
 };
 
 document.getElementById('logout').onclick = () => { token.clear(); showLogin(); };

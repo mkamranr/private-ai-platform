@@ -68,6 +68,12 @@
       <input id="mfa-code" class="d-none" inputmode="numeric" autocomplete="one-time-code"
              maxlength="32">
       <button type="submit">Enter</button>
+      <!-- E33: passkeys. Alone, with no username or password; or instead of the code. -->
+      <button type="button" id="signin-passkey" class="secondary d-none"
+              title="No password or code: unlock a passkey you added to your account"
+              >Sign in with a passkey</button>
+      <button type="button" id="mfa-passkey" class="secondary d-none"
+              >Use a passkey instead</button>
     </form>
   </section>
 
@@ -110,4 +116,5 @@
 </div>
 
 <script src="/js/pow.js"></script>
+<script src="/js/passkey.js"></script>
 <script type="module" src="js/voice.js"></script>
