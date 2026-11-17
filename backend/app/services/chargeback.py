@@ -93,6 +93,8 @@ class _Line:
     partial_requests: int = 0
     #: Tokens per model, for sharing out GPU time.
     model_tokens: dict[str, int] = field(default_factory=dict)
+    #: Latency and streaming timings (E40); empty until the report fills them in.
+    timings: dict[str, Any] = field(default_factory=dict)
 
     def add_token_cost(self, amount: Decimal) -> None:
         self.token_cost = (self.token_cost or Decimal(0)) + amount
@@ -395,6 +397,15 @@ class ChargebackService:
         if scope.all_teams:
             idle = self._idle(gpu, totals_by_model)
 
+        # E40: how fast each line was served, beside what it cost.
+        where = scope.clause(UsageRecord.team_id)
+        timings = await self._reports.timings(group=group, start=begin, end=finish, where=where)
+        for ident, line in lines.items():
+            line.timings = timings.get(ident, {})
+        overall = (
+            await self._reports.timings(group=None, start=begin, end=finish, where=where)
+        ).get((), {})
+
         rows = sorted(
             (self._row(line) for line in lines.values()),
             key=lambda r: (
@@ -431,6 +442,7 @@ class ChargebackService:
                 "total_cost": _sum(r["total_cost"] for r in every),
                 "unpriced_requests": sum(r["unpriced_requests"] for r in rows),
                 "partial_requests": sum(r["partial_requests"] for r in rows),
+                **_timing_fields(overall if rows else {}),
             },
         }
 
@@ -519,6 +531,7 @@ class ChargebackService:
             "total_cost": _money(cost),
             "unpriced_requests": 0,
             "partial_requests": 0,
+            **_timing_fields({}),
         }
 
     @staticmethod
@@ -539,6 +552,7 @@ class ChargebackService:
             "total_cost": _sum([token_cost, gpu_cost]),
             "unpriced_requests": line.unpriced_requests,
             "partial_requests": line.partial_requests,
+            **_timing_fields(line.timings),
         }
 
     # -- export -------------------------------------------------------------
@@ -568,6 +582,8 @@ class ChargebackService:
                 "period_start",
                 "period_end",
                 "estimate",
+                # E40, appended so the columns before keep their places.
+                *TIMING_FIELDS,
             ]
         )
         rows = [*report["rows"], *([report["idle"]] if report["idle"] else [])]
@@ -591,6 +607,7 @@ class ChargebackService:
                     report["period_start"].isoformat(),
                     report["period_end"].isoformat(),
                     "true",
+                    *(_number(row[name]) for name in TIMING_FIELDS),
                 ]
             )
         await self._audit.record(
@@ -609,6 +626,29 @@ class ChargebackService:
         )
         name = f"chargeback-{group}-{start.isoformat()}-to-{end.isoformat()}.csv"
         return buffer.getvalue(), name
+
+
+#: Timing columns on every row, the totals and the CSV (E40). None when nothing in the
+#: line was measured: TTFT and throughput come from streamed calls only.
+TIMING_FIELDS = (
+    "avg_latency_ms",
+    "latency_p95_ms",
+    "ttft_p50_ms",
+    "ttft_p95_ms",
+    "output_tps_p50",
+    "timed_streams",
+)
+
+
+def _timing_fields(values: dict[str, Any]) -> dict[str, Any]:
+    out = {name: values.get(name) for name in TIMING_FIELDS}
+    out["timed_streams"] = int(values.get("timed_streams") or 0)
+    return out
+
+
+def _number(value: Any) -> str:
+    """Empty, not 0, for a figure that was not measured."""
+    return "" if value is None else str(value)
 
 
 def _amount(value: Decimal | None) -> str:

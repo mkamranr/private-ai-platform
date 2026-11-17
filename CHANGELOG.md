@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Timings in chargeback reports (E40)
+- **Cost and speed side by side.** Chargeback rows and totals now carry mean and p95 latency, median and p95 time to first token, median output tokens per second, and how many streamed calls those come from. The page adds *p95 latency* and *First token (p50)* columns.
+- **Exports too.** The CSV gains six columns at the end, after `estimate`, so existing spreadsheets keep their layout. A figure that was not measured is empty (or `null` in the API), never 0.
+- **Upgrade.** Nothing to do: no migration.
+
 ### Reminder emails to each approver (E39)
 - **Tell the people who can decide.** With `agents.approval_reminder_email_approvers` on (Settings page, *Security*; off by default), each approval reminder (E22) is also emailed to every person who could decide it: active accounts with `tool.approve` or `workflow.approve` that can see the agent's or workflow's team. A workflow run's starter is left out unless the step allows self-approval.
 - **Once each, and never stale.** Each person is emailed once per approval, at most 25 people per approval. Sends are retried like notification channels, and one not yet sent when the approval is decided or expires is cancelled.
