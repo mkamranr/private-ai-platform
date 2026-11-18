@@ -1701,15 +1701,16 @@
 </div>
 
 <!-- Alert notification channel (E13) -->
-<!-- E15: the signed-in person's own two-factor settings. -->
+<!-- E15: the signed-in person's own two-factor settings; E45: their email preference. -->
 <div class="modal fade" id="mfa-modal" tabindex="-1" aria-labelledby="mfa-modal-title">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="mfa-modal-title">Two-factor authentication</h5>
+        <h5 class="modal-title" id="mfa-modal-title">Your account</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body" id="mfa-modal-body"></div>
+      <div class="modal-body border-top d-none" id="account-prefs"></div>
     </div>
   </div>
 </div>

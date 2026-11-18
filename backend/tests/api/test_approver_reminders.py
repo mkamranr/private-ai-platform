@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import NotificationsSettings
 from app.core.permissions import Permission as Perm
 from app.models.agents import Agent, ApprovalState, ToolExecution
+from app.models.audit import AuditLog
 from app.models.auth import User
 from app.models.notifications import ApproverReminder
 from app.models.teams import Team, TeamMembership
@@ -260,3 +261,77 @@ class TestFromTheSweep:
         response = await client.get("/api/v1/settings", headers=auth_header(tokens, superuser))
         assert response.status_code == 200, response.text
         assert "agents.approval_reminder_email_approvers" in response.text
+
+
+class TestOptOut:
+    """E45: each person can turn the emails off for themselves."""
+
+    async def test_someone_who_opted_out_is_not_asked(
+        self, session: AsyncSession, settings
+    ) -> None:
+        team = await _team(session)
+        keen = await _member(session, settings, team, [Perm.TOOL_APPROVE])
+        quiet = await _member(session, settings, team, [Perm.TOOL_APPROVE])
+        quiet.approval_reminder_emails = False
+        await session.flush()
+
+        reminder = Reminder("f", "t", "m", "tool_execution", "x", "tool", uuid.uuid4(), team.id)
+        asked = {u.id for u in await _service(session, FakeEmail()).approvers(reminder)}
+        assert keen.id in asked and quiet.id not in asked
+
+    async def test_opting_out_cancels_what_is_queued(
+        self, session: AsyncSession, settings, superuser: User
+    ) -> None:
+        team = await _team(session)
+        approver = await _member(session, settings, team, [Perm.TOOL_APPROVE])
+        _, call = await _team_approval(session, superuser, team)
+        reminder = Reminder("f", "t", "m", "tool_execution", "x", "tool", call.id, team.id)
+        now = dt.datetime.now(dt.UTC)
+        await _service(session, FakeEmail(ok=False), now).run([reminder], enabled=True)
+
+        approver.approval_reminder_emails = False
+        await session.flush()
+        email = FakeEmail()
+        await _service(session, email, now + dt.timedelta(hours=1)).run([], enabled=True)
+        (row,) = [r for r in await _rows(session, call.id) if r.user_id == approver.id]
+        assert row.status == "cancelled" and "turned these emails off" in (row.last_error or "")
+        assert not any(approver.email in to for _, to in email.sent)
+
+    async def test_anyone_can_set_it_for_themselves(
+        self, client, tokens, session: AsyncSession, settings
+    ) -> None:
+        nobody = await _user_with(session, settings, [], name="e45-self")
+        headers = auth_header(tokens, nobody)
+        me = await client.get("/api/v1/auth/me", headers=headers)
+        assert me.json()["approval_reminder_emails"] is True
+
+        off = await client.put(
+            "/api/v1/users/me/preferences",
+            headers=headers,
+            json={"approval_reminder_emails": False},
+        )
+        assert off.status_code == 200, off.text
+        assert off.json()["approval_reminder_emails"] is False
+        await session.refresh(nobody)
+        assert nobody.approval_reminder_emails is False
+        me = await client.get("/api/v1/auth/me", headers=headers)
+        assert me.json()["approval_reminder_emails"] is False
+
+        audit = (
+            await session.execute(
+                select(AuditLog).where(
+                    AuditLog.resource_id == str(nobody.id), AuditLog.action == "USER_UPDATED"
+                )
+            )
+        ).scalar_one()
+        assert audit.meta["preferences"] == {"approval_reminder_emails": False}
+
+        # Leaving the field out changes nothing and records nothing.
+        same = await client.put("/api/v1/users/me/preferences", headers=headers, json={})
+        assert same.status_code == 200 and same.json()["approval_reminder_emails"] is False
+
+    async def test_signed_out_is_refused(self, client) -> None:
+        response = await client.put(
+            "/api/v1/users/me/preferences", json={"approval_reminder_emails": False}
+        )
+        assert response.status_code == 401

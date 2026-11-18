@@ -29,6 +29,7 @@ from app.schemas.auth import (
     RoleRead,
     UserActiveUpdateRequest,
     UserCreateRequest,
+    UserPreferencesUpdate,
     UserRead,
     UserRolesUpdateRequest,
 )
@@ -196,6 +197,22 @@ async def change_own_password(
     return MessageResponse(
         message="Password changed. Every session, including this one, is signed out."
     )
+
+
+@router.put(
+    "/users/me/preferences",
+    response_model=UserRead,
+    summary="Change your own preferences",
+)
+async def update_own_preferences(
+    payload: UserPreferencesUpdate,
+    user: CurrentUserDep,
+    service: UserServiceDep,
+) -> UserRead:
+    """No permission required: the caller's own account (E45). Today the one preference
+    is ``approval_reminder_emails``, the E39 emails about approvals they can decide."""
+    await service.update_own_preferences(user, payload.model_dump(exclude_none=True))
+    return UserRead.model_validate(user)
 
 
 @router.get("/roles", response_model=list[RoleRead], summary="List roles and their permissions")

@@ -221,6 +221,8 @@ class UserRead(ORMModel):
     locked_until: dt.datetime | None = None
     #: E15: whether sign-in asks this user for an authenticator code.
     mfa_enabled: bool = False
+    #: E45: whether they get reminder emails about approvals they can decide.
+    approval_reminder_emails: bool = True
     # Never a password hash. Serialising one would leak it into every log,
     # response cache and browser history that touches this endpoint.
 
@@ -258,6 +260,12 @@ class PasswordSetRequest(BaseModel):
     """An administrator setting someone else's password."""
 
     password: str = Field(min_length=12, max_length=1024)
+
+
+class UserPreferencesUpdate(BaseModel):
+    """Someone's own preferences (E45). Fields left out are unchanged."""
+
+    approval_reminder_emails: bool | None = None
 
 
 class PasswordChangeRequest(BaseModel):
