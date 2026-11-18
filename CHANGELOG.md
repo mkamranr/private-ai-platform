@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### PagerDuty channels (E50)
+- **Page on-call directly.** A webhook channel can now use the *PagerDuty (Events API v2)* format: paste the integration's routing key and alerts open, update and resolve PagerDuty incidents, one per alert. *Send test* opens an incident and closes it at once.
+- The routing key is stored encrypted and never shown or audited.
+- **Upgrade.** Migration `f9b1d3e5a7c8` adds one column to `notification_channels`. Existing channels are unchanged.
+
 ### Branded email templates (E49)
 - **Emails that look like yours.** Every notification email now uses a branded layout: your logo (or a monogram) and name in the header, a badge and a sentence saying what happened, the details, a button to the console, and your own footer. Digests show a count for each severity. Approver reminders link straight to the Approvals page.
 - **Set it in the console.** Settings page, *Email branding*: brand name, accent colour (with a colour picker), tagline, footer and subject prefix. Changes apply from the next email. For a logo, set `NOTIFICATIONS__EMAIL_LOGO_PATH` to a PNG, JPEG or GIF of at most 200 KB; it is embedded in each email, never linked.

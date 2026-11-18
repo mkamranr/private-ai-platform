@@ -154,7 +154,7 @@ dashboard real signals.
 - [x] Outbox (`notification_deliveries`) with a dispatcher job (`notification_dispatch`, 30 s): retries with back-off up to `max_attempts`, a failing channel deferred for the rest of a run, a `notification_channel_failing` alert after three failures, 30-day history.
 - [x] API under `/notifications` with permission `notification.manage` (ADMIN, SUPER_ADMIN); test send; audited create, update, delete and test. Alerts page: channels, recent notifications, add/edit form. Metric `ai_platform_notifications_total`.
 - [x] Migration `c4e8a1f2d6b9` upgrades and downgrades cleanly. Doc: [docs/notifications.md](../notifications.md).
-- [ ] No digests (~~of what quiet hours held~~ since E47; no scheduled summary) ~~or quiet hours~~ (quiet hours since E42), ~~per-team routing~~ (since E46), PagerDuty native API, ~~HTML email~~ (since E48) or SMS.
+- [ ] No digests (~~of what quiet hours held~~ since E47; no scheduled summary) ~~or quiet hours~~ (quiet hours since E42), ~~per-team routing~~ (since E46), ~~PagerDuty native API~~ (since E50), ~~HTML email~~ (since E48) or SMS.
 
 ## E14: Auth hardening
 
@@ -449,6 +449,13 @@ dashboard real signals.
 - [x] `GET /notifications/email-preview` and *Preview email* on the Alerts page (sandboxed frame). Settings page: a colour picker, and optional text may be emptied.
 - [x] Tests: `tests/unit/test_html_email.py` (rewritten), `tests/api/test_email_branding.py`. Docs: [notifications.md](../notifications.md#branding-e49), settings.md.
 - [ ] One layout (no per-channel templates or custom HTML); the logo is a file on the backend, not uploaded through the console.
+
+## E50: PagerDuty Events API v2 (closes the E13 paging item)
+
+- [x] Webhook format `pagerduty` (migration `f9b1d3e5a7c8`: `notification_channels.routing_key_encrypted`, and the format check widened; downgrade turns PagerDuty channels into generic webhooks). `pagerduty_payload`: raised and escalated alerts `trigger`, resolved ones `resolve`, with dedup key `aip:<fingerprint>`, PagerDuty severities, summary, source, group, class, component, custom details and the console link.
+- [x] Routing key: write-only, Fernet-encrypted, 32 letters and digits, never audited (`has_routing_key` only); required for the format; a signing secret is refused on it. A test send triggers then resolves. Never digested (E47); quiet hours still hold.
+- [x] Console: *PagerDuty (Events API v2)* format, a routing key field in place of the signing secret and header, PagerDuty's URL filled in. Tests: `tests/api/test_pagerduty.py`. Doc: [notifications.md](../notifications.md#pagerduty-e50).
+- [ ] No PagerDuty acknowledgement back to the platform (one-way); no Opsgenie or VictorOps format.
 
 ## Phase acceptance (applies to each)
 
