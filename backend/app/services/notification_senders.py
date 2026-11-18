@@ -17,10 +17,11 @@ for chat webhooks is itself the credential.
 from __future__ import annotations
 
 import asyncio
+import base64
+import dataclasses
 import datetime as dt
 import hashlib
 import hmac
-import html
 import json
 import smtplib
 import ssl
@@ -29,15 +30,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.config.settings import NotificationsSettings
 from app.core.errors import ValidationError
+from app.core.logging import get_logger
 from app.core.url_policy import check_outbound_url
 from app.models.notifications import DeliveryEvent, PayloadFormat
 from app.models.operations import Alert
+from app.services import email_templates
+from app.services.email_templates import Brand
+
+log = get_logger(__name__)
 
 USER_AGENT = "private-ai-platform-notifier"
 #: E47: the event of a digest message. Never stored as a delivery's event: each delivery
@@ -72,12 +79,16 @@ class Message:
     resource_type: str | None = None
     resource_id: str | None = None
     console_url: str | None = None
+    #: E49: ``alert`` (channels) or ``approval`` (a reminder to an approver, E39), which
+    #: changes the wording and the page the email links to.
+    kind: str = "alert"
     #: E47: for a digest, the messages it gathers (each with its own event).
     items: tuple[Message, ...] = ()
 
     @property
     def link(self) -> str | None:
-        return f"{self.console_url.rstrip('/')}/#alerts" if self.console_url else None
+        page = "approvals" if self.kind == "approval" else "alerts"
+        return f"{self.console_url.rstrip('/')}/#{page}" if self.console_url else None
 
     @property
     def heading(self) -> str:
@@ -217,87 +228,126 @@ def plain_text(msg: Message) -> str:
     return "\n".join(lines)
 
 
-#: E48: the colour bar of an HTML email, by what it reports.
-_TONE = {
-    "CRITICAL": "#b42318",
-    "WARNING": "#b54708",
-    "INFO": "#175cd3",
-    DeliveryEvent.RESOLVED: "#067647",
-    DeliveryEvent.TEST: "#475467",
-}
+#: The plain-text footer of channel emails (E48); E49 adds the brand's own footer above it.
 _FOOTER = (
     "Sent by the Private AI Platform. Change where alerts go on the Alerts page, under "
     "Notification channels."
 )
+_APPROVAL_FOOTER = (
+    "You can decide approvals on this platform. Turn these emails off under your account "
+    "(click your name in the console)."
+)
+#: E49: a logo larger than this is ignored (and logged), so a mistake cannot bloat mail.
+LOGO_MAX_BYTES = 200_000
+_LOGO_TYPES = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpeg", b"GIF8": "gif"}
 
 
-def _tone(msg: Message) -> str:
-    if msg.event in (DeliveryEvent.RESOLVED, DeliveryEvent.TEST):
-        return _TONE[msg.event]
-    return _TONE.get(msg.severity, "#475467")
+def brand_from(settings: NotificationsSettings, *, logo_src: str | None = None) -> Brand:
+    """E49: the email branding from the ``notifications`` settings."""
+    return Brand(
+        name=settings.email_brand_name,
+        color=settings.email_brand_color,
+        tagline=settings.email_brand_tagline,
+        footer=settings.email_footer,
+        logo_src=logo_src,
+    )
 
 
-def html_body(msg: Message) -> str:
-    """E48: the HTML part of a notification email, with the same content as
-    :func:`plain_text`.
+def load_logo(path: str | None) -> tuple[bytes, str] | None:
+    """E49: the logo file's bytes and image subtype, or None. A missing, oversized or
+    non-image file is logged and skipped: an email without its logo still goes out."""
+    if not path:
+        return None
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        log.warning("email_logo_unreadable", path=path, error=type(exc).__name__)
+        return None
+    if len(data) > LOGO_MAX_BYTES:
+        log.warning("email_logo_too_large", path=path, size=len(data), limit=LOGO_MAX_BYTES)
+        return None
+    subtype = next((t for magic, t in _LOGO_TYPES.items() if data.startswith(magic)), None)
+    if subtype is None:
+        log.warning("email_logo_not_an_image", path=path)
+        return None
+    return data, subtype
 
-    Self-contained: inline styles only, no images, fonts, scripts or remote resources, so it
-    renders on an air-gapped mail client and loads nothing when it is opened. Every value is
-    HTML-escaped, so an alert title or message cannot inject markup. The only link is the
-    console's Alerts page, when ``NOTIFICATIONS__CONSOLE_URL`` is set."""
-    e = html.escape
-    tone = _tone(msg)
-    if msg.event == DIGEST_EVENT:
-        rows = "".join(
-            f'<li style="margin:0 0 6px">{e(_digest_line(i)[2:])}</li>'
-            for i in msg.items[:DIGEST_MAX_LINES]
+
+PREVIEW_KINDS = ("raised", "resolved", "digest", "approval", "test")
+
+
+def preview_message(kind: str, console_url: str | None) -> Message:
+    """E49: a realistic sample of each kind of email, for the console's preview."""
+    now = dt.datetime.now(dt.UTC)
+    sample = Message(
+        event="raised",
+        severity="CRITICAL",
+        title="Backend gpu-01 is not answering",
+        message="Health check failed 3 times in a row: connection refused on port 8000.",
+        source="backend_health",
+        delivery_id="preview",
+        raised_at=now - dt.timedelta(minutes=12),
+        occurrences=3,
+        console_url=console_url,
+    )
+    if kind == "resolved":
+        return dataclasses.replace(sample, event="resolved", resolved_at=now)
+    if kind == "approval":
+        return dataclasses.replace(
+            sample,
+            kind="approval",
+            severity="WARNING",
+            title="Approval for create_ticket (IT Helpdesk) expires in 3 hours",
+            message=(
+                "The agent 'IT Helpdesk' is waiting for someone to approve or reject a HIGH "
+                "call to 'create_ticket'."
+            ),
+            source="approvals",
+            occurrences=1,
         )
-        more = (
-            f'<p style="margin:8px 0 0;color:#475467">... and '
-            f"{len(msg.items) - DIGEST_MAX_LINES} more on the Alerts page.</p>"
-            if len(msg.items) > DIGEST_MAX_LINES
-            else ""
-        )
-        content = f'<ul style="margin:0;padding-left:20px">{rows}</ul>{more}'
-    else:
-        when = msg.resolved_at if msg.event == DeliveryEvent.RESOLVED else msg.raised_at
-        facts = [
-            ("Source", msg.source),
-            (_EVENT_LABEL.get(msg.event, msg.event), _when(when)),
+    if kind == "test":
+        return test_message(channel_name="ops-chat", delivery_id="preview", console_url=console_url)
+    if kind == "digest":
+        items = [
+            dataclasses.replace(
+                sample,
+                severity="WARNING",
+                title="Cost budget 85% used: team Research",
+                source="cost_budget",
+            ),
+            dataclasses.replace(
+                sample,
+                severity="WARNING",
+                title="Daily token budget 92% used: API key ci-bot",
+                source="quota_budget",
+            ),
+            dataclasses.replace(sample, event="resolved", resolved_at=now, occurrences=1),
         ]
-        if msg.occurrences > 1:
-            facts.append(("Seen", f"{msg.occurrences} times"))
-        table = "".join(
-            f'<tr><td style="padding:2px 12px 2px 0;color:#475467">{e(k)}</td>'
-            f'<td style="padding:2px 0">{e(v)}</td></tr>'
-            for k, v in facts
+        return digest_message(
+            items, channel_name="ops-chat", delivery_id="preview", console_url=console_url
         )
-        text = (
-            f'<p style="margin:0 0 12px;white-space:pre-wrap">{e(msg.message)}</p>'
-            if msg.message
-            else ""
-        )
-        table_html = f'<table role="presentation" style="border-collapse:collapse">{table}</table>'
-        content = f"{text}{table_html}"
-    button = (
-        f'<p style="margin:16px 0 0"><a href="{e(msg.link, quote=True)}" '
-        f'style="display:inline-block;padding:8px 14px;border-radius:6px;background:{tone};'
-        'color:#ffffff;text-decoration:none">Open the Alerts page</a></p>'
-        if msg.link
-        else ""
-    )
-    return (
-        '<!doctype html><html><head><meta charset="utf-8">'
-        f"<title>{e(msg.heading)}</title></head>"
-        '<body style="margin:0;padding:16px;background:#f2f4f7;'
-        'font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;color:#101828">'
-        '<div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:8px;'
-        f'border-top:4px solid {tone};padding:20px">'
-        f'<h1 style="margin:0 0 12px;font-size:18px;color:{tone}">{e(msg.heading)}</h1>'
-        f"{content}{button}</div>"
-        '<p style="max-width:640px;margin:12px auto 0;font-size:12px;color:#667085">'
-        f"{e(_FOOTER)}</p></body></html>"
-    )
+    return sample
+
+
+def preview(settings: NotificationsSettings, kind: str) -> dict[str, str]:
+    """E49: the subject, plain text and HTML of a sample email, branded as configured.
+    The logo is inlined as a ``data:`` URI so a browser can show it; a real email carries
+    it as an attachment (``cid:``)."""
+    msg = preview_message(kind, settings.console_url)
+    email = EmailSender(settings)._build(msg, ["preview@localhost"])
+    text = email.get_body(("plain",))
+    logo = load_logo(settings.email_logo_path)
+    src = f"data:image/{logo[1]};base64,{base64.b64encode(logo[0]).decode()}" if logo else None
+    return {
+        "subject": str(email["Subject"]),
+        "text": text.get_content() if isinstance(text, EmailMessage) else "",
+        "html": html_body(msg, brand_from(settings, logo_src=src)),
+    }
+
+
+def html_body(msg: Message, brand: Brand | None = None) -> str:
+    """The HTML part of a notification email (E48), in the branded layout (E49)."""
+    return email_templates.render(msg, brand)
 
 
 def chat_payload(msg: Message) -> dict[str, Any]:
@@ -403,17 +453,29 @@ class EmailSender:
 
     def _build(self, msg: Message, recipients: list[str]) -> EmailMessage:
         email = EmailMessage()
-        email["Subject"] = _short(f"[AI Platform] {msg.heading}", 200)
+        prefix = self._settings.email_subject_prefix.strip()
+        email["Subject"] = _short(f"{prefix} {msg.heading}" if prefix else msg.heading, 200)
         email["From"] = self._settings.smtp_from
         email["To"] = ", ".join(recipients)
         email["Date"] = formatdate(localtime=False, usegmt=True)
         email["Message-ID"] = make_msgid(domain="ai-platform.local")
         email["X-AIP-Event"] = msg.event
         email["X-AIP-Delivery"] = msg.delivery_id
-        email.set_content(plain_text(msg) + f"\n\n--\n{_FOOTER}\n")
+        footer = _APPROVAL_FOOTER if msg.kind == "approval" else _FOOTER
+        if self._settings.email_footer:
+            footer = f"{self._settings.email_footer}\n{footer}"
+        email.set_content(plain_text(msg) + f"\n\n--\n{footer}\n")
         if self._settings.email_html:
             # E48: multipart/alternative. A client that cannot show HTML shows the text.
-            email.add_alternative(html_body(msg), subtype="html")
+            # E49: a logo travels inside the message (multipart/related, cid:), so opening
+            # it loads nothing from anywhere.
+            logo = load_logo(self._settings.email_logo_path)
+            cid = make_msgid(domain="ai-platform.local") if logo else None
+            brand = brand_from(self._settings, logo_src=f"cid:{cid[1:-1]}" if cid else None)
+            email.add_alternative(html_body(msg, brand), subtype="html")
+            html_part = email.get_body(("html",))
+            if logo and cid and isinstance(html_part, EmailMessage):
+                html_part.add_related(logo[0], maintype="image", subtype=logo[1], cid=cid)
         return email
 
     def _context(self) -> ssl.SSLContext:

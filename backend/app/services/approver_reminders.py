@@ -218,6 +218,8 @@ class ApproverReminders:
                     resource_type=("tool_execution" if row.kind == "tool" else "workflow_approval"),
                     resource_id=str(row.approval_id),
                     console_url=self._settings.console_url,
+                    raised_at=row.created_at,
+                    kind="approval",
                 ),
                 recipients=[user.email],
             )

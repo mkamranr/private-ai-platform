@@ -2607,6 +2607,36 @@
   </div>
 </div>
 
+<!-- Email preview (E49) ----------------------------------------------------->
+<div class="modal fade" id="email-preview-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Email preview</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <select class="form-select form-select-sm" style="width:auto" id="email-preview-kind"
+                  aria-label="Kind of email">
+            <option value="raised">Alert raised</option>
+            <option value="resolved">Alert resolved</option>
+            <option value="digest">Quiet hours digest</option>
+            <option value="approval">Approver reminder</option>
+            <option value="test">Channel test</option>
+          </select>
+          <span class="small text-secondary">Subject: <span class="mono" id="email-preview-subject"></span></span>
+        </div>
+        <iframe id="email-preview-frame" sandbox="" title="Email preview"
+                style="width:100%;height:560px;border:1px solid var(--bs-border-color);border-radius:.5rem;background:#fff"></iframe>
+        <div class="form-text">Change the name, colour, tagline, footer and subject prefix on the
+          Settings page, under Email branding. A logo is set with <code>NOTIFICATIONS__EMAIL_LOGO_PATH</code>.
+          Nothing is sent.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Move to team modal (E44) ------------------------------------------------>
 <div class="modal fade" id="team-move-modal" tabindex="-1">
   <div class="modal-dialog">

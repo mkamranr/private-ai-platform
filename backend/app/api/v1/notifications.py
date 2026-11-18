@@ -7,7 +7,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Response, status
 
-from app.api.deps import NotificationServiceDep, SettingsDep, require_permission
+from app.api.deps import (
+    EffectiveSettingsDep,
+    NotificationServiceDep,
+    SettingsDep,
+    require_permission,
+)
 from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
@@ -20,7 +25,9 @@ from app.schemas.notifications import (
     ChannelTestResult,
     ChannelUpdate,
     DeliveryRead,
+    EmailPreview,
 )
+from app.services.notification_senders import PREVIEW_KINDS, preview
 from app.services.notifications import KNOWN_SOURCES
 
 router = APIRouter(prefix="/notifications", tags=["notifications"], route_class=CommittingRoute)
@@ -132,3 +139,14 @@ async def list_deliveries(
         read.channel_name = name
         reads.append(read)
     return Page[DeliveryRead](items=reads, total=total, limit=limit, offset=offset)
+
+
+@router.get("/email-preview", response_model=EmailPreview, summary="Preview a notification email")
+async def email_preview(
+    settings: EffectiveSettingsDep,
+    _actor: Annotated[User, require_permission(Perm.NOTIFICATION_MANAGE)],
+    kind: Annotated[str, Query(pattern="^(" + "|".join(PREVIEW_KINDS) + ")$")] = "raised",
+) -> EmailPreview:
+    """A sample email of each kind (E49), with the branding currently set on the Settings
+    page. Nothing is sent. Works without a mail server."""
+    return EmailPreview(kind=kind, **preview(settings.notifications, kind))

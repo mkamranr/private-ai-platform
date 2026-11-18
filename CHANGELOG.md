@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Branded email templates (E49)
+- **Emails that look like yours.** Every notification email now uses a branded layout: your logo (or a monogram) and name in the header, a badge and a sentence saying what happened, the details, a button to the console, and your own footer. Digests show a count for each severity. Approver reminders link straight to the Approvals page.
+- **Set it in the console.** Settings page, *Email branding*: brand name, accent colour (with a colour picker), tagline, footer and subject prefix. Changes apply from the next email. For a logo, set `NOTIFICATIONS__EMAIL_LOGO_PATH` to a PNG, JPEG or GIF of at most 200 KB; it is embedded in each email, never linked.
+- **Preview before anyone gets one.** *Preview email* on the Alerts page shows each kind of email as people will receive it. It sends nothing and needs no mail server.
+- The subject still starts with `[AI Platform]` by default, so existing mail filters keep working.
+- **Upgrade.** Nothing to do: no migration.
+
 ### HTML notification emails (E48)
 - **Easier to read in a mail client.** Alert, digest and approver reminder emails now include an HTML version alongside the plain text. It has a colour bar for the severity, the details in a small table, and a button to the Alerts page when `NOTIFICATIONS__CONSOLE_URL` is set. It loads nothing from the network: no images, fonts or scripts.
 - If your mail gateway strips or quarantines HTML, set `NOTIFICATIONS__EMAIL_HTML=false` to send plain text only.

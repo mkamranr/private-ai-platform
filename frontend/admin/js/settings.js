@@ -137,7 +137,14 @@ function settingInput(item) {
     return `<input class="form-control" id="setting-value" type="number" required
       step="${item.type === 'int' ? '1' : 'any'}" value="${esc(String(value ?? ''))}">`;
   }
-  return `<input class="form-control font-monospace" id="setting-value" required
+  // E49: a colour picker for the email accent colour.
+  if (item.key.endsWith('_color')) {
+    return `<input class="form-control form-control-color" id="setting-value" type="color"
+      value="${esc(String(value ?? '#4f46e5'))}" title="Choose a colour">`;
+  }
+  // E49: optional text (a tagline, a footer, a subject prefix) may be emptied.
+  const optional = value === '' || item.default_value === '';
+  return `<input class="form-control font-monospace" id="setting-value" ${optional ? '' : 'required'}
     value="${esc(String(value ?? ''))}" spellcheck="false" autocomplete="off">`;
 }
 

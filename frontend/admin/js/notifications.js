@@ -54,6 +54,8 @@ function notifyChannelsCard(data) {
       <div class="me-auto"><h6 class="mb-1">Notification channels</h6>
         <p class="small text-secondary mb-2">Where alerts are sent besides this page: chat or ticketing webhooks, and email.
           An alert is sent once when raised, again if it escalates, and when it is resolved. Repeats are not resent.</p></div>
+      <button class="btn btn-sm btn-outline-secondary text-nowrap" id="notify-preview"
+        title="See an email as people receive it, with the branding from the Settings page">Preview email</button>
       <button class="btn btn-sm btn-primary text-nowrap" id="notify-add">+ Add channel</button></div>`;
   if (!data.items.length) {
     return `<div class="card mb-4 mt-4">${header}<div class="card-body pt-0">${empty(
@@ -246,3 +248,27 @@ async function deleteChannel(id) {
   alert(`Channel ${channel.name} removed. The removal is recorded in the audit log.`, 'success');
   await refresh({ force: true });
 }
+
+
+/* E49: a sample email with the current branding, shown in a sandboxed frame (no scripts,
+ * no same-origin access). Nothing is sent. */
+async function showEmailPreview() {
+  const kind = document.getElementById('email-preview-kind').value;
+  const frame = document.getElementById('email-preview-frame');
+  const subject = document.getElementById('email-preview-subject');
+  try {
+    const preview = await api(`/notifications/email-preview?kind=${encodeURIComponent(kind)}`);
+    subject.textContent = preview.subject;
+    frame.srcdoc = preview.html;
+  } catch (err) {
+    subject.textContent = err.message;
+    frame.srcdoc = '';
+  }
+}
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('#notify-preview')) return;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('email-preview-modal')).show();
+  showEmailPreview();
+});
+document.getElementById('email-preview-kind').addEventListener('change', showEmailPreview);

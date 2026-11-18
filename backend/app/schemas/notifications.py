@@ -113,6 +113,15 @@ class ChannelsResponse(BaseModel):
     items: list[ChannelRead]
 
 
+class EmailPreview(BaseModel):
+    """E49: a sample notification email, branded as currently configured."""
+
+    kind: str
+    subject: str
+    text: str
+    html: str
+
+
 class ChannelTestResult(BaseModel):
     ok: bool
     detail: str
