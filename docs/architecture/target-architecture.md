@@ -1,14 +1,14 @@
 # Target architecture
 
-The expansion plan's target (§4) mapped onto **existing** modules. The rule, per plan §3
-and §18: extend what works, keep existing names, add only what is missing. The current
+The expansion plan's target mapped onto **existing** modules. The rule: extend what
+works, keep existing names, add only what is missing. The current
 state is in [`current-state.md`](current-state.md).
 
 ## Shape
 
 The backend stays a **modular monolith**. The gateway stays inside the backend process,
 mounted at `/v1`. Splitting it into its own container is deferred until there is a measured
-scaling or reliability need (plan §9).
+scaling or reliability need.
 
 ```mermaid
 flowchart TB

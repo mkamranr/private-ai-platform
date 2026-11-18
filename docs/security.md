@@ -1,17 +1,17 @@
 # Security
 
-Implements the non-functional requirements in §25 and the agent security model in §10.
+This page covers the platform's security requirements and its agent security model.
 
 ---
 
-## Non-negotiables (§25)
+## Non-negotiables
 
 1. **No secrets in source code.** Enforced by `scripts/check_airgap.py` and by
    required-secret settings having no defaults.
 2. **No unrestricted shell execution by agents.** See "Disabled tool types" below.
 3. **No unrestricted Docker socket access.** The socket is reachable only from
-   `DockerService` (Rule 7, machine-enforced), and never exposed to the control plane
-   over an unsecured network (§M04).
+   `DockerService` (machine-enforced), and never exposed to the control plane
+   over an unsecured network.
 4. **No arbitrary tool execution without permission.** Every tool carries an explicit
    permission; agents get no tool by default.
 5. **All privileged actions audited.** Both outcomes — including refusals.
@@ -20,7 +20,7 @@ Implements the non-functional requirements in §25 and the agent security model 
 
 ## Authentication
 
-**Phase 0** local username/password. argon2id via `argon2-cffi` directly rather than
+**Local accounts:** username and password. argon2id via `argon2-cffi` directly rather than
 `passlib`, which is effectively unmaintained and whose bcrypt backend detection breaks
 against current releases. Parameters are configurable
 (`SECURITY__ARGON2_*`); a hash stored under weaker parameters is transparently
@@ -35,7 +35,8 @@ Login failures return one message regardless of cause, and hash a dummy password
 the account does not exist so a missing account and a wrong password take comparable
 time. Skipping the hash would leak account existence through response latency.
 
-**Phase 6** Keycloak / LDAP / AD / OIDC behind an auth-provider interface. Platform
+**Directory and single sign-on:** Keycloak / LDAP / AD / OIDC behind an auth-provider
+interface (see [Authentication providers](#authentication-providers)). Platform
 JWTs remain the internal representation, so nothing downstream changes.
 
 ---
@@ -48,7 +49,7 @@ Three levels: user → roles → permissions. Code never branches on a role name
 the database each request, so revoking a role or disabling an account takes effect
 immediately rather than when the token expires.
 
-The eight roles (§M03) are genuinely separated, not near-copies of ADMIN — asserted by
+The eight roles are genuinely separated, not near-copies of ADMIN — asserted by
 `tests/unit/test_permissions_and_audit.py::test_separation_of_duty_holds`:
 
 | role | can | cannot |
@@ -64,7 +65,7 @@ The eight roles (§M03) are genuinely separated, not near-copies of ADMIN — as
 
 `tool.approve` is separate from `tool.execute` and granted only to
 SUPER_ADMIN/ADMIN/AGENT_ADMIN. Collapsing them would let any tool user approve their
-own privileged call, which defeats the §M24 approval workflow entirely.
+own privileged call, which defeats the approval workflow entirely.
 
 ---
 
@@ -77,14 +78,14 @@ the database. A database dump alone therefore yields nothing usable — recoveri
 credential needs both the dump and the key file.
 
 `SecretCipher` is constructed at startup, so a malformed key fails immediately rather
-than the first time Phase 4 registers a tool.
+than the first time a tool is registered.
 
-**Key rotation** invalidates every existing ciphertext. Re-encryption tooling is a
-Phase 6 deliverable; until then, treat the key as permanent for a deployment and back
+**Key rotation** invalidates every existing ciphertext. Re-encryption tooling is not
+yet available; until it is, treat the key as permanent for a deployment and back
 it up separately from the database. Storing both in the same backup archive would
 undo the whole point.
 
-Alert notification channels (E13) keep their webhook URL, signing secret and
+Alert notification channels keep their webhook URL, signing secret and
 authorization header in these columns too. A chat webhook's URL *is* its credential, so
 only its scheme, host and port are ever returned or audited. The mail server password
 is not in the database at all: it is `NOTIFICATIONS__SMTP_PASSWORD` in `.env`. See
@@ -96,7 +97,7 @@ is nothing to brute-force, and gateway auth must not pay an argon2 cost per requ
 
 ---
 
-## Audit (§M24)
+## Audit
 
 Every privileged action produces a record: user, action, resource type and id,
 timestamp, source IP, result, metadata.
@@ -111,7 +112,7 @@ must be queryable as such.
 **Denials and failures are written on an independent transaction.** The request that
 triggered them is about to raise and roll back; a same-transaction row would vanish
 with it, leaving the platform recording every successful login and silently discarding
-every failed one. See `architecture.md` §5.
+every failed one. See [architecture.md](architecture.md#5-transactions-and-audit-durability).
 
 `source_ip` comes from the request context, not the call site, so no caller can forget
 or forge it. `X-Forwarded-For` is honoured **only** when the immediate peer is inside
@@ -124,7 +125,7 @@ in the platform.
 
 ---
 
-## Agent security model (§10)
+## Agent security model
 
 Agents have **no** tool access by default. Every execution passes the full pipeline:
 
@@ -149,8 +150,8 @@ in-memory handle.
 
 ### Disabled tool types
 
-§M12 lists `PYTHON` and `COMMAND` among tool types. §25 states plainly that agents get
-no unrestricted shell execution. These cannot both hold on the normal execution path,
+The tool model lists `PYTHON` and `COMMAND` among tool types, yet agents must get no
+unrestricted shell execution (see [Non-negotiables](#non-negotiables)). These cannot both hold on the normal execution path,
 so the reconciliation is explicit: both types are **registerable but disabled**
 (`AGENTS__DISABLED_TOOL_TYPES`).
 
@@ -166,17 +167,17 @@ credential mounts. Until that exists they stay off.
 
 ## Transport
 
-**Phase 0** plain HTTP behind nginx, which is the only published port (§14). Postgres,
+**Inside the stack:** plain HTTP behind nginx, which is the only published port. Postgres,
 Valkey, Qdrant and MinIO are reachable solely from inside the `ai-platform` network, so
 a misconfigured host firewall cannot expose the database.
 
-**Phase 1** TLS with a platform-generated CA (`scripts/gen_certs.sh`). An air-gapped
+**TLS** with a platform-generated CA (`scripts/gen_certs.sh`). An air-gapped
 site cannot use a public CA — there is no reachable ACME, OCSP responder or CRL
 distribution point. Control plane ↔ node agent uses mTLS plus a per-node bearer token,
 with node certificates issued `clientAuth`-only so a node certificate cannot
 impersonate the control plane.
 
-### Node enrolment (M04)
+### Node enrolment
 
 A node joins by presenting a **one-time enrolment token** an administrator issued for one
 specific node name. What that token grants if stolen is deliberately small: the ability to
@@ -255,7 +256,7 @@ Security headers are set on every response (`X-Content-Type-Options`,
 
 ---
 
-## Reliability as a security property (§25)
+## Reliability as a security property
 
 Health checks, restart policies, timeouts, retries and circuit breakers. The platform
 survives individual container restarts.
@@ -273,7 +274,7 @@ down.
 ## Reporting
 
 An air-gapped platform has no vulnerability feed. Dependency review happens when the
-offline bundle is rebuilt (Phase 8), against the pinned, hashed lockfile — which is
+offline bundle is rebuilt, against the pinned, hashed lockfile — which is
 exactly what makes the inventory auditable: `backend/requirements.txt` is the complete
 transitive closure with hashes, so what is installed is knowable without inspecting a
 running container.
@@ -281,7 +282,7 @@ running container.
 
 ---
 
-# Authentication providers (M03, Phase 6)
+# Authentication providers
 
 Three ways in, one internal representation. Whoever vouches for a person, the platform
 issues **its own JWT** and everything downstream — permissions, audit, the gateway — reads
@@ -361,7 +362,7 @@ mistake that makes anyone who can create an AD group a platform administrator. S
 
 All four are tested in `backend/tests/unit/test_federation.py`. None is visible from the
 happy path — a site that only tests "an AD user can sign in" passes with every one of them
-broken. Rule 1 caught a real bug in this implementation: the "account pre-created by an
+broken. The first rule caught a real bug in this implementation: the "account pre-created by an
 administrator" convenience path silently overwrote an existing subject.
 
 ## Guards worth naming
@@ -402,7 +403,7 @@ password. `development` profile only.
 
 ## The ldap3 trade-off
 
-`ldap3` is quiet upstream, which is the same concern that ruled out `passlib` in Phase 0 —
+`ldap3` is quiet upstream, which is the same concern that ruled out `passlib` for local passwords —
 and the decision lands the other way here, because the alternatives (`python-ldap`,
 `bonsai`) are C extensions and an air-gapped bundle must ship wheels built for the target
 architecture. Pure Python wins that trade.
@@ -413,7 +414,7 @@ ignored **scoped to that one module**, so any other deprecation still fails the 
 Pinning pyasn1 back to 0.4.x would have silenced it, at the cost of shipping a 2019 ASN.1
 parser — the worse trade.
 
-## Sign-in hardening (E14)
+## Sign-in hardening
 
 **Account lockout.** `AUTH__LOCKOUT_THRESHOLD` (default 10) wrong passwords in a row lock a
 local or directory account for `AUTH__LOCKOUT_MINUTES` (default 15). `0` turns lockout off. While an
@@ -427,7 +428,7 @@ A lock is audited (`USER_LOCKED`) and raises a WARNING alert. An administrator c
 early on the Users page (`POST /users/{id}/unlock`, audited as `USER_UNLOCKED`). Setting a
 new password lifts it too, and a correct sign-in after the lock expires clears it.
 
-**Directory accounts (E25).** An LDAP account that has signed in before (so the platform
+**Directory accounts.** An LDAP account that has signed in before (so the platform
 has a row for it) is counted and locked the same way: a password the directory rejects
 counts toward the same threshold, with the same audit, alert and unlock. **A locked
 directory account is not offered to the directory at all**, so guesses made through the
@@ -438,8 +439,7 @@ which never sign in with a password, and a directory that is unreachable, which 
 outage rather than a wrong password.
 
 The counter is updated with one atomic `UPDATE` in its own transaction. The failed request
-rolls back, so counting inside it would count nothing. Before E14 that was exactly what
-happened: `failed_login_count` existed, and rolled back with every failure.
+rolls back, so counting inside it would count nothing.
 
 **Per-address throttle.** `AUTH__LOGIN_IP_MAX_FAILURES` (default 30) failed sign-ins from
 one client address within `AUTH__LOGIN_IP_WINDOW_SECONDS` (default 900) refuse that
@@ -451,7 +451,7 @@ Valkey and **fails open**: a cache outage must not lock everyone out of the cons
 per-account lock is in Postgres and keeps working. Behind a reverse proxy, set
 `SECURITY__TRUSTED_PROXY_CIDRS`, otherwise every client looks like the proxy.
 
-**Sign-in check (E29).** A hosted CAPTCHA needs the internet and sends every sign-in to a
+**Sign-in check.** A hosted CAPTCHA needs the internet and sends every sign-in to a
 third party, so the platform uses a proof of work instead. After
 `AUTH__LOGIN_CHALLENGE_AFTER` (default 10, `0` = off) failed sign-ins from one address in
 the throttle window, `/auth/login` answers **401** `challenge_required` with a challenge
@@ -485,7 +485,7 @@ note that the browser is being checked.
 - `POST /auth/logout-all`, *Sign out everywhere* on the Users page
   (`POST /users/{id}/sessions/revoke`), a password change, a password reset and disabling
   an account all raise `users.session_version`. Every token issued before then is refused.
-- Tokens issued before E14 have no `sv` and count as version 0, so an upgrade signs nobody
+- Tokens issued by earlier releases have no `sv` and count as version 0, so an upgrade signs nobody
   out.
 
 **Refresh rotation and theft detection.** Each refresh token works once. Exchanging it
@@ -503,10 +503,10 @@ address within `OPS__RUNNER_FAILURE_WINDOW_SECONDS` (default 600) refuse that ad
 Reaching the limit raises a WARNING alert with source `ops_runner`. This closes threat
 model item 12's "no rate limit on failed runner-token attempts".
 
-Alerts from sign-in use source `auth`, so a notification channel (E13) can be set to
+Alerts from sign-in use source `auth`, so a notification channel can be set to
 send only those to the SOC.
 
-## Two-factor authentication (E15)
+## Two-factor authentication
 
 Local accounts can require a six-digit code from an authenticator app (TOTP, RFC 6238:
 HMAC-SHA1, 6 digits, 30-second steps) as well as the password. Any standard app works:
@@ -521,7 +521,7 @@ refused wherever an access or refresh token is expected, and the reverse is also
 `POST /auth/mfa/verify` exchanges it with a code for the usual token pair. The step token
 works for one completed sign-in.
 
-* **Wrong codes count toward the lockout** (E14) and the per-address throttle, like wrong
+* **Wrong codes count toward the lockout** and the per-address throttle, like wrong
   passwords. A correct password does *not* reset the failure count while a code is still
   owed. Otherwise "password, nine guesses, password again" would give unlimited guesses.
 * **A code works once.** A code is accepted for its 30-second step and one step either
@@ -564,7 +564,7 @@ what someone impersonating them would ask for.
 provider owns their second factor. Requiring a second, unrelated enrolment would add
 friction without adding a factor the provider does not already enforce.
 
-## Passkeys and trusted browsers (E20)
+## Passkeys and trusted browsers
 
 **Passkeys answer the second step.** Once two-factor authentication is on, a person can
 add up to ten passkeys on the account dialog: a security key (YubiKey, Feitian), or a
@@ -582,7 +582,7 @@ recovery codes remain the way back in when a key is lost. Adding one needs the p
   challenge is revoked on use. A sign-in challenge names the `mfa_token` it was issued for
   and is refused for any other sign-in; that step token is single-use as before.
 * **A failed passkey counts like a wrong code**: toward the account lockout and the
-  per-address throttle (E14), audited as a failed `USER_LOGIN` with `step: mfa`. A
+  per-address throttle, audited as a failed `USER_LOGIN` with `step: mfa`. A
   successful one is audited with `mfa: passkey`.
 * **The site needs a host name over HTTPS.** WebAuthn binds a credential to a host name
   and browsers refuse an IP address. The relying party id and the allowed origin come from
@@ -613,13 +613,13 @@ While the token is good, the second step is skipped. Audit records `mfa: trusted
 and trusted browsers.
 
 **Not covered.** The developer portal and the voice assistant accept a passkey at the
-code step since E33, but do not offer *Trust this browser*, and passkeys are added in the
+code step, but do not offer *Trust this browser*, and passkeys are added in the
 console only. Directory and single sign-on accounts have no platform second factor, so no
 passkeys either.
 
-### Signing in with a passkey alone (E30)
+### Signing in with a passkey alone
 
-The console's sign-in page has **Sign in with a passkey**, and since E33 so do the
+The console's sign-in page has **Sign in with a passkey**, and so do the
 developer portal and the voice assistant (one shared script, `/js/passkey.js`; all three
 are served from the same origin, so the same passkeys work). No username, password or code
 is asked for: the browser offers the passkeys it holds for this site, the person unlocks
@@ -637,9 +637,9 @@ one with the device's PIN or biometric, and the passkey names the account
   as for adding a passkey. Sign-ins are audited `USER_LOGIN` with `mfa: passkey` and
   `passwordless: true`.
 - **Which passkeys work.** One the browser can offer without being told the username: a
-  *discoverable* credential. Passkeys added since E30 are requested that way; most
+  *discoverable* credential. New passkeys are requested that way; most
   platform authenticators and password managers comply, some older security keys cannot.
-  A passkey added before E30 may not be discoverable: it keeps working at the code step,
+  A passkey added under an earlier release may not be discoverable: it keeps working at the code step,
   and can be removed and added again to sign in with it alone.
 
 ## What is not built yet
@@ -647,23 +647,22 @@ one with the device's PIN or biometric, and the passkey names the account
 * **LDAP is unverified against a real directory.** The escaping, the empty-password guard
   and the bind mode are tested; the bind itself has never met an Active Directory. Same
   status as the LDAP MCP server.
-* **Directory lockout is the platform's, on top of the directory's own.** Since E25 the
+* **Directory lockout is the platform's, on top of the directory's own.** The
   platform locks a directory account after `AUTH__LOCKOUT_THRESHOLD` rejected passwords
   made through it; it does not see guesses made elsewhere, and the directory's password
   and lockout policy still apply.
-* **A proof of work, not a CAPTCHA (E29).** It slows repeated guessing from one address
+* **A proof of work, not a CAPTCHA.** It slows repeated guessing from one address
   but does not tell a person from a program; a distributed guesser spread over many
   addresses meets only the per-account lockout.
-* **TOTP and passkeys.** Passkeys also sign in alone since E30, in the console, and since
-  E33 in the developer portal and voice assistant (which also accept one at the code
-  step). Passkeys are added, and browsers trusted, in the console only. No push approval
+* **TOTP and passkeys.** Passkeys also sign in alone, in the console, the developer portal
+  and the voice assistant (the latter two also accept one at the code step). Passkeys are added, and browsers trusted, in the console only. No push approval
   or SMS. The platform asks for no second factor from directory or single sign-on accounts.
 * **The per-address throttle fails open** while Valkey is down.
 
 
 ---
 
-# API keys (M20)
+# API keys
 
 Only a **SHA-256 hash and a visible prefix** are stored. The key is shown once, at
 creation, and the platform genuinely cannot show it again — which is what stops a database
@@ -725,7 +724,7 @@ control someone cannot use reads as a permissions bug rather than as a boundary.
 
 ---
 
-# Audit (M24)
+# Reading the audit log
 
 `GET /api/v1/audit` with filters on user, action, resource, result and date, plus
 `GET /audit/actions` for what is *actually* in the log — read from the data rather than the
@@ -737,7 +736,7 @@ write verb returns 405 from routing, not from a check someone can forget. The qu
 takes the *repository*, not `AuditService`, so the endpoint cannot even reach `record()` —
 a query surface that can write to the log it is querying is a hole nobody needs.
 
-Retention is a deliberate database operation (M25), not an API call.
+Retention is a deliberate database operation, not an API call.
 
 The page shows the total alongside the rows: without it a reviewer cannot tell "this is
 everything that matched" from "the page limit truncated it", and on an audit log those are
@@ -745,7 +744,7 @@ very different conclusions.
 
 ---
 
-# Backup and restore (M25)
+# Backup and restore
 
 ```bash
 make backup                      # postgres + qdrant snapshots + minio + manifest
@@ -753,8 +752,8 @@ make backup-verify B=backups/…   # prove it is restorable
 make backup-restore B=backups/…  # replace this platform's data
 ```
 
-Host-side, like `check_airgap.py`: `pg_dump` lives in the postgres image and Rule 4 forbids
-`apt-get` at build time, so the control plane cannot dump its own database — it orchestrates
+Host-side, like `check_airgap.py`: `pg_dump` lives in the postgres image and nothing may be
+fetched with `apt-get` at build time, so the control plane cannot dump its own database — it orchestrates
 `docker compose exec` instead.
 
 **Verify proves restorability, not presence.** It re-hashes every artifact *and* asks
@@ -768,7 +767,7 @@ password. A *fingerprint* goes in the manifest instead, and **restore refuses** 
 platform holding a different key — because restoring with the wrong one does not fail
 loudly, it produces credentials that decrypt to garbage discovered days later.
 
-The console (E7) adds no new route to the data: restoring needs `backup.restore`, the
+The console adds no new route to the data: restoring needs `backup.restore`, the
 backup's name typed back and a reason. The host runner refuses a backup it has not listed
 itself, and both the API and `backup.py` refuse one taken under another key. Threats
 and mitigations for the whole operations path: [architecture/threat-model.md](architecture/threat-model.md).

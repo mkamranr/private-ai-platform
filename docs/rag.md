@@ -1,15 +1,15 @@
-# Knowledge, RAG and memory (M15, M16)
+# Knowledge, RAG and memory
 
 ```
 upload → parse → OCR if required → chunk → embed → Qdrant
 ```
 
-Reranking, document versions, the retrieval playground and evaluation sets (E5) are
+Reranking, document versions, the retrieval playground and evaluation sets are
 in [rag-evaluation.md](rag-evaluation.md).
 
 Ingestion runs in a **worker**, never a request: parsing and embedding a 200-page PDF takes
 minutes. `POST /knowledge-bases/{id}/documents` returns **202** and the caller polls — the
-same reasoning as model deployment (M08).
+same reasoning as model deployment.
 
 ---
 
@@ -23,7 +23,7 @@ same reasoning as model deployment (M08).
 | CSV | stdlib `csv`, header repeated per batch | row range |
 | HTML | stdlib `HTMLParser`, script/style dropped | — |
 | TXT · MD · JSON · YAML · log | stdlib | — |
-| Images, scanned PDFs | **OCR** (M28) | `enterprise-ocr` |
+| Images, scanned PDFs | **OCR** | `enterprise-ocr` |
 
 **Only PDF needs a dependency.** DOCX and PPTX are ZIP archives of XML, so they are read
 with stdlib rather than `python-docx`/`python-pptx` — both of which pull `lxml`, a C
@@ -34,7 +34,7 @@ Each parser returns `(text, location)` pairs, so a chunk can cite a page or slid
 citation nobody can check is not much better than no citation.
 
 **A scanned file becomes `NO_TEXT`, not `FAILED`.** Nothing is wrong with it; the platform
-cannot read it yet. The status detail says so and names Phase 9. Marking it FAILED would
+cannot read it yet. The status detail says so and names what to deploy. Marking it FAILED would
 send an operator hunting a bug that does not exist.
 
 Non-UTF-8 exports (cp1252 is depressingly common) are decoded rather than rejected.
@@ -81,7 +81,7 @@ base must not orphan its vectors.
 
 ---
 
-## Scoping (§M16) — the security core
+## Scoping — the security core
 
 **Every search is scoped, and the vector store raises rather than searching unfiltered.**
 
@@ -97,7 +97,7 @@ behaviour.
 
 `MemoryScope` is a required argument on every memory operation, not a set of optional
 keyword arguments, so no call site can omit it. It carries **both** `user_id` and
-`end_user`: a platform account and a chat identity behind a shared frontend (M17) are
+`end_user`: a platform account and a chat identity behind a shared frontend are
 different things, and collapsing them would either lose per-person memory in chat or treat
 an unauthenticated string as a platform identity.
 
@@ -111,7 +111,7 @@ being read as "delete everything".
 
 ---
 
-## Three memory layers (§M16)
+## Three memory layers
 
 | Layer | Store | Holds | Lifetime |
 |---|---|---|---|
@@ -119,7 +119,7 @@ being read as "delete everything".
 | `LONG_TERM` | PostgreSQL | Conversation history and a rolling summary | Until deleted |
 | `SEMANTIC` | Qdrant | Facts and exchanges, recalled by similarity | Until expiry or deletion |
 
-The §M16 API: `store_memory` → `remember()`, `search_memory` → `recall()`,
+The memory API: `store_memory` → `remember()`, `search_memory` → `recall()`,
 `get_conversation()`, `summarize_conversation()`, `delete_memory` → `forget()`.
 
 Semantic memory uses **one collection partitioned by payload filters**, not a collection
@@ -163,7 +163,7 @@ a stale or hand-edited id must not become a path into another tenant's corpus.
 
 Retrieval never raises. A vector store outage degrades the answer; it does not refuse it.
 
-Each base's retrieval settings apply to agents (E5): its top-k (default 4), its score
+Each base's retrieval settings apply to agents: its top-k (default 4), its score
 floor (else 0.25) and its reranker, if one is configured. See
 [rag-evaluation.md](rag-evaluation.md).
 
@@ -180,14 +180,14 @@ time. A configured number that was wrong would create a collection rejecting eve
 with nothing to tell the operator the right one.
 
 Embedding goes **through the gateway**, so a knowledge base uses the same alias resolution
-and the same deployment a developer's API call would (§13). A second path would eventually
+and the same deployment a developer's API call would. A second path would eventually
 disagree about which model is serving, and the symptom would be a base whose vectors are
 incomparable with its own queries.
 
-**Every embedding is accounted (E21).** Ingestion is charged to the uploader and the base's
+**Every embedding is accounted.** Ingestion is charged to the uploader and the base's
 team, a search to the person searching and the base's team, and memory to its person and
 the agent's team. The rows appear on the Usage page, in chargeback and in team and model
-token budgets. See [gateway-policy.md](gateway-policy.md#embeddings-e21).
+token budgets. See [gateway-policy.md](gateway-policy.md#embeddings).
 
 ### The mock embedding model
 
@@ -207,7 +207,7 @@ model is needed for retrieval **quality**; this one gives retrieval **correctnes
 
 ## Orphaned containers
 
-Not strictly Phase 5, but found here. A container the platform created but has no record of
+Not strictly a knowledge-base topic, but documented here. A container the platform created but has no record of
 holds GPUs, serves a model nobody can see, and survives every restart. It appears when:
 
 * the control plane dies between creating the container and committing the row;
@@ -228,7 +228,7 @@ ever considered — the same guard that stops the platform stopping its own data
 
 ## Known gaps
 
-* **OCR runs when an OCR model is deployed** (M28). A scanned page goes
+* **OCR runs when an OCR model is deployed**. A scanned page goes
   `PARSING → OCR → CHUNKING → …` and ends up indexed with its page numbers intact, so a
   chunk from a scan cites "page 3" exactly as one from a PDF does. With nothing serving
   `enterprise-ocr`, the document lands in `NO_TEXT` with a reason naming what to deploy —
@@ -241,21 +241,21 @@ ever considered — the same guard that stops the platform stopping its own data
   for GPU-free development; `models/manifests/examples/paddleocr-v4.yaml` is the
   production shape.
 * **No re-embed of a whole base.** Changing a base's model or chunk size needs a new
-  base. Single documents can be re-ingested from their stored original (E5,
-  `POST /documents/{id}/reingest`).
+  base. Single documents can be re-ingested from their stored original
+  (`POST /documents/{id}/reingest`).
 * **Nothing sweeps expired memories.** `delete_expired` exists and is tested; recall skips
   expired entries at read time, so they are inert, but they are not reclaimed.
 * **Agents do not write memory yet.** `remember()` works and is scoped, but no run calls it
   — what an agent *should* choose to remember is a product decision, and inferring it
   silently is how an agent's picture of someone ossifies around a guess.
-* **`DATABASE` and `OPENAPI` tools remain unimplemented** (Phase 4 gap, unchanged).
+* **`DATABASE` and `OPENAPI` tools are not implemented.**
 
 ---
 
 ## In the admin UI
 
 **Knowledge → Knowledge Bases** creates a base, uploads documents, and shows each one
-walking the §M15 lifecycle (`PENDING → PARSING → CHUNKING → EMBEDDING → INDEXED`) as the
+walking the ingestion lifecycle (`PENDING → PARSING → CHUNKING → EMBEDDING → INDEXED`) as the
 worker gets to it. The page polls, so an ingesting document updates in place.
 
 Only aliases pointing at a **serving EMBEDDING model** are offered when creating a base.

@@ -1,6 +1,6 @@
 # Workflows
 
-Expansion phase E6 (plan §5.10). A workflow is a graph of steps: model calls, knowledge
+A workflow is a graph of steps: model calls, knowledge
 retrieval, tools, HTTP requests, conditions, transforms, human approvals and delays. It
 runs on demand, through the API, on a cron schedule or from a webhook. Every run keeps a
 step-by-step trace.
@@ -167,16 +167,16 @@ is `HIGH` or `CRITICAL` risk does the same before calling it. The risk levels co
   superuser can always decide.
 - Every decision is audited as `WORKFLOW_APPROVAL_GRANTED` or `WORKFLOW_APPROVAL_DENIED`,
   with the reason.
-- **Expiry (E17):** after `agents.approval_ttl_hours` (default 72, 0 = never) without a
+- **Expiry:** after `agents.approval_ttl_hours` (default 72, 0 = never) without a
   decision, the approval becomes `EXPIRED` and the run fails. The `rejected` branch is not
   taken. Audited as `WORKFLOW_APPROVAL_EXPIRED` by `scheduler`. See
-  [agents.md](agents.md#expiry-e17).
-- **Reminders (E22):** `agents.approval_reminder_hours` (default 24) before expiry, the
+  [agents.md](agents.md#expiry).
+- **Reminders:** `agents.approval_reminder_hours` (default 24) before expiry, the
   step raises a reminder alert (source `approvals`) quoting its message, for the Alerts
-  page and subscribed notification channels. See [agents.md](agents.md#reminders-e22).
+  page and subscribed notification channels. See [agents.md](agents.md#reminders).
   With `agents.approval_reminder_email_approvers` on, it is also emailed to each person
   who could decide it, never to the run's starter unless the step allows self-approval
-  ([E39](agents.md#reminder-emails-to-each-approver-e39)).
+  (see [reminder emails](agents.md#reminder-emails-to-each-approver)).
 
 ## Triggers
 
@@ -210,7 +210,7 @@ curl -X POST https://ai.example.internal/api/v1/workflow-hooks/<workflow-id> \
 - A missing workflow, a workflow with no webhook and a wrong token all get the same 401,
   so the endpoint does not reveal which workflows exist.
 
-#### Signed calls (E36)
+#### Signed calls
 
 The token says who may call; it does not prove the body arrived unchanged, and a captured
 call could be sent again. Enabling or rotating a webhook also issues a **signing secret**
@@ -236,14 +236,14 @@ curl -X POST https://ai.example.internal/api/v1/workflow-hooks/<workflow-id> \
 - Every refusal is the same 401 as a wrong token; the reason is logged
   (`workflow_webhook_signature_refused`), not returned.
 - Rotating replaces token and secret together; disabling the webhook deletes both.
-- **Rotating without dropped calls (E41).** Send `{"overlap_minutes": N}` (up to 10080,
+- **Rotating without dropped calls.** Send `{"overlap_minutes": N}` (up to 10080,
   7 days; the console offers 1 hour, 24 hours and 7 days) to keep the replaced token and
   secret working for N minutes while callers switch. Each token is checked with its own
   secret: the old token signed with the new secret is refused. The response's
   `previous_valid_until`, and the workflow's `webhook_previous_valid_until`, say when the
   old pair stops. Rotating again keeps only the pair just replaced, and disabling the
   webhook ends the overlap at once. The default, 0, stops the old pair immediately.
-- Upgrade: webhooks enabled before E36 have no secret until rotated.
+- Upgrade: webhooks enabled before signing was introduced have no secret until rotated.
 
 ## The worker
 
@@ -258,7 +258,7 @@ approval is continued by the decision itself, not by the worker.
 
 The engine is the platform's own, kept on Postgres. Cron times come from APScheduler's
 `CronTrigger`, which is already a dependency. There is no APScheduler job store and no
-separate queue. Plan §5.10 asks for a persisted deterministic engine without
+separate queue. The aim is a persisted, deterministic engine without
 distributed-workflow complexity, and a run's state lives on its row (`workflow_runs.state`).
 
 ## Scope and permissions
@@ -277,11 +277,11 @@ Workflows take part in team scope ([teams.md](teams.md)):
 - **References:** saving or publishing a definition checks the knowledge bases and model
   names it refers to against your scope. A workflow cannot reach another team's knowledge
   base.
-- **Its own team (E18):** the same references must also be usable by the workflow's own
+- **Its own team:** the same references must also be usable by the workflow's own
   team, so a shared workflow may use only shared models and knowledge bases. LLM and
   retrieval steps check again when they run, on the rendered values. A step that names a
   model moved to another team since the workflow was published fails with the reason.
-  See [teams.md](teams.md#what-an-agent-or-workflow-may-use-e18).
+  See [teams.md](teams.md#what-an-agent-or-workflow-may-use).
 - **Moving:** `PUT /scope` accepts `resource_type: "workflow"` (needs `workflow.edit`). A
   move to a team that cannot use what the workflow refers to is refused with 409.
 
@@ -313,5 +313,4 @@ Workflows take part in team scope ([teams.md](teams.md)):
   future canvas but not used for layout.
 - **Parallel execution of independent branches.** Steps run one at a time in topological
   order.
-- **Webhook signature verification** (HMAC of the body). The token is a bearer secret.
 - **Sub-workflows and loops.**

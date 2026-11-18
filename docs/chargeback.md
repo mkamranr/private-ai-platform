@@ -1,14 +1,10 @@
-# Chargeback (E9)
-
-Status: E9. It closes "Advanced chargeback" (plan §14, P2) and the rates half of §5.14
-("allow administrators to configure local rates; label infrastructure cost estimates as
-estimates").
+# Chargeback
 
 The console's **AI Models → Chargeback** page, and `/api/v1/chargeback`, turn what the
 platform already records into estimated cost per team, API key, platform user, end user or
 model. Nothing new is collected: reports read `usage_records` (one row per gateway call,
-plus, since E19, one per agent run and workflow LLM step the platform makes itself, and
-since E21 one per embedding call for ingestion, search, retrieval and memory)
+plus one per agent run and workflow LLM step the platform makes itself, and
+one per embedding call for ingestion, search, retrieval and memory)
 and `gpu_allocations` (which GPUs each deployment held, and when).
 
 ## Rates
@@ -101,7 +97,7 @@ A caller without `scope.all` sees rows for their own teams and for shared usage 
 Totals cover every row the caller may see, even when the response returns only the first
 1,000.
 
-### Timings (E40)
+### Timings
 
 Each row, the idle row and the totals also say how fast that usage was served, from the
 same calls as its cost:
@@ -113,8 +109,8 @@ same calls as its cost:
 | `output_tps_p50` | median output tokens per second |
 | `timed_streams` | how many calls the TTFT and throughput figures come from |
 
-TTFT and throughput are measured on streamed calls only (E16, see
-[gateway-policy.md](gateway-policy.md#timings-e16)), so a row with no streamed calls has
+TTFT and throughput are measured on streamed calls only (see
+[gateway-policy.md](gateway-policy.md#timings)), so a row with no streamed calls has
 `null` there and `timed_streams` 0. A row with no calls (idle capacity) has `null`
 latency. The totals' percentiles are computed over every call the caller may see, not from
 the rows: a percentile of percentiles is not a percentile. The page shows *p95 latency* and
@@ -129,14 +125,14 @@ capacity:
   row count). The data leaves the platform.
 - Each row carries the currency, the period and `estimate=true`.
 - Unpriced amounts are empty cells, not 0.
-- **Timings (E40)** are the last six columns (`avg_latency_ms` to `timed_streams`), after
+- **Timings** are the last six columns (`avg_latency_ms` to `timed_streams`), after
   `estimate`, so a spreadsheet built on the earlier columns keeps working. An unmeasured
   figure is an empty cell, not 0.
 - **Formula-safe.** End-user names come from request bodies. A cell starting with `=`, `+`,
   `-`, `@`, a tab or a carriage return is prefixed with `'`, so a spreadsheet does not run
   `=HYPERLINK(...)` planted by a caller.
 
-## Budgets (E12)
+## Budgets
 
 A monthly **cost budget** compares the month's estimated spend (from the 1st, 00:00 UTC)
 with an amount in the `chargeback.currency` currency. A budget belongs to one scope:
@@ -181,13 +177,12 @@ rate card is a finance decision.
 
 ## Not built
 
-- **Invoices, and budgets that refuse traffic.** Budgets (E12) only alert. Refusing
+- **Invoices, and budgets that refuse traffic.** Budgets only alert. Refusing
   requests on a currency figure would need rates to be authoritative, and these are
-  estimates. Quotas (E2) are the hard limit, in tokens.
-- **Notifications outside the console** (email, chat). Budget alerts are in-app only.
+  estimates. Quotas are the hard limit, in tokens.
 - **Currency conversion.**
 - **Power or utilisation-weighted GPU cost.** GPU time is reservation time, the only GPU
   measure the platform can attribute to a model reliably.
 - **Cost of retrieval, embeddings run by ingestion workers, agent tool calls and voice.**
-  Only gateway calls are recorded per caller today. Embedding calls made through the gateway
-  are priced like any other call.
+  Model and embedding calls, including the platform's own, are recorded and priced like
+  any other call; the rest of this work is not costed.

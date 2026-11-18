@@ -1,12 +1,12 @@
-# Current state (Phase 0 audit)
+# Current state
 
 Audit of the repository at commit `0eedc13` against
 [`docs/roadmap/Private-AI-Platform-Expansion-Plan.md`](../roadmap/Private-AI-Platform-Expansion-Plan.md)
 (the "expansion plan"). Every *Existing* claim below names the file that implements it.
 "Existing" means present in code, not necessarily verified by a test run on this audit
-(see [§8 Baseline](#8-baseline-test-results)).
+(see [Baseline test results](#8-baseline-test-results)).
 
-Status vocabulary, per expansion plan §3:
+Status vocabulary:
 
 - **Existing**: implemented and wired into the API/UI.
 - **Partial**: some of the plan's requirement exists; the gap is named.
@@ -42,9 +42,9 @@ flowchart TB
   API -. profile: monitoring .-> OBS[Prometheus, Loki, Tempo,<br/>Alloy, Grafana, Langfuse]
 ```
 
-The backend is a **modular monolith** (`backend/app/`), which is what the expansion plan's
-§9 recommends. It is layered `api → services → repositories → models`, and the layering
-is enforced by contracts run in `make check` (see `docs/architecture.md` §4).
+The backend is a **modular monolith** (`backend/app/`), which is what the expansion plan
+recommends. It is layered `api → services → repositories → models`, and the layering
+is enforced by contracts run in `make check` (see section 4 of `docs/architecture.md`).
 
 | Service (compose) | Profile | Responsibility |
 |---|---|---|
@@ -150,25 +150,25 @@ Backup & Restore, Offline Updates and Diagnostics.
 
 Full per-feature detail is in [`docs/roadmap/feature-matrix.md`](../roadmap/feature-matrix.md).
 
-| Plan § | Area | Status | Main gap |
-|---|---|---|---|
-| 5.1 | Unified dashboard | Partial | No time-range filters, alerts, ingestion failures or service dependency view |
-| 5.2 | Inference backend management | Partial | Runtimes are per-deployment; no `inference_backends` entity, test-connection or capability record (Ollama import exists) |
-| 5.3 | Model registry | Partial | Has files, sha256, quantization, context length. Missing license, approval status, version grouping, team access |
-| 5.4 | Deployment lifecycle | Partial | State machine and GPU scheduler exist. No revisions, rollback, wizard validation or production approval |
-| 5.5 | OpenAI gateway | Partial | Streaming, aliases, keys, usage and per-key RPM exist. No token quotas, circuit breaker, fallback policy or per-model concurrency limit |
-| 5.6 | GPU / infra monitoring | Existing | Host CPU/RAM/disk is less complete than GPU telemetry |
-| 5.7 | Knowledge / RAG | Partial | Ingestion, OCR, chunking, tenant-scoped retrieval and citations exist. No reranking stage, RAG evaluation sets, document versioning or per-document ACL |
-| 5.8 | MCP / tools | Existing | Risk level, required permission and executions are present. Network egress restriction per tool is unverified |
-| 5.9 | Agents | Existing | Versioned, budgets, approvals, cancel. No explicit global kill switch |
-| 5.10 | Workflow builder | Planned | Nothing exists |
-| 5.11 | Chat / playground | Partial | Chat (admin + Open WebUI), developer portal. No request-builder playground |
-| 5.12 | Identity / RBAC / teams | Partial | Local, OIDC and LDAP sign-in (`services/auth_providers.py`) and RBAC exist. No teams, tenants outside knowledge, or the plan's 8 built-in roles |
-| 5.13 | Audit / governance | Partial | Audit log exists. No retention/redaction policy UI or exportable reports |
-| 5.14 | Usage and quotas | Partial | Usage records and per-key RPM. No token or budget quotas |
-| 5.15 | Notifications / alerts | Partial | Prometheus rules only (`docker/prometheus/rules/platform.yml`). No in-app alerts |
-| 5.16 | Offline install / upgrade / backup | Existing (CLI) | `offline/*.sh`, `scripts/build_bundle.py`, `scripts/backup.py`. Manifest carries SHA-256 checksums (`scripts/build_bundle.py`, verified in `offline/lib.sh`) but is **not signed**, and has no SBOM. No UI |
-| 5.17 | Security hardening | Existing (mostly) | See §6 |
+| Area | Status | Main gap |
+|---|---|---|
+| Unified dashboard | Partial | No time-range filters, alerts, ingestion failures or service dependency view |
+| Inference backend management | Partial | Runtimes are per-deployment; no `inference_backends` entity, test-connection or capability record (Ollama import exists) |
+| Model registry | Partial | Has files, sha256, quantization, context length. Missing license, approval status, version grouping, team access |
+| Deployment lifecycle | Partial | State machine and GPU scheduler exist. No revisions, rollback, wizard validation or production approval |
+| OpenAI gateway | Partial | Streaming, aliases, keys, usage and per-key RPM exist. No token quotas, circuit breaker, fallback policy or per-model concurrency limit |
+| GPU / infra monitoring | Existing | Host CPU/RAM/disk is less complete than GPU telemetry |
+| Knowledge / RAG | Partial | Ingestion, OCR, chunking, tenant-scoped retrieval and citations exist. No reranking stage, RAG evaluation sets, document versioning or per-document ACL |
+| MCP / tools | Existing | Risk level, required permission and executions are present. Network egress restriction per tool is unverified |
+| Agents | Existing | Versioned, budgets, approvals, cancel. No explicit global kill switch |
+| Workflow builder | Planned | Nothing exists |
+| Chat / playground | Partial | Chat (admin + Open WebUI), developer portal. No request-builder playground |
+| Identity / RBAC / teams | Partial | Local, OIDC and LDAP sign-in (`services/auth_providers.py`) and RBAC exist. No teams, tenants outside knowledge, or the plan's 8 built-in roles |
+| Audit / governance | Partial | Audit log exists. No retention/redaction policy UI or exportable reports |
+| Usage and quotas | Partial | Usage records and per-key RPM. No token or budget quotas |
+| Notifications / alerts | Partial | Prometheus rules only (`docker/prometheus/rules/platform.yml`). No in-app alerts |
+| Offline install / upgrade / backup | Existing (CLI) | `offline/*.sh`, `scripts/build_bundle.py`, `scripts/backup.py`. Manifest carries SHA-256 checksums (`scripts/build_bundle.py`, verified in `offline/lib.sh`) but is **not signed**, and has no SBOM. No UI |
+| Security hardening | Existing (mostly) | See [section 6](#6-security-and-operations-gaps) |
 
 ---
 
@@ -185,10 +185,10 @@ Strengths already in place (see `docs/security.md`):
 - Node enrollment: per-token attempt cap, per-IP rate limit, and agent port pinned to an allowlist as an SSRF control (`config/settings.py`, enrollment section).
 - Air-gap check (`scripts/check_airgap.py`) and pinned requirements (`requirements*.txt` from `.in`).
 
-Gaps against plan §5.17 and the threat model:
+Gaps against the plan's security-hardening requirements:
 
 1. **No team/tenant isolation outside knowledge.** Any user with a permission sees all models, agents, keys and usage.
-2. **No threat-model document** with mitigation, residual risk and test per threat (plan §5.17).
+2. **No threat-model document** with mitigation, residual risk and test per threat.
 3. **SSRF defenses** exist for node enrollment (port allowlist) but are not a single policy covering the Ollama endpoint, external providers and MCP endpoints; this needs a review.
 4. **Failed-login lockout** is counted but not documented as enforced; check `services/auth.py` before claiming lockout.
 5. **No SBOM** generation in `scripts/build_bundle.py` (licenses are carried; SBOM is not).
@@ -206,23 +206,23 @@ the expansion:
 |---|---|---|
 | Adding `tenant_id`/`team_id` to existing tables | Every protected query must filter, or isolation is false. Existing rows need a default | Additive migration with `default='default'` like knowledge already does; scope filter in the repository layer; authorization tests per route |
 | Introducing `inference_backends` | Deployments currently carry runtime + endpoint inline | Make backend optional on deployments first, backfill one backend per distinct external endpoint, keep inline fields readable |
-| Plan names vs. existing names (`audit_events` vs `audit_logs`, `gateway_api_keys` vs `api_keys`) | Renames break migrations, backup and docs | Keep existing names (plan §3: "do not rewrite a working module just to match suggested naming") |
+| Plan names vs. existing names (`audit_events` vs `audit_logs`, `gateway_api_keys` vs `api_keys`) | Renames break migrations, backup and docs | Keep existing names (per the plan: "do not rewrite a working module just to match suggested naming") |
 | Compose profile names differ (`monitoring` vs `observability`, no `rag`/`inference`) | Scripts and docs reference current names | Add plan names as *aliases* only if needed; do not rename |
-| Gates drop all tables | `alembic downgrade base` in gate scripts | Never run gates against real data; document this in every phase report |
+| Gates drop all tables | `alembic downgrade base` in gate scripts | Never run gates against real data, and say so wherever gates are documented |
 | Frontend is vanilla JS with no build step | About 12 new pages will grow `admin.js` | Split `admin.js` into per-page modules (still no build step) before adding pages |
-| Doc drift | `docs/architecture.md` §1–3 still name LangGraph as the agent runtime; the README states it is native | Fix in Phase 1 docs pass |
+| Doc drift | Sections 1–3 of `docs/architecture.md` still name LangGraph as the agent runtime; the README states it is native | Fix in the next documentation pass |
 
 ---
 
 ## 8. Baseline test results
 
 There is **no baseline recorded on this audit machine.** It has no `make` or `docker`,
-and Python 3.10 where the backend requires 3.12. The plan's Phase 0 acceptance item
+and Python 3.10 where the backend requires 3.12. The plan's acceptance item
 "baseline tests recorded" is still **open**. Record it on a machine with Docker:
 
 ```bash
 make up && make check    # lint, mypy, layering, ~500 test functions across 4 services
-make gate                # Phase 0 gate. WARNING: gates drop every table
+make gate                # WARNING: gates drop every table
 ```
 
 Record the pass/fail counts here when that has been done.

@@ -1,7 +1,7 @@
 # Architecture
 
 The contract every module is implemented against. Read this, `database.md` and
-`api.md` before writing code for any module (spec §26).
+`api.md` before writing code for any module.
 
 ---
 
@@ -10,7 +10,7 @@ The contract every module is implemented against. Read this, `database.md` and
 A **control plane**. Not an inference engine, not an agent framework, not a vector
 database.
 
-The spec's core principle (§2) is *do not rebuild mature open-source technologies*.
+The core principle is *do not rebuild mature open-source technologies*.
 So the custom code here is the registry, scheduler, policy engine, API gateway,
 node agent, admin UI and integration layer. vLLM does inference. MCP handles tool
 interoperability. Qdrant does vector search. PostgreSQL
@@ -19,7 +19,7 @@ persists. Prometheus/Grafana/Loki/Tempo handle telemetry.
 Every time you are tempted to write something an existing component already does,
 that is the signal to integrate rather than implement.
 
-The one deliberate exception is the **agent loop**. The plan named LangGraph; the
+The one deliberate exception is the **agent loop**. The original design named LangGraph; the
 platform runs its own ReAct loop (`PlatformAgentRuntime`) behind the `AgentRuntime`
 interface, because LangGraph would add 38 packages to the air-gapped bundle (a second
 PostgreSQL driver and a telemetry client among them) and keep run state in opaque tables
@@ -28,7 +28,7 @@ addition, not a rewrite. See [agents.md](agents.md#the-runtime-and-why-it-is-not
 
 ---
 
-## 2. The four layers (§28)
+## 2. The four layers
 
 ```
                         USER EXPERIENCE
@@ -48,7 +48,7 @@ addition, not a rewrite. See [agents.md](agents.md#the-runtime-and-why-it-is-not
 
 The control plane knows how to *manage* these systems. The systems themselves stay
 **replaceable**. That property is the single most important thing about this
-codebase, and it is why the interfaces in §3 exist before their implementations.
+codebase, and it is why the interfaces in [section 3](#3-replaceability-boundaries) exist before their implementations.
 
 ---
 
@@ -57,32 +57,32 @@ codebase, and it is why the interfaces in §3 exist before their implementations
 Defined in `backend/app/core/interfaces/`. Callers depend on the abstraction, never
 on a concrete class.
 
-| Interface | Phase 0 status | First implementation | Intended alternatives |
-|---|---|---|---|
-| `ContainerRuntime` | defined | `DockerContainerRuntime` (P1) | `KubernetesContainerRuntime` |
-| `ComputeBackend` | defined | `DockerComputeBackend` (P2) | `KubernetesComputeBackend` |
-| `LLMProvider` | defined | `VLLMProvider`, `MockLLMProvider` (P2) | `SGLangProvider`, `OllamaProvider` |
-| `VectorStore` | defined | `QdrantVectorStore` (P5) | `PgVectorStore` |
-| `AgentRuntime` | defined | `PlatformAgentRuntime` (P4, native ReAct loop) | `LangGraphAgentRuntime` |
-| `GpuProbe` | defined | `NvidiaSmi`, `Dcgm`, **`Fake`** (P1) | — |
-| `Scheduler` | defined | `SimpleGpuScheduler` (P2) | topology/quota-aware |
-| `ToolExecutor` | defined | MCP, REST, OpenAPI, Internal, Database (P4) | — |
+| Interface | First implementation | Intended alternatives |
+|---|---|---|
+| `ContainerRuntime` | `DockerContainerRuntime` | `KubernetesContainerRuntime` |
+| `ComputeBackend` | `DockerComputeBackend` | `KubernetesComputeBackend` |
+| `LLMProvider` | `VLLMProvider`, `MockLLMProvider` | `SGLangProvider`, `OllamaProvider` |
+| `VectorStore` | `QdrantVectorStore` | `PgVectorStore` |
+| `AgentRuntime` | `PlatformAgentRuntime` (native ReAct loop) | `LangGraphAgentRuntime` |
+| `GpuProbe` | `NvidiaSmi`, `Dcgm`, **`Fake`** | — |
+| `Scheduler` | `SimpleGpuScheduler` | topology/quota-aware |
+| `ToolExecutor` | MCP, REST, OpenAPI, Internal, Database | — |
 
 Two rules, both machine-enforced by import-linter (`backend/pyproject.toml`):
 
 - Nothing in `app/core/interfaces/` may import an implementation, a vendor SDK, a
   service or a repository. If an interface needs a vendor type, the abstraction is
   leaking.
-- The Docker SDK is reachable only from `DockerService` (Rule 7).
+- The Docker SDK is reachable only from `DockerService`.
 
 `GpuProbe` is **an addition to the spec's list**, and the most operationally
 significant one. Without it, nothing GPU-adjacent could be developed or tested on a
 machine without an NVIDIA card — which describes the reference development machine.
-See §7.
+See [section 7](#7-fakes-are-load-bearing).
 
 ---
 
-## 4. Request flow and layering (Rule 6)
+## 4. Request flow and layering
 
 ```
 HTTP request
@@ -98,7 +98,7 @@ Enforced, not merely encouraged:
 - Routers must not import `app.repositories` or `app.db` directly. They reach both
   *through* `app/api/deps.py`, which is the DI seam.
 - Services must not import FastAPI. That is what lets the same service run from an
-  APScheduler worker (P1) or the CLI with no request in scope.
+  APScheduler worker or the CLI with no request in scope.
 - Repositories never commit. The unit of work is the request or the worker task,
   managed by `app/db/session.py::session_scope`. A repository that committed on its
   own would break atomicity across multi-step operations — most importantly
@@ -147,7 +147,7 @@ async def deploy(
   `app/core/permissions.py`. Routes reference the constants, so a rename becomes an
   import error rather than a route that silently authorises nobody — or everybody.
 - Code never branches on a role name. Roles are configuration; permissions are the
-  contract. That is what lets an operator define a new role in Phase 6 without a
+  contract. That is what lets an operator define a new role without a
   code change.
 - The user is re-read from the database on every request rather than trusted from
   token claims, so disabling an account or revoking a role takes effect immediately
@@ -155,10 +155,10 @@ async def deploy(
 - Denials are audited before the 403 is raised, independently of the request
   transaction.
 
-**This is deviation 1 from the spec's phasing.** §19 puts M03 in Phase 6. Building
-~18 modules of API surface first and retrofitting authorisation afterwards is how
-authorisation gaps ship. The skeleton lives in Phase 0; full OIDC/LDAP, API keys and
-the developer portal remain Phase 6.
+**This is deviation 1 from the spec** (see [section 14](#14-deviations-from-the-spec-in-one-place)).
+The authorisation skeleton came before every other module rather than after them:
+building ~18 modules of API surface first and retrofitting authorisation afterwards is
+how authorisation gaps ship.
 
 ---
 
@@ -172,7 +172,7 @@ on it. So:
 | `NvidiaSmiGpuProbe` / `DcgmGpuProbe` | `FakeGpuProbe` — N synthetic A100s with fluctuating telemetry | `GPU__PROBE` |
 | vLLM container | `mock-vllm` — OpenAI-compatible, SSE streaming | `MODELS__DEFAULT_RUNTIME` |
 
-This is not a testing convenience bolted on afterwards. It is what makes the §20 MVP
+This is not a testing convenience bolted on afterwards. It is what makes the reference
 scenario — register node → import model → deploy → create agent → execute → trace —
 an **automated end-to-end test runnable on a laptop**. Without that seam, every
 GPU-adjacent bug could only be found on the target hardware, and would be found late.
@@ -180,18 +180,19 @@ GPU-adjacent bug could only be found on the target hardware, and would be found 
 The real test is re-running the same suite on a GPU host with
 `GPU__PROBE=nvidia_smi` and `MODELS__DEFAULT_RUNTIME=vllm`. Anything that passes
 locally and fails there marks a leak in an interface boundary — precisely the signal
-§28 exists to give.
+the interfaces exist to give.
 
 ---
 
-## 8. Air-gap discipline (Rule 4)
+## 8. Air-gap discipline
 
-The spec places packaging in Phase 8. Treating air-gap purely as a Phase 8
-deliverable does not work: eight phases of pulling freely from PyPI and Docker Hub
-produce floating base tags, unpinned dependencies and Dockerfiles that `apt-get` at
-build time — none of which can be bundled without rework.
+Treating air-gap purely as a final packaging step does not work: development that
+pulls freely from PyPI and Docker Hub produces floating base tags, unpinned
+dependencies and Dockerfiles that `apt-get` at build time — none of which can be
+bundled without rework.
 
-**This is deviation 2.** Split it: discipline from Phase 0, bundle tooling in Phase 8.
+**This is deviation 2 from the spec,** which left packaging to the end. Split it: the
+discipline is enforced continuously, and the bundle tooling is separate.
 
 Enforced by `scripts/check_airgap.py`, run as part of `make lint`:
 
@@ -207,7 +208,7 @@ committing the regenerated lockfile. Never hand-edit a lockfile.
 
 ---
 
-## 9. Configuration (M02)
+## 9. Configuration
 
 Precedence, highest wins:
 
@@ -243,8 +244,7 @@ On an air-gapped system where nobody can attach a debugger to production, that
 difference decides how long an outage lasts.
 
 Which dependencies are required is configurable (`HEALTH__REQUIRED`), because
-readiness requirements change per phase — Qdrant and MinIO only start mattering at
-Phase 5.
+readiness requirements vary with the features in use.
 
 Health responses are unauthenticated, so they carry dependency names, states and
 latencies — never a DSN, credential or stack trace.
@@ -259,7 +259,7 @@ reusable from a worker or the CLI.
 
 An unexpected exception returns an opaque 500. Stack traces, driver messages and SQL
 go to the log, never to the client — on an air-gapped security platform an error
-body is an information-disclosure surface (§25).
+body is an information-disclosure surface.
 
 `403` for a missing permission, never `404`: the caller is authenticated and simply
 lacks the grant. The response names the required permission so an administrator can
@@ -267,7 +267,7 @@ act on it.
 
 ---
 
-## 12. Streaming (§25)
+## 12. Streaming
 
 The gateway must not buffer an LLM response. Three things have to line up, and
 missing any one produces "nothing for 30 seconds, then everything at once":
@@ -294,7 +294,7 @@ Fernet under a key mounted from **outside** the database
 (`SECURITY__ENCRYPTION_KEY`), so a database dump alone yields nothing usable.
 
 `SecretCipher` is constructed at startup, so a malformed key fails immediately
-rather than the first time Phase 4 registers a tool.
+rather than the first time a tool is registered.
 
 Audit metadata passes through `app/services/audit.py::redact`, which recursively
 strips password/token/key fields. An audit log is one of the most widely readable
@@ -306,35 +306,33 @@ tables in the platform; a captured credential there would be a durable leak.
 
 | # | Spec says | This codebase does | Why |
 |---|---|---|---|
-| 1 | Auth/RBAC in Phase 6 | Skeleton in Phase 0 | Retrofitting authorisation across ~18 modules is how gaps ship |
-| 2 | Air-gap packaging in Phase 8 | Discipline from Phase 0, tooling in Phase 8 | Unbundleable dependencies accumulate silently |
-| 3 | §28 interfaces described | ABCs written before implementations | Empty ABCs cost nothing and prevent the Docker/vLLM dead end |
+| 1 | Auth/RBAC late in the build | Skeleton before any other module | Retrofitting authorisation across ~18 modules is how gaps ship |
+| 2 | Air-gap packaging at the end | Discipline enforced continuously, bundle tooling separate | Unbundleable dependencies accumulate silently |
+| 3 | Replaceability interfaces described | ABCs written before implementations | Empty ABCs cost nothing and prevent the Docker/vLLM dead end |
 | 4 | Redis | Valkey | Spec permits either; BSD licensing suits on-premises government deployment better than RSALv2/SSPL. `redis-py` unchanged |
 | 5 | `/data/ai-platform` volumes | `${PLATFORM_DATA_ROOT}`, default `./data` | Docker Desktop does not share `/data`; the absolute path fails on a developer machine. Production sets it absolute |
 | 6 | Alembic (driver unspecified) | asyncpg, not psycopg2 | A second PostgreSQL driver means another wheel in the bundle for no benefit |
-| 7 | §M12 lists `COMMAND`/`PYTHON` tools | Registerable but **disabled** | §25 forbids unrestricted shell execution by agents. See `security.md` |
+| 7 | Lists `COMMAND`/`PYTHON` tools | Registerable but **disabled** | The spec also forbids unrestricted shell execution by agents. See `security.md` |
 
-Additions closing gaps the spec leaves open are in `database.md` §"Gaps closed".
+Additions closing gaps the spec leaves open are in `database.md`, under "Gaps closed".
 
 ---
 
 ## 15. Repository layout
 
-Follows spec §17. `backend/app/` follows §M01.
-
 ```
 backend/app/
 ├── main.py            app factory + lifespan
-├── config/            settings.py, config.yaml  (M02)
+├── config/            settings.py, config.yaml
 ├── api/               deps.py + v1/ routers
 ├── core/              logging, middleware, errors, security, permissions,
-│                      interfaces/            (§28)
+│                      interfaces/
 ├── db/                base.py, session.py, clients/
 ├── models/            SQLAlchemy ORM — every model re-exported in __init__.py
 ├── schemas/           pydantic wire contracts
 ├── repositories/      the only layer writing SQL
 ├── services/          behaviour
-├── workers/           APScheduler jobs (from P1)
+├── workers/           APScheduler jobs
 └── utils/             cli.py
 ```
 
@@ -348,11 +346,11 @@ DROPping its table. This is the single most destructive mistake available here.
 ## 16. Adding a module
 
 1. Read this file, `database.md`, `api.md`.
-2. Implement **only** that module (Rule 1).
-3. Ship implementation + unit tests + API tests + migration + docs (Rule 2).
-4. Declare dependencies in `requirements.in`, run `make lock` (Rule 3).
-5. New external integration → an adapter behind an interface (Rule 8).
-6. New config → `app/config/settings.py` + `config.yaml` + `.env.example` (Rule 5).
+2. Implement **only** that module.
+3. Ship implementation + unit tests + API tests + migration + docs.
+4. Declare dependencies in `requirements.in`, run `make lock`.
+5. New external integration → an adapter behind an interface.
+6. New config → `app/config/settings.py` + `config.yaml` + `.env.example`.
 7. Every route declares `require_permission(...)`; every privileged action records
    an audit entry.
 8. `make lint && make test` must pass before moving on.

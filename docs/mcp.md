@@ -1,4 +1,4 @@
-# MCP servers (M13)
+# MCP servers
 
 The platform registers MCP servers, health-checks them, discovers their tools, and assigns
 them to agents with permissions applied.
@@ -18,9 +18,9 @@ constraints rule out closing that gap the obvious way:
 
 | Constraint | Why "paste a command and run it" is out |
 |---|---|
-| **Rule 4** | `npx -y @scope/server` downloads from the npm registry *at every start*. Air-gapped, it hangs then fails; connected, it is an unpinned dependency entering the platform on every restart. |
-| **§25** | The control plane must not execute arbitrary commands — the reason `COMMAND` and `PYTHON` tools are permanently refused. A "run this MCP command" field is that hole renamed. |
-| **§M04** | The control plane does not run processes on hosts. |
+| **Air-gapped operation** | `npx -y @scope/server` downloads from the npm registry *at every start*. Air-gapped, it hangs then fails; connected, it is an unpinned dependency entering the platform on every restart. |
+| **No arbitrary commands** | The control plane must not execute arbitrary commands — the reason `COMMAND` and `PYTHON` tools are permanently refused. A "run this MCP command" field is that hole renamed. |
+| **No host processes** | The control plane does not run processes on hosts. |
 
 So each server is **packaged as a container image with its package vendored at build time**,
 fronted by a stdio→HTTP bridge:
@@ -49,10 +49,10 @@ Or **Tools & MCP → Import manifests** in the admin UI.
 | `filesystem` | `@modelcontextprotocol/server-filesystem@2025.8.21` | none | no (read-only mount) | Read, list and search files beneath a shared directory |
 | `memory` | `@modelcontextprotocol/server-memory@2025.8.4` | none | yes | A knowledge graph an agent can add to and query later; a JSON file on a volume |
 | `sequential-thinking` | `@modelcontextprotocol/server-sequential-thinking@2026.7.4` | none | no | A scratchpad for working a problem in explicit steps |
-| `time` (E10) | `mcp-server-time==2026.10.19` | none | no | The current time in any IANA zone, and conversion between zones |
-| `sqlite` (E10) | `mcp-server-sqlite==2025.4.25` | none | yes | Query a SQLite database on its own volume; write and create-table tools |
-| `prometheus` (E10) | `prometheus-mcp-server==1.6.2` | internal | no | PromQL queries, metric metadata and scrape targets, by default against the platform's own Prometheus |
-| `redis` (E10) | `redis-mcp-server==0.5.1` | internal | yes | Strings, hashes, lists, sets, streams, JSON and vector search in a Redis on the site network |
+| `time` | `mcp-server-time==2026.10.19` | none | no | The current time in any IANA zone, and conversion between zones |
+| `sqlite` | `mcp-server-sqlite==2025.4.25` | none | yes | Query a SQLite database on its own volume; write and create-table tools |
+| `prometheus` | `prometheus-mcp-server==1.6.2` | internal | no | PromQL queries, metric metadata and scrape targets, by default against the platform's own Prometheus |
+| `redis` | `redis-mcp-server==0.5.1` | internal | yes | Strings, hashes, lists, sets, streams, JSON and vector search in a Redis on the site network |
 
 Every version was checked against the public registry when it was added, and none was
 published in the fortnight before. The tool names in each manifest's `suggested_risk` come
@@ -62,7 +62,7 @@ from the published package.
 
 | Server | Why not |
 |---|---|
-| `fetch` | Exists to retrieve web pages, the one thing an air-gapped host cannot do (Rule 4) |
+| `fetch` | Exists to retrieve web pages, the one thing an air-gapped host cannot do |
 | `git` (`mcp-server-git`) | Needs the `git` binary. The bridge image is not built to provide it and may not install it (no OS packages in Dockerfiles) |
 | `everything` | A protocol test server that needs Node 24 or later; nothing for an agent to use |
 | `postgres` (`@modelcontextprotocol/server-postgres`) | Archived upstream, and its read-only guard can be bypassed with a multi-statement query |
@@ -71,7 +71,7 @@ from the published package.
 All of them are opt-in. A manifest in this directory does nothing until it has been vendored
 and started.
 
-## Connector catalogue (E10)
+## Connector catalogue
 
 **Agents → Connector Catalogue** (and `GET /api/v1/mcp/catalogue`) lists every manifest
 with its category, network needs, whether it writes, its pinned package, the `.env`
@@ -81,7 +81,7 @@ variables it reads and its state:
 |---|---|
 | Not installed | No MCP server registered under this name |
 | Installed | Registered, and answered `tools/list` at the last check |
-| Not answering | Registered, but did not answer. The control plane cannot see containers (§M04), so this also means "image not vendored" or "not started" |
+| Not answering | Registered, but did not answer. The control plane cannot see containers, so this also means "image not vendored" or "not started" |
 | Manifest problem | The manifest breaks a rule below. Shown with the reasons; cannot be installed |
 
 **Install** registers one connector's server and discovers its tools, the same as
@@ -166,8 +166,7 @@ per-request would be a race: two concurrent calls would swap answers.
 
 It proxies an **allow-list** of methods (`tools/list`, `tools/call`, `prompts/list`,
 `resources/list`), not everything a server implements. `MCP_COMMAND` is baked into the
-image at build time, so no request, database row or form field can influence what runs
-(§25).
+image at build time, so no request, database row or form field can influence what runs.
 
 `/health` deliberately does **not** start the subprocess: a health check that spawned an MCP
 server would make container startup depend on that server's start-up cost, and a slow one
@@ -207,7 +206,7 @@ selecting another transport today changes nothing.
 
 ## The shipped LDAP server
 
-`mcp/ldap/` answers from a **fixture directory**, so the §20 MVP scenario runs without an
+`mcp/ldap/` answers from a **fixture directory**, so the end-to-end agent scenario runs without an
 Active Directory, and says so in every response. It is written directly against HTTP rather
 than through the bridge, because it is the platform's own code rather than a vendored
 package.

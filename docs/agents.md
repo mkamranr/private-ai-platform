@@ -1,6 +1,6 @@
-# Agents (M10, M14)
+# Agents
 
-The §20 MVP scenario, made real: an administrator assembles an "IT Support Agent" from a
+The reference scenario, made real: an administrator assembles an "IT Support Agent" from a
 model, a skill and an MCP server; a user selects it in chat and asks why an employee is
 locked out; the agent queries the directory and explains the answer. `make gate-phase4`
 runs exactly that.
@@ -30,7 +30,7 @@ unrelated edit; there is a test for it.
 
 ---
 
-## The tool pipeline (§10)
+## The tool pipeline
 
 Every tool call passes through `app/services/tool_pipeline.py`, in this order:
 
@@ -48,7 +48,7 @@ user holds the tool's `required_permission`**.
 
 Union — "the agent is allowed, so the call is allowed" — is the natural implementation and
 it turns every agent into a confused deputy: a way to reach a tool you could not call
-yourself. This is the single most important property in the phase, and it has a test named
+yourself. This is the single most important property of the agent system, and it has a test named
 after it.
 
 The user's permissions are **frozen at run start** in `agent_runs.user_permissions`. A
@@ -67,8 +67,8 @@ ever refused".
 
 ### `PYTHON` and `COMMAND`
 
-§M12 lists them; §25 forbids unrestricted shell execution by agents. Reconciled by making
-them **registerable but never executable** — catalogued so an operator can see what
+Agents must never have unrestricted shell execution, so these tool types are
+**registerable but never executable** — catalogued so an operator can see what
 exists, refused at execution.
 
 Two independent reasons they cannot run: the pipeline refuses the type, *and*
@@ -88,11 +88,11 @@ TOOL_REQUESTED -> TOOL_APPROVAL_REQUIRED   [run suspends, process may exit]
 TOOL_APPROVED -> TOOL_EXECUTED -> LLM_REQUEST -> LLM_RESPONSE -> RUN_COMPLETED
 ```
 
-Verified across a real control-plane restart in the Phase 4 gate — a claim no test inside
+Verified across a real control-plane restart by the acceptance gate — a claim no test inside
 one process can make.
 
 `POST /runs/{id}/approve` requires **`tool.approve`**, deliberately separate from
-`tool.execute` (§10, §M24): approving a HIGH-risk action is a different privilege from
+`tool.execute`: approving a HIGH-risk action is a different privilege from
 performing a routine one. A non-superuser cannot approve a run they started themselves.
 
 An approved call goes **straight to execution**, not back through the pipeline —
@@ -102,7 +102,7 @@ Four approval outcomes, kept distinct: `APPROVED`, `REJECTED` (a human refused),
 `EXPIRED` (nobody answered), `NOT_REQUIRED`. Conflating expiry with rejection would
 attribute a timeout to a person who never saw it.
 
-### Expiry (E17)
+### Expiry
 
 An approval nobody answers expires after `agents.approval_ttl_hours` (default 72, a
 runtime setting on the Settings page; 0 waits forever). The `approval_expiry` job checks
@@ -121,7 +121,7 @@ every 15 minutes.
   either wins outright or is refused.
 - Start the run again if it is still needed.
 
-### Reminders (E22)
+### Reminders
 
 An approval that will expire within `agents.approval_reminder_hours` (default 24, a
 runtime setting; 0 = off) raises a **reminder alert**, checked by the same 15-minute job.
@@ -135,14 +135,14 @@ With the defaults, a reminder appears after 48 hours of waiting, 24 hours before
 - It clears at the next check after someone approves or rejects, or after the approval
   expires.
 - A reminder window as long as the expiry reminds as soon as an approval is requested.
-- **Approvals that never expire (E43).** While `agents.approval_ttl_hours` is 0, set
+- **Approvals that never expire.** While `agents.approval_ttl_hours` is 0, set
   `agents.approval_reminder_waiting_hours` (default 0, off) to remind about each approval
   that has waited that long, for example *Approval for create_ticket (IT Helpdesk) has
   waited 3 days*. It is the same alert, cleared the same way, and emailed to approvers
-  when that is on (E39). While approvals do expire, this setting is ignored.
+  when that is on (see below). While approvals do expire, this setting is ignored.
 - At most 200 reminders per kind are raised per check.
 
-### Reminder emails to each approver (E39)
+### Reminder emails to each approver
 
 Turn on `agents.approval_reminder_email_approvers` (Settings page, *Security*; off by
 default) and each reminder is also emailed to the people who could decide it, at the same
@@ -154,7 +154,7 @@ check that raises the alert:
   superusers. A shared agent or workflow asks every holder;
 - not whoever started the workflow run, unless the step allows self-approval, because they
   could not decide it. A superuser who started it is still asked;
-- who have not turned these emails off for themselves (E45).
+- who have not turned these emails off for themselves.
 
 At most 25 people per approval: explicit holders first, then superusers, by username.
 Each person is emailed **once per approval**, however many checks repeat the reminder.
@@ -168,7 +168,7 @@ when its approval is decided or expires, when the account is turned off, or when
 setting is turned off is cancelled rather than sent. Finished rows are deleted after 30
 days. A failed send is logged by account id, never by address.
 
-**Turning them off for yourself (E45).** Click your name at the top of the console. Under
+**Turning them off for yourself.** Click your name at the top of the console. Under
 *Email*, switch off *Email me reminders about approvals I can decide*. The switch appears
 only if you hold `tool.approve` or `workflow.approve`. You can also call
 `PUT /api/v1/users/me/preferences` with `{"approval_reminder_emails": false}`. You are then
@@ -179,7 +179,7 @@ approval.
 The channel reminders above are unchanged: point a channel at the approvers' chat as well,
 or instead.
 
-## Teams: what an agent may use (E18)
+## Teams: what an agent may use
 
 An agent runs as **its own team**, so its model and knowledge bases must be ones that
 team can see: shared ones, or its team's. A shared agent may use only shared models and
@@ -187,17 +187,17 @@ knowledge bases. This is checked when the agent is saved (422), when it is moved
 `PUT /scope` (409), and again **every time it runs** (409, and no run is created). A
 model that moved to another team after the agent was saved is therefore refused at the
 next run, with a message saying how to fix it. Traces, voice sessions and memory follow
-the agent's team too. See [teams.md](teams.md#what-an-agent-or-workflow-may-use-e18).
+the agent's team too. See [teams.md](teams.md#what-an-agent-or-workflow-may-use).
 
 ---
 
 ## The runtime, and why it is not LangGraph
 
-`PlatformAgentRuntime` implements the §28 `AgentRuntime` interface directly: a ReAct loop
-using `LLMProvider` for inference, the §10 pipeline for authorisation, and
+`PlatformAgentRuntime` implements the platform's `AgentRuntime` interface directly: a ReAct loop
+using `LLMProvider` for inference, the tool pipeline for authorisation, and
 `agent_runs.checkpoint` for suspend/resume.
 
-The spec's §2 says integrate rather than implement, and that is usually right — it is why
+The platform's general principle is to integrate rather than implement, and that is usually right — it is why
 vLLM, Qdrant and Open WebUI are here unforked. **This is a documented deviation**, taken
 for reasons specific to this platform:
 
@@ -209,17 +209,17 @@ for reasons specific to this platform:
 | Adapters needed | 3 (tools, chat model, events) | 0 |
 | Run state | LangGraph's tables, opaque blobs | `agent_runs.checkpoint`, queryable |
 
-The second row reverses a Phase 0 decision (one driver in the bundle). The last row
-matters more than it looks: this platform must back that state up (M25), audit it (M24),
+The second row would reverse the decision to ship one PostgreSQL driver in the bundle. The last row
+matters more than it looks: this platform must back that state up, audit it,
 and answer "what was the agent about to do?" from the database.
 
 `AgentRuntime` is the seam that makes this reversible — a `LangGraphAgentRuntime`
-implementing the same interface is an addition, not a rewrite. Building the interface in
-Phase 0, before any implementation, is what made the choice possible at all.
+implementing the same interface is an addition, not a rewrite. Building the interface
+first, before any implementation, is what made the choice possible at all.
 
 ---
 
-## Skills (M11)
+## Skills
 
 A skill is a reusable, versioned instruction package: name, description, instructions,
 `required_tools`, `required_knowledge`, `parameters`, `required_permission`.
@@ -236,7 +236,7 @@ be installable before the tools it wants exist.
 
 ---
 
-## MCP servers (M13)
+## MCP servers
 
 The platform registers servers, health-checks them, discovers their tools, and stores the
 metadata. JSON-RPC 2.0 over HTTP, hand-rolled over httpx — the platform uses two methods
@@ -258,7 +258,7 @@ Re-discovery refreshes descriptions and schemas but **never resets an operator's
 
 ### The shipped LDAP server
 
-`mcp/ldap/` answers from a **fixture directory**, so the §20 scenario runs without an
+`mcp/ldap/` answers from a **fixture directory**, so the reference scenario runs without an
 Active Directory — the same reasoning as `mock-vllm`. Every response says so. Acting on a
 fabricated lockout reason for a real employee is the one harm this could do, so it is made
 impossible to mistake.
@@ -269,7 +269,7 @@ point of an MCP server being a separate process behind a protocol.
 
 ---
 
-## Agents in chat (§M17)
+## Agents in chat
 
 The gateway lists each enabled agent as **`agent:<slug>`** in `GET /v1/models`. A request
 naming that prefix runs the agent and returns its answer in chat-completion shape, so Open
@@ -289,9 +289,9 @@ client's owner** — the client acts on that person's behalf and must not exceed
 client with no owner cannot run agents at all; refusing is the only safe answer, because
 the alternative is picking a default identity and silently authorising tool calls as it.
 
-The end user forwarded by the frontend (M17) is recorded as who *asked* but grants
+The end user forwarded by the frontend is recorded as who *asked* but grants
 nothing: an Open WebUI account is not a platform account, and treating a forwarded string
-as an authorisation subject would make the §10 intersection meaningless.
+as an authorisation subject would make the permission intersection meaningless.
 
 A consequence worth stating plainly: **an agent invoked through chat can only use tools the
 API client's owner is permitted to use.** An operator who grants an agent a tool and then
@@ -299,7 +299,7 @@ sees it refused in chat is looking at that rule working.
 
 ---
 
-## The event model (§11)
+## The event model
 
 Persisted to `agent_run_events` **as events happen**, not at the end — a run that fails
 half-way must still show what it did, which is the trace an operator needs precisely when
@@ -308,7 +308,7 @@ things went wrong.
 ```
 RUN_STARTED · LLM_REQUEST · LLM_RESPONSE · TOOL_REQUESTED
 TOOL_APPROVAL_REQUIRED · TOOL_APPROVED · TOOL_REJECTED · TOOL_EXECUTED
-RAG_SEARCH · MEMORY_READ · MEMORY_WRITE        (Phase 5)
+RAG_SEARCH · MEMORY_READ · MEMORY_WRITE
 RUN_COMPLETED · RUN_FAILED
 ```
 
@@ -327,15 +327,13 @@ the personal data the tool was called to look up, and `audit.view` is broader st
 
 ## Known gaps
 
-* **Every agent run is accounted (E17, E19).** An `agent:<slug>` call through `/v1`
+* **Every agent run is accounted.** An `agent:<slug>` call through `/v1`
   writes one `usage_records` row for the whole run against the key, and is admitted
-  against its quotas (E17). Since E19, runs started from the console, the API
+  against its quotas. Runs started from the console, the API
   (`POST /agents/{id}/execute`) or voice, and the part of any run that continues after an
   approval, write an `agent.run` row for the person who started the run and the agent's
   team. Those count toward team and model budgets but are not refused by them. See
-  [gateway-policy.md](gateway-policy.md#the-platforms-own-model-calls-e19).
-* **Embeddings are not accounted.** Document ingestion, search and memory embed text
-  through the gateway's providers without writing usage rows.
+  [gateway-policy.md](gateway-policy.md#the-platforms-own-model-calls).
 * **`DATABASE` and `OPENAPI` tools are catalogued but not executable.** They report
   themselves unimplemented rather than pretending.
 * **Conversation history is not replayed into an agent.** Each run is a fresh
@@ -344,7 +342,7 @@ the personal data the tool was called to look up, and `audit.view` is broader st
   whose authorisation covers the earlier turns.
 
 
-## Shipped agents (M10)
+## Shipped agents
 
 Declarative, in `agents/*.yaml`. Import them with:
 
@@ -385,7 +383,7 @@ usually do, which on an air-gapped site running a specific bundle is a guess.
 Two of the seven have **no tools at all**, and that is the design rather than an
 omission. Retrieval happens before the model is called, so a document-answering agent
 needs no capability to reach anything — and an agent with no tools cannot be talked into
-using one (§10). `policy-assistant` also runs at temperature 0.1, because it quotes
+using one. `policy-assistant` also runs at temperature 0.1, because it quotes
 documents and invention is its failure mode; `correspondence-assistant` runs at 0.4,
 because it writes prose and 0.1 produces stilted drafting.
 
@@ -406,6 +404,6 @@ tools and given one is not the agent the manifest describes.
 
 ### Re-import publishes a version, never an edit
 
-Editing a manifest and importing it again creates a new agent **version** (§M14). A run
+Editing a manifest and importing it again creates a new agent **version**. A run
 records the version it executed; rewriting that version in place would make every earlier
 run unexplainable — which is the whole reason versions exist.

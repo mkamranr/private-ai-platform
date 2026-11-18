@@ -1,4 +1,4 @@
-# Skills (M11)
+# Skills
 
 A skill is a versioned, reusable package: name, description, instructions,
 `required_tools`, `required_knowledge`, `parameters`, `required_permission`, `version`.
@@ -8,7 +8,7 @@ rather than prompt text on an agent.
 
 Skills **append** to an agent's system prompt rather than replacing it: the agent's own
 instructions set its character and boundaries, and a skill adds a capability within them.
-See [agents.md](agents.md#skills-m11).
+See [agents.md](agents.md#skills).
 
 
 ## Shipped skills

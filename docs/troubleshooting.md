@@ -61,7 +61,7 @@ check `agent_url`, and check TLS: a certificate error is reported distinctly fro
 unreachability, so read the `status_detail` on the node.
 
 **The node installer says the agent image is not present.** Copy the offline bundle to
-that host and re-run with `--bundle <dir>`. The platform never pulls images (Rule 4), so
+that host and re-run with `--bundle <dir>`. The platform never pulls images, so
 there is no path that fetches it — and the host needs the bundle for model images anyway.
 
 **An enrolment token is rejected.** The endpoint answers every rejection identically on
@@ -103,9 +103,9 @@ driver was found. Correct on a developer machine; on a real GPU host set
 silently reporting fabricated telemetry.
 
 **`make lint` fails on air-gap.** Run `python3 scripts/check_airgap.py --verbose`. Do
-not suppress: an unbundleable dependency added now is expensive to unpick at Phase 8.
+not suppress: an unbundleable dependency added now is expensive to unpick once the offline bundle is built.
 
-## Observability (M19)
+## Observability
 
 **Grafana is empty.** Check `GET /api/v1/monitoring/overview` first: it reports whether
 the exporters are switched on. The collectors running and the platform exporting are two

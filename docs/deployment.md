@@ -48,7 +48,7 @@ the gateway talks to the model container directly on the platform network.
 | NVIDIA driver | Any release `nvidia-smi` ships with. The agent reads its CSV output, not the human-readable table, because that table's layout changes between releases |
 | NVIDIA Container Toolkit | So Docker can pass GPUs into a container. Without it the platform can monitor cards but not deploy onto them |
 | Docker | 24+, Compose v2 |
-| Model runtime images | `vllm/vllm-openai` and anything else you intend to deploy, **loaded on the host**. The platform never pulls (Rule 4) |
+| Model runtime images | `vllm/vllm-openai` and anything else you intend to deploy, **loaded on the host**. The platform never pulls |
 
 That last row is the one that surprises people. `install-node.sh` installs the *agent*; it
 does not install runtime images. Until they are present, a deployment scheduled onto that
@@ -140,12 +140,12 @@ make definitions-import     # the shipped agents, skills and tools
 
 Enrol the host with itself as a node — **Nodes → Add node**, then run the printed command
 locally — and its GPUs become schedulable. From there, deploy from the model registry as
-in §1.
+in [section 1](#1-control-plane-plus-gpu-nodes).
 
 Where there are no usable GPUs, the same host can serve an existing Ollama
 (`make ollama-import`), a hosted provider
 ([models.md](models.md#using-a-hosted-endpoint-openrouter-and-anything-like-it)), or
-llama.cpp on CPU (`make local-llm`) — see §4.
+llama.cpp on CPU (`make local-llm`) — see [Running on less](#4-running-on-less).
 
 Optional profiles:
 
@@ -185,7 +185,7 @@ docker compose exec backend python -m app.utils.cli definitions-import
 That third command is the one that gets skipped, and the platform works well enough
 without it to hide the omission — you simply have no agents, skills or tools.
 
-GPU nodes on an air-gapped site enrol exactly as in §1 — that flow was designed for this
+GPU nodes on an air-gapped site enrol exactly as in [section 1](#1-control-plane-plus-gpu-nodes) — that flow was designed for this
 case, which is why the node fetches its installer from the control plane rather than
 needing the bundle carried to every rack.
 

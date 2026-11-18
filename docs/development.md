@@ -17,10 +17,10 @@ make seed
 make lock              # recompile lockfiles — needs network
 ```
 
-## Adding a module (§26, Rule 1)
+## Adding a module
 
 Implement **one** module at a time. Read `architecture.md`, `database.md`, `api.md`
-first. Ship implementation + unit tests + API tests + migration + docs (Rule 2).
+first. Ship implementation + unit tests + API tests + migration + docs.
 
 Every route declares `require_permission(...)`. Every privileged action records an
 audit entry. New config goes in `settings.py` + `config.yaml` + `.env.example`.
@@ -34,7 +34,7 @@ hand-edit a lockfile; never `pip install` into a running container.
 
 - **ruff** lint + format
 - **mypy** `disallow_untyped_defs`
-- **import-linter** the Rule 6/7 layering contracts — these are architectural
+- **import-linter** the layering contracts — these are architectural
   invariants, and review is not a reliable way to hold them across 28 modules
 - **check_airgap.py** air-gap discipline
 

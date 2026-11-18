@@ -164,7 +164,7 @@ dashboard real signals.
 - [x] Refresh rotation with reuse detection: reuse within `auth.refresh_reuse_grace_seconds` refused quietly, later reuse signs out everywhere, audited `USER_TOKEN_REUSE_DETECTED`, CRITICAL alert.
 - [x] Ops runner: wrong tokens audited (`OPS_RUNNER_AUTH_FAILED`) and throttled per address (`ops.runner_max_failures` in `ops.runner_failure_window_seconds`), WARNING alert (threat model #12).
 - [x] API: `POST /auth/logout` (optional `refresh_token`), `POST /auth/logout-all`, `POST /users/{id}/unlock`, `POST /users/{id}/sessions/revoke`. Users page: locked pill, Unlock, Sign out everywhere. Alert sources `auth`, `ops_runner` for notification filters.
-- [x] Migration `d5f9b2a3e7c1` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#sign-in-hardening-e14).
+- [x] Migration `d5f9b2a3e7c1` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#sign-in-hardening).
 - [ ] ~~No lockout for directory accounts~~ (closed in E25), ~~no CAPTCHA~~ (a proof-of-work check since E29). (MFA arrived in E15.)
 
 ## E15: Two-factor authentication
@@ -175,7 +175,7 @@ dashboard real signals.
 - [x] Self-service: setup (password), enable (first code; other sessions signed out, new tokens returned), disable (password + code), recovery codes. Admin reset (`user.manage`, audited, signs out).
 - [x] Policy: runtime setting `auth.mfa_required` = off / admins / all. Forced enrolment at sign-in (`/auth/mfa/enrol/start`, `/finish`). It cannot be disabled while required. Local accounts only.
 - [x] UI: console code step, forced enrolment, account dialog behind the user badge, 2FA marker and Reset 2FA on the Users page. The developer portal and voice assistant ask for the code.
-- [x] Migration `e6a1c3f5b8d2` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#two-factor-authentication-e15).
+- [x] Migration `e6a1c3f5b8d2` upgrades and downgrades cleanly. Doc: [docs/security.md](../security.md#two-factor-authentication).
 - [ ] ~~No WebAuthn/passkeys, no remembered devices.~~ Closed in E20. The portal and voice assistant send people who must enrol to the console.
 
 ## E16: Gateway timings (closes the E8 TTFT/throughput gap)
@@ -185,7 +185,7 @@ dashboard real signals.
 - [x] Output tok/s derived in SQL as `(completion_tokens - 1) / generation time`, for complete, successful streams of at least two tokens. `percentile_cont` p50/p95 for TTFT, p95 latency, median tok/s and `timed_streams`, per model (`GET /usage`) and over all calls (dashboard).
 - [x] Prometheus histograms `ai_platform_gateway_request_duration_seconds` and `ai_platform_gateway_output_tokens_per_second`, with Grafana panels beside the existing TTFT one.
 - [x] Console: a "First token (p50)" dashboard card (p95, tok/s, stream count); First token, p95 latency and Tok/s columns on Usage & Quotas. "—" when unmeasured.
-- [x] Tests: `tests/api/test_gateway_timings.py` (stored timings, role-only chunk, exclusions, exact percentiles, null with buffered-only traffic). Doc: [gateway-policy.md](../gateway-policy.md#timings-e16).
+- [x] Tests: `tests/api/test_gateway_timings.py` (stored timings, role-only chunk, exclusions, exact percentiles, null with buffered-only traffic). Doc: [gateway-policy.md](../gateway-policy.md#timings).
 - [ ] `agent:` and voice calls are not timed (agent calls are recorded since E17, without timings). No buffered TTFT. ~~Timings are not in chargeback exports.~~ In chargeback reports and exports since E40.
 
 ## E17: Approval expiry and agent usage (closes two agents.md known gaps)
@@ -194,7 +194,7 @@ dashboard real signals.
 - [x] Audit actions `TOOL_APPROVAL_EXPIRED`, `WORKFLOW_APPROVAL_EXPIRED`, recorded as `scheduler`.
 - [x] `agent:<slug>` gateway calls: attributed, admitted once per run against key, team, end-user and model quotas, and recorded as one usage row (`requested_model` = `agent:<slug>`, `model` = the resolved model, no timings). Streamed runs count tokens from `LLM_RESPONSE` events, so a disconnect is still accounted.
 - [x] No migration (the states existed; audit actions are strings).
-- [x] Tests: `tests/api/test_approval_expiry.py`, plus a workflow expiry test in `test_workflows.py`. Docs: [agents.md](../agents.md#expiry-e17), [workflows.md](../workflows.md), [gateway-policy.md](../gateway-policy.md#agent-calls-e17).
+- [x] Tests: `tests/api/test_approval_expiry.py`, plus a workflow expiry test in `test_workflows.py`. Docs: [agents.md](../agents.md#expiry), [workflows.md](../workflows.md), [gateway-policy.md](../gateway-policy.md#agent-calls).
 - [ ] ~~Not counted: agent runs started from the console or API, tokens spent after a console approval, workflow LLM steps.~~ Closed in E19 (memory summaries have no caller). ~~No reminder before an approval expires.~~ Closed in E22.
 
 ## E18: Team scoping finished (closes the E3 open item)
@@ -204,7 +204,7 @@ dashboard real signals.
 - [x] Memory and conversations follow their agent's team (no agent = shared): search, list, get conversation, forget one. `forget-all` from a team-limited caller erases only visible entries and keeps session state.
 - [x] Dashboard model and deployment counts and the gateway section follow scope; `UsageRepository.hourly_series` takes `where`.
 - [x] Definitions import: no version added to another team's agent; agents whose references their team cannot use are skipped with the reason.
-- [x] No migration. Tests: `tests/api/test_team_scoping_e18.py`. Doc: [teams.md](../teams.md#what-an-agent-or-workflow-may-use-e18).
+- [x] No migration. Tests: `tests/api/test_team_scoping_e18.py`. Doc: [teams.md](../teams.md#what-an-agent-or-workflow-may-use).
 - [ ] Quotas, circuit breakers, skills, MCP servers and fleet figures stay platform-wide by design. ~~Agent tool grants are not team-checked.~~ Closed in E35 (tools can belong to a team).
 
 ## E19: Platform model calls accounted (closes the E17 open item)
@@ -212,7 +212,7 @@ dashboard real signals.
 - [x] `GatewayService.record_internal_usage`: one keyless usage row per platform model call, attributed to the starter and the agent's or workflow's team; model resolved like gateway calls; charged to team and model token budgets through `GatewayPolicy.account` (counted, never refused); independent session; never raises.
 - [x] Agent runs: tokens counted from `LLM_RESPONSE` events and recorded when the stream ends (completed, failed, suspended, abandoned) as `agent.run` / `agent:<slug>`. Covers console, `/agents/{id}/execute`, voice and every post-approval continuation. `/v1` `agent:` calls pass `record_usage=False` (the gateway records them, E17).
 - [x] Workflow LLM steps record `workflow.llm` / `workflow:<name>` as soon as the model answers.
-- [x] No migration. Tests: `tests/api/test_internal_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#the-platforms-own-model-calls-e19).
+- [x] No migration. Tests: `tests/api/test_internal_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#the-platforms-own-model-calls).
 - [ ] ~~Not refused by quotas~~ (opt-in refusal since E24); API key and end-user quotas do not apply. ~~Embeddings (ingestion, search, memory) are not accounted.~~ Closed in E21. No timings on these rows.
 
 ## E20: Passkeys and trusted browsers (closes the E15 open item)
@@ -223,7 +223,7 @@ dashboard real signals.
 - [x] `app/services/trusted_devices.py`: `remember_device` issues a `tdv_` token, stored as SHA-256, bound to `session_version`, lifetime runtime setting `auth.mfa_remember_days` (0 = off and not honoured). `/auth/login` with `device_token` skips the second step. List, forget, forget all; at most 20 per account.
 - [x] Turning MFA off or an admin reset deletes passkeys and trusted browsers. Audit: `USER_PASSKEY_ADDED`, `USER_PASSKEY_REMOVED`, `USER_DEVICE_TRUSTED`, `USER_DEVICE_FORGOTTEN`, sign-ins with `mfa: passkey` / `trusted_device`.
 - [x] Console: *Use a passkey* and *Trust this browser* on the code step; passkeys and trusted browsers on the account dialog.
-- [x] Migration `a8c4e2f6b9d1`. Tests: `tests/api/test_passkeys.py`, with a software authenticator producing real attestations and signatures. Doc: [security.md](../security.md#passkeys-and-trusted-browsers-e20).
+- [x] Migration `a8c4e2f6b9d1`. Tests: `tests/api/test_passkeys.py`, with a software authenticator producing real attestations and signatures. Doc: [security.md](../security.md#passkeys-and-trusted-browsers).
 - [ ] ~~Second factor only, no passwordless sign-in.~~ Passwordless in the console since E30, ~~the developer portal and voice assistant accept codes only~~ (passkeys there since E33). Changing the public host name strands existing passkeys.
 
 ## E21: Embedding calls accounted (closes the E19 open item)
@@ -231,7 +231,7 @@ dashboard real signals.
 - [x] `app/services/embedding_usage.py`: `embed_with` / `embed_through`, the one route from an alias to vectors, replacing three copies (`deps.get_embedder`, `deps._embed_through`, the ingestion worker's `main._embedder`). Each call records a keyless usage row through `GatewayService.record_internal_usage` with the runtime's prompt tokens; an `EmbeddingCharge` names the endpoint, label, user and team; an uncharged call is still recorded as `platform.embed`.
 - [x] Charges: ingestion (uploader, base team), knowledge search, playground, agent and workflow retrieval, RAG eval (caller or starter, each base's team), memory write and search (person, agent's team via `MemoryEntryRepository.agent_team`), dimension probe (creator).
 - [x] Counted toward team and model token budgets, never refused.
-- [x] No migration. Tests: `tests/api/test_embedding_usage.py` (charges per call site, committed rows end to end); the workflow retrieval charge in `test_workflows.py`. Doc: [gateway-policy.md](../gateway-policy.md#embeddings-e21).
+- [x] No migration. Tests: `tests/api/test_embedding_usage.py` (charges per call site, committed rows end to end); the workflow retrieval charge in `test_workflows.py`. Doc: [gateway-policy.md](../gateway-policy.md#embeddings).
 - [ ] ~~Reranking calls are not accounted (no token counts from rerank engines).~~ Accounted since E38 (tokens when the engine reports them). ~~Voice speech-to-text and text-to-speech are not accounted.~~ They were recorded but attributed to nobody; attributed since E27.
 
 ## E22: Approval reminders (closes the last E17 open item)
@@ -239,7 +239,7 @@ dashboard real signals.
 - [x] Runtime setting `agents.approval_reminder_hours` (default 24, 0 = off; none while `approval_ttl_hours` is 0).
 - [x] `app/services/approval_reminders.py`, run by the `approval_expiry` job after expiry: one WARNING alert per pending agent tool call or workflow approval expiring within the window (`approval:tool:<id>`, `approval:workflow:<id>`), title refreshed with the time left (rounded up), cleared once the approval is no longer pending. At most 200 per kind per check.
 - [x] Alert source `approvals` in `KNOWN_SOURCES`, so notification channels can subscribe; delivered once per channel by the E13 outbox.
-- [x] No migration. Tests: `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders-e22).
+- [x] No migration. Tests: `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders).
 - [ ] ~~Reminders go to channels, not to individual approvers (approvers are not modelled).~~ Emailed to each approver since E39. ~~No reminder for approvals that never expire.~~ Since E43, after a set wait.
 
 ## E23: Backup retention by age and off-host copies (closes the E12 open item)
@@ -247,21 +247,21 @@ dashboard real signals.
 - [x] Runtime setting `ops.backup_keep_days`. `to_prune` keeps a backup if any set rule protects it (newest N, or younger than N days); never the newest complete one, never an incomplete one; a name that is not a timestamp has no age and is kept by the age rule.
 - [x] Runner: `OPS__BACKUP_COPY_DIR` (host only). Copy into `.partial-NAME`, compare SHA-256 of every file, rename. Done after each `backup.create` (a failed copy does not fail the backup) and by the new `backup.copy` job. `backup.prune` deletes the same names from the copy directory, never the newest. Inventory reports `backup_copy` (configured, path, reachable, space) and `copied` per backup.
 - [x] Schedule: one `backup.copy` per newest backup that is not copied; alert `backup_copy_missing` when the directory is unreachable or the newest backup has waited over an hour. Backup page: retention rules and copy status.
-- [x] Migration `b3d5f7a9c1e2` (ops job kind). Tests: `test_backup_schedule.py`, `tests/unit/test_release_tooling.py::TestRunnerCopy`. Docs: [backup.md](../backup.md#off-host-copies-e23); `architecture.md` LangGraph drift fixed.
+- [x] Migration `b3d5f7a9c1e2` (ops job kind). Tests: `test_backup_schedule.py`, `tests/unit/test_release_tooling.py::TestRunnerCopy`. Docs: [backup.md](../backup.md#off-host-copies); `architecture.md` LangGraph drift fixed.
 - [ ] ~~One copy directory, pruned with local backups; no S3 or remote protocol built in.~~ S3 closed in E31.
 
 ## E24: Opt-in budget enforcement for the platform's own calls (closes the E19 open item)
 
 - [x] Runtime setting `gateway.enforce_platform_budgets` (off by default; read on every call). `GatewayPolicy.check` checks team and model token budgets without taking a slot or a charge; `GatewayService.check_internal_budget` resolves the answering model and raises `RateLimitError` (429, `Retry-After`).
 - [x] Checked before the call in `AgentRunService.start` (not for `agent:` calls through `/v1`, which the gateway admitted; not on resume), in the workflow LLM step (a refusal fails the step with the message), and in `embed_with` (every platform embedding: ingestion, search, retrieval, memory). The ingestion worker reads runtime settings per call.
-- [x] No migration. Tests: `tests/api/test_platform_quota_enforcement.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
+- [x] No migration. Tests: `tests/api/test_platform_quota_enforcement.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls).
 - [ ] ~~A running agent is not stopped mid-run when it crosses a budget~~ (closed in E34); ~~a refused document is not retried automatically when the budget resets~~ (closed in E32).
 
 ## E25: Lockout for directory accounts (closes the E14 open item)
 
 - [x] `AuthService.login`: an account owned by a configured password provider (LDAP) is refused while locked *without* the credential reaching the directory (audited `Account is locked`, same generic message, hash for timing). A password no provider accepts for it counts through `LoginGuard.account_failed`, locks at `auth.lockout_threshold` with `USER_LOCKED` and the `account_locked` alert. A directory sign-in clears an expired lock and its alert.
 - [x] Not counted: directory users without a row (address throttle only), OIDC accounts, directory outages (the provider raises).
-- [x] No migration, no new setting. Tests: `tests/api/test_directory_lockout.py`. Doc: [security.md](../security.md#sign-in-hardening-e14).
+- [x] No migration, no new setting. Tests: `tests/api/test_directory_lockout.py`. Doc: [security.md](../security.md#sign-in-hardening).
 - [ ] The platform sees only guesses made through it; the directory's own policy is unchanged.
 
 ## E26: Blocking a model stops its deployments (closes the E4 open item)
@@ -290,7 +290,7 @@ dashboard real signals.
 - [x] `app/services/login_challenge.py`: stateless HMAC-signed challenge (`nonce.bits.expires.sig`, key derived from the JWT secret, 5 min), SHA-256 leading-zero-bits proof, spent once in Valkey (fails open). Difficulty `auth.login_challenge_bits` (default 20) plus one bit per 5 failures beyond `auth.login_challenge_after` (default 10, 0 = off), capped at 24.
 - [x] `/auth/login` checks it per address before the password: 401 `challenge_required` with `details.challenge`, audited `USER_LOGIN` DENIED. `LoginRequest.challenge` optional.
 - [x] `frontend/admin/js/pow.js` (pure-JS SHA-256, works over plain HTTP), loaded by the console, developer portal and voice assistant; `withLoginChallenge` solves and resends.
-- [x] No migration. Tests: `tests/api/test_login_challenge.py`. Doc: [security.md](../security.md#sign-in-hardening-e14).
+- [x] No migration. Tests: `tests/api/test_login_challenge.py`. Doc: [security.md](../security.md#sign-in-hardening).
 - [ ] Proof of work, not a person test; a guesser spread over many addresses meets only the lockout. The MFA step is not challenged (its attempts already count toward lockout).
 
 ## E30: Sign in with a passkey alone (closes the E20 passwordless item)
@@ -298,7 +298,7 @@ dashboard real signals.
 - [x] `POST /auth/passkey/options`: no `allowCredentials`, user verification required, a single-use webauthn token (`purpose: signin`). `POST /auth/passkey/verify`: the credential names the passkey and account (a `userHandle` must match it), verified with `require_user_verification`, spent once; refused if locked, disabled, non-local or without 2FA. Signed in with `mfa: passkey`, `passwordless: true`; no code step.
 - [x] Throttled per address like any sign-in; a refused answer counts toward the address only. Registration now asks for discoverable credentials (`residentKey: preferred`).
 - [x] Console: *Sign in with a passkey* on the sign-in page.
-- [x] No migration. Tests: `tests/api/test_passkey_signin.py`. Doc: [security.md](../security.md#signing-in-with-a-passkey-alone-e30).
+- [x] No migration. Tests: `tests/api/test_passkey_signin.py`. Doc: [security.md](../security.md#signing-in-with-a-passkey-alone).
 - [ ] ~~Console only (the developer portal and voice assistant use passwords).~~ Closed in E33. Passkeys added before E30 may need re-adding to be discoverable. No passkey-only accounts: a password and TOTP remain.
 
 ## E31: Off-host backup copies to S3-compatible storage (closes the E23 open item)
@@ -306,7 +306,7 @@ dashboard real signals.
 - [x] `scripts/s3_copy.py`: stdlib S3 client (Signature V4, path-style; HEAD, PUT, ListObjectsV2, DELETE, multipart above 64 MB). Signature checked against AWS's worked example. Every body signed over its SHA-256, so the store verifies each file or part.
 - [x] Runner: `OPS__BACKUP_COPY_S3_*` (host only) replaces the directory when set. Upload every file, then `PREFIX/NAME/.complete` (file digests); copied = marker present (one listing per inventory). Retention deletes the marker first. Missing settings are an error in the report, never a fallback.
 - [x] Inventory `backup_copy` gains `kind` and `error`; schedule status gains `copy_kind`, `copy_error`; the alert names the S3 target and reason. Console shows the target kind.
-- [x] No migration, no new dependency. Tests: `tests/unit/test_release_tooling.py::TestRunnerS3Copy` (in-process fake S3 that rejects mismatched bodies), `test_backup_schedule.py`. Doc: [backup.md](../backup.md#copies-to-s3-compatible-storage-e31).
+- [x] No migration, no new dependency. Tests: `tests/unit/test_release_tooling.py::TestRunnerS3Copy` (in-process fake S3 that rejects mismatched bodies), `test_backup_schedule.py`. Doc: [backup.md](../backup.md#copies-to-s3-compatible-storage).
 - [ ] One target at a time. No server-side encryption or object-lock options; no SFTP/rsync (mount as a directory).
 
 ## E32: Documents a budget refused are retried when it resets (closes the E24 ingestion item)
@@ -314,7 +314,7 @@ dashboard real signals.
 - [x] Migration `c4e6a8b0d2f3`: `documents.retry_at` (partial index). `KnowledgeService.ingest` catches `RateLimitError` from embedding: FAILED with the message and `retry_at` = now + `retry_after_seconds` + 60 s. Other failures are unchanged.
 - [x] `DocumentRepository.requeue_refused(now)`: one `UPDATE … RETURNING` back to UPLOADED (two workers cannot both take a document), skipping superseded versions. `IngestionWorker` runs it every 30 s (`REQUEUE_EVERY_SECONDS`); a failure is logged and ingestion goes on.
 - [x] Manual re-ingest clears `retry_at`; `DocumentRead.retry_at`; the console shows when it retries.
-- [x] Tests: `tests/api/test_budget_reingest.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
+- [x] Tests: `tests/api/test_budget_reingest.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls).
 - [ ] Only embedding refusals (the only platform call ingestion makes). Retries are logged, not audited. No cap: a budget that never resets (removed quota aside) keeps a document waiting, one check per reset.
 
 ## E33: Passkeys in the developer portal and voice assistant (closes the E20/E30 item)
@@ -328,7 +328,7 @@ dashboard real signals.
 
 - [x] `GatewayPolicy.check(subjects, pending_tokens)` and `GatewayService.check_internal_budget(..., pending_tokens)`: tokens spent but not yet recorded count as used (minute, day and month). 0 keeps the E24 behaviour.
 - [x] `AgentRunService._persisting` checks the budget on each `LLM_REQUEST` (emitted before the call) with the run's tokens so far; refused → the run is FAILED with the message, a `RUN_FAILED` event with the refusal is stored and streamed, and the runtime is closed before the call. Not the first call of a new run (checked at start); the first call after an approval is checked. Not for `agent:` calls through `/v1`.
-- [x] No migration, no interface change (`AgentRuntime` untouched). Tests: `tests/api/test_agent_budget_midrun.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24).
+- [x] No migration, no interface change (`AgentRuntime` untouched). Tests: `tests/api/test_agent_budget_midrun.py`. Doc: [gateway-policy.md](../gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls).
 - [ ] The call that crosses a budget still finishes (checked before, not during, a call). `agent:` runs through `/v1` are admitted once by the gateway and not stopped mid-run. Workflow agent steps are single calls and are checked per step (E24).
 
 ## E35: Tools can belong to a team (closes the E18 tool-grant item)
@@ -345,7 +345,7 @@ dashboard real signals.
 - [x] `app/services/webhook_signing.py`: HMAC-SHA256 over `<timestamp>.<raw body>` (`sha256=` hex, several accepted), 5-minute tolerance either way. Pure; unit-tested.
 - [x] Migration `e6a8c0d2f4b5`: `workflows.webhook_secret_encrypted` (Fernet, like tool credentials) and `webhook_signature_required`. Rotation issues token and secret together (`signing_secret`, once); `require_signature` on rotate; disabling deletes both.
 - [x] `/workflow-hooks/{id}`: a signature is checked over the raw body when required or when sent; an accepted signature is remembered in Valkey for 10 min and refused again (fails open). Every refusal is the same 401 as a bad token; the reason is logged.
-- [x] Console: *Require signed calls* switch and a signed `curl`/`openssl` example (checked to match). Tests: `tests/unit/test_webhook_signing.py`, `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls-e36).
+- [x] Console: *Require signed calls* switch and a signed `curl`/`openssl` example (checked to match). Tests: `tests/unit/test_webhook_signing.py`, `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls).
 - [ ] Webhooks enabled before E36 have no secret until rotated. ~~One secret at a time (no overlap window when rotating).~~ Overlap since E41. Replay protection depends on Valkey.
 
 ## E37: Longer dashboard range (closes the E8 7-day limit)
@@ -360,7 +360,7 @@ dashboard real signals.
 - [x] `LLMProvider.rerank_scored` returns `RerankResult(scores, usage)`; `VLLMProvider` reads vLLM's `usage.total_tokens` and gives `None` for TEI, which reports none. `rerank` is unchanged.
 - [x] `app/services/rerank_usage.py`: `rerank_with` / `rerank_through`, the one route from an alias to scores (replacing `deps._rerank_through`'s body). Checks the team and model budgets first (E24), then records one keyless row through `record_internal_usage`; uncharged calls are recorded as `platform.rerank`.
 - [x] `KnowledgeService.retrieve` charges each rerank as `<purpose>.rerank` to the caller and, when every scored passage came from bases of one team, that team (`_rerank_charge`).
-- [x] No migration. Tests: `tests/unit/test_rerank_usage.py`, `tests/api/test_rerank_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#reranking-e38).
+- [x] No migration. Tests: `tests/unit/test_rerank_usage.py`, `tests/api/test_rerank_usage.py`. Doc: [gateway-policy.md](../gateway-policy.md#reranking).
 - [ ] An engine that reports no tokens (TEI) records 0 tokens for the call. A rerank over bases of several teams is charged to no team.
 
 ## E39: Reminder emails to each approver (closes the E22 approver item)
@@ -368,7 +368,7 @@ dashboard real signals.
 - [x] Runtime setting `agents.approval_reminder_email_approvers` (default off).
 - [x] `app/services/approver_reminders.py`: approvers are active users with `tool.approve` / `workflow.approve` (or superusers) who can see the resource's team (member, `scope.all`, superuser; shared = every holder), minus a workflow run's starter unless the step allows self-approval. At most 25 per approval, explicit holders first.
 - [x] Outbox `approver_reminders` (migration `f7b9d1e3a5c6`), unique per approval and person; sent with the notification mail server and back-off; cancelled when the approval is decided or expires, the account is turned off, or the setting is off; finished rows pruned after 30 days. Run by the `approval_expiry` job after the E22 reminders, in its own transaction.
-- [x] `Reminder` carries the kind, approval id, team and excluded starter. Tests: `tests/api/test_approver_reminders.py`. Doc: [agents.md](../agents.md#reminder-emails-to-each-approver-e39).
+- [x] `Reminder` carries the kind, approval id, team and excluded starter. Tests: `tests/api/test_approver_reminders.py`. Doc: [agents.md](../agents.md#reminder-emails-to-each-approver).
 - [ ] Email only (no chat direct messages); ~~no per-person opt-out~~ (since E45); the link goes to the console's Alerts page.
 
 ## E40: Timings in chargeback reports and exports (closes the E16 chargeback item)
@@ -376,7 +376,7 @@ dashboard real signals.
 - [x] `ChargebackRepository.timings`: mean and p95 latency, p50/p95 TTFT, median tok/s and `timed_streams` per report group, keyed like the report's lines, in one grouped query (not per model and rate, whose percentiles could not be combined); `group=None` for the totals.
 - [x] Rows, the idle row and the totals carry the six fields (null when unmeasured). The CSV appends them after `estimate`, empty when unmeasured.
 - [x] Console: *p95 latency* and *First token (p50)* columns on the Chargeback page.
-- [x] No migration. Tests: `tests/api/test_chargeback_timings.py`. Doc: [chargeback.md](../chargeback.md#timings-e40).
+- [x] No migration. Tests: `tests/api/test_chargeback_timings.py`. Doc: [chargeback.md](../chargeback.md#timings).
 - [ ] Agent (`agent:`) and voice calls still carry no first-token timings, so they count in latency only.
 
 ## E41: Webhook rotation with an overlap (closes the E36 overlap item)
@@ -384,7 +384,7 @@ dashboard real signals.
 - [x] Migration `a9c1e3f5b7d8`: `workflows.webhook_previous_token_hash`, `webhook_previous_secret_encrypted` (Fernet) and `webhook_previous_until`.
 - [x] `POST /workflows/{id}/webhook` takes `overlap_minutes` (0 to 10080, default 0 = stop at once) and returns `previous_valid_until`; `WorkflowRead.webhook_previous_valid_until`. Rotating again keeps only the pair just replaced; disabling clears it. Audited with the overlap.
 - [x] `verify_webhook` accepts the previous token until the window ends, each token checked with its own secret.
-- [x] Console: *When rotating, keep the old token working for* (none, 1 h, 24 h, 7 days) and a badge while the old token works. Tests: `TestOverlap` in `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls-e36).
+- [x] Console: *When rotating, keep the old token working for* (none, 1 h, 24 h, 7 days) and a badge while the old token works. Tests: `TestOverlap` in `tests/api/test_webhook_signatures.py`. Doc: [workflows.md](../workflows.md#signed-calls).
 - [ ] One previous pair at a time; the window cannot be ended early except by rotating again or disabling.
 
 ## E42: Quiet hours for notification channels (closes the E13 quiet-hours item)
@@ -399,7 +399,7 @@ dashboard real signals.
 
 - [x] Runtime setting `agents.approval_reminder_waiting_hours` (default 0 = off), used only while `approval_ttl_hours` is 0.
 - [x] `ApprovalReminders.run(waiting_hours=)`: approvals pending at least that long raise the same `approvals` alert, titled *… has waited N hours/days* (rounded down) and saying approvals never expire; cleared once decided; handed to the approver emails (E39). No migration.
-- [x] Tests: `TestApprovalsThatNeverExpire` in `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders-e22).
+- [x] Tests: `TestApprovalsThatNeverExpire` in `tests/api/test_approval_reminders.py`. Doc: [agents.md](../agents.md#reminders).
 - [ ] One reminder per approval, refreshed each check; no escalation after a longer wait.
 
 ## E44: Move a resource between teams from the console (closes the E35 console item)
@@ -415,7 +415,7 @@ dashboard real signals.
 - [x] `PUT /api/v1/users/me/preferences` (no permission: the caller's own account; fields left out unchanged; audited as `USER_UPDATED` with `preferences` only when something changes). Shown on `GET /auth/me` and `UserRead`.
 - [x] `ApproverReminders.approvers` skips people who opted out before the 25-person cap; a queued email to someone who has since opted out is cancelled (*The person turned these emails off.*).
 - [x] Console: the account dialog (click your name) is now *Your account*, with an *Email* switch shown only to holders of `tool.approve` or `workflow.approve`.
-- [x] Tests: `TestOptOut` in `tests/api/test_approver_reminders.py`. Docs: [agents.md](../agents.md#reminder-emails-to-each-approver-e39), api.md.
+- [x] Tests: `TestOptOut` in `tests/api/test_approver_reminders.py`. Docs: [agents.md](../agents.md#reminder-emails-to-each-approver), api.md.
 - [ ] An administrator cannot see or change someone else's choice; one switch for both tool and workflow approvals.
 
 ## E46: Per-team notification routing (closes the E13 routing item)
@@ -424,7 +424,7 @@ dashboard real signals.
 - [x] `AlertService.raise_alert(team_id=)`; a repeat takes the latest team. Set by approval reminders (agent's or workflow's team), team-scoped token and cost budgets (a deleted team gives none), and failed deployments (the model's team).
 - [x] Dispatcher: a channel with a team announces only alerts with that team; without one, every alert as before. `team_id` on create, update (`null` = platform; a change resets `active_since`), read, and the audit snapshot; an unknown team is 422. A team's channels count in `owned_counts`, so the team cannot be deleted while it has one.
 - [x] Console: *Alerts about* on the channel form, the team in the channel's rules, a team chip on alerts; the team detail lists workflows, tools and channels. `AlertRead.team_id`.
-- [x] Tests: `tests/api/test_team_notifications.py`. Docs: [notifications.md](../notifications.md#team-channels-e46), teams.md.
+- [x] Tests: `tests/api/test_team_notifications.py`. Docs: [notifications.md](../notifications.md#team-channels), teams.md.
 - [ ] Channels are still managed with `notification.manage` only (no team-owner self-service); one team per channel; API-key and end-user budgets, backend health and blocked models stay platform-wide.
 
 ## E47: A digest of what quiet hours held (closes the E42 digest item)
@@ -447,14 +447,14 @@ dashboard real signals.
 - [x] Runtime settings (new category *Email branding*): `notifications.email_brand_name`, `email_brand_color` (`#rrggbb`), `email_brand_tagline`, `email_footer`, `email_subject_prefix` (default `[AI Platform]`, as before). Deployment setting `NOTIFICATIONS__EMAIL_LOGO_PATH`: PNG, JPEG or GIF up to 200 KB, embedded as a `cid:` part (multipart/related), skipped with a log line when unusable.
 - [x] `Message.kind` (`approval` for E39 reminders, which now link to `#approvals`). Approver reminders and channel test sends use the effective settings, so branding changed in the console applies to them.
 - [x] `GET /notifications/email-preview` and *Preview email* on the Alerts page (sandboxed frame). Settings page: a colour picker, and optional text may be emptied.
-- [x] Tests: `tests/unit/test_html_email.py` (rewritten), `tests/api/test_email_branding.py`. Docs: [notifications.md](../notifications.md#branding-e49), settings.md.
+- [x] Tests: `tests/unit/test_html_email.py` (rewritten), `tests/api/test_email_branding.py`. Docs: [notifications.md](../notifications.md#branding), settings.md.
 - [ ] One layout (no per-channel templates or custom HTML); the logo is a file on the backend, not uploaded through the console.
 
 ## E50: PagerDuty Events API v2 (closes the E13 paging item)
 
 - [x] Webhook format `pagerduty` (migration `f9b1d3e5a7c8`: `notification_channels.routing_key_encrypted`, and the format check widened; downgrade turns PagerDuty channels into generic webhooks). `pagerduty_payload`: raised and escalated alerts `trigger`, resolved ones `resolve`, with dedup key `aip:<fingerprint>`, PagerDuty severities, summary, source, group, class, component, custom details and the console link.
 - [x] Routing key: write-only, Fernet-encrypted, 32 letters and digits, never audited (`has_routing_key` only); required for the format; a signing secret is refused on it. A test send triggers then resolves. Never digested (E47); quiet hours still hold.
-- [x] Console: *PagerDuty (Events API v2)* format, a routing key field in place of the signing secret and header, PagerDuty's URL filled in. Tests: `tests/api/test_pagerduty.py`. Doc: [notifications.md](../notifications.md#pagerduty-e50).
+- [x] Console: *PagerDuty (Events API v2)* format, a routing key field in place of the signing secret and header, PagerDuty's URL filled in. Tests: `tests/api/test_pagerduty.py`. Doc: [notifications.md](../notifications.md#pagerduty).
 - [ ] No PagerDuty acknowledgement back to the platform (one-way); no Opsgenie or VictorOps format.
 
 ## Phase acceptance (applies to each)

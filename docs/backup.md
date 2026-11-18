@@ -1,4 +1,4 @@
-# Backup and restore (M25)
+# Backup and restore
 
 ```bash
 make backup                       # take one
@@ -39,11 +39,11 @@ Tested in the gate by corrupting a dump and confirming verification fails.
 
 ## Why it runs on the host
 
-The console's Backup & Restore page (E7) does not change this. It records an audited request,
+The console's Backup & Restore page does not change this. It records an audited request,
 and the host's ops runner (`scripts/ops_runner.py`) runs the same `backup.py` commands. See
 [operations.md](operations.md).
 
-`pg_dump` lives in the postgres image, and Rule 4 forbids `apt-get` at build time — so the
+`pg_dump` lives in the postgres image, and installing packages with `apt-get` at build time is not allowed — so the
 control plane cannot dump its own database. `scripts/backup.py` is stdlib-only and
 orchestrates `docker compose exec`, like `check_airgap.py`, so a recovery machine needs no
 Python environment prepared first.
@@ -67,7 +67,7 @@ does not appear to be a valid archive", which reads exactly like a corrupt backu
 someone hunting a data-loss incident that never happened. Both verify and restore stage the
 dump to a file inside the container first.
 
-## Schedule and retention (E12)
+## Schedule and retention
 
 Runtime settings on the Settings page (Operations) control them. All are off (0) by
 default.
@@ -76,7 +76,7 @@ default.
 |---|---|
 | `ops.backup_interval_hours` | take a backup every N hours (1–720) |
 | `ops.backup_keep` | keep the newest N complete backups and delete older ones |
-| `ops.backup_keep_days` | keep complete backups for N days (E23) |
+| `ops.backup_keep_days` | keep complete backups for N days |
 
 Every five minutes the platform checks the runner's inventory:
 
@@ -102,7 +102,7 @@ The Backup & Restore page shows the schedule, when the next backup is due, the l
 backup job and how many backups the next retention run will delete.
 `GET /api/v1/ops/backups/schedule` returns the same information.
 
-## Off-host copies (E23)
+## Off-host copies
 
 A schedule on one disk does not protect against losing that disk. Set
 `OPS__BACKUP_COPY_DIR` in the host's `.env` to a directory on other storage, typically an
@@ -129,7 +129,7 @@ OPS__BACKUP_COPY_DIR=/mnt/backup-share/ai-platform
   cannot change it: the console must not choose where the host writes.
 - Restoring from a copy: copy the folder back into `backups/` and restore it as usual.
 
-## Copies to S3-compatible storage (E31)
+## Copies to S3-compatible storage
 
 Instead of a directory, the runner can upload each backup to an S3-compatible object
 store on other hardware: a second MinIO, Ceph RGW, Garage, or AWS S3 where policy allows.

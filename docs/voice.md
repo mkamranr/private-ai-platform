@@ -1,4 +1,4 @@
-# Voice assistant (M29)
+# Voice assistant
 
 Speech in, speech out, against the agents the platform already has.
 
@@ -17,12 +17,12 @@ one control, the microphone, plus a switch for how the assistant is drawn.
 
 ## The one architectural rule
 
-**M29 is a client of the agent engine, not a second one** (§3). The transcript goes into
+**The voice assistant is a client of the agent engine, not a second one.** The transcript goes into
 the same `AgentRunService` a typed chat uses, so:
 
 - every existing agent is already voice-capable — nothing is rebuilt for voice;
-- tool authorisation is the same §10 intersection of the agent's grants and the speaker's;
-- a HIGH-risk tool suspends for approval exactly as it would in text (§41-42).
+- tool authorisation is the same intersection of the agent's grants and the speaker's;
+- a HIGH-risk tool suspends for approval exactly as it would in text.
 
 Voice changes the interface, not the rules. A parallel voice-agent would drift from the
 real one, and the first thing to drift would be authorisation.
@@ -30,7 +30,7 @@ real one, and the first thing to drift would be authorisation.
 ## Configuration, not code
 
 Everything the assistant uses is chosen in the admin console and applied to the **next
-session** — no restart (§49). Settings resolve in the order `.env` already establishes:
+session** — no restart. Settings resolve in the order `.env` already establishes:
 
 ```
 database override  >  environment / .env  >  field default
@@ -69,12 +69,12 @@ Raw audio is biometric data, and a microphone records whoever is nearby, not onl
 person who pressed the button.
 
 - **Audio retention is off by default.** When enabled it goes to MinIO under the
-  session's own prefix — never into PostgreSQL (§28).
+  session's own prefix — never into PostgreSQL.
 - **Transcript retention is on**, because a conversation with no memory of its own last
   turn is not a conversation. Turning it off keeps the session and the timings and drops
   what was said.
 - A person can delete their own session — `DELETE /api/v1/voice/sessions/{id}` — without
-  asking an administrator (§29).
+  asking an administrator.
 
 ## The protocol
 
@@ -94,7 +94,7 @@ ASR engine resamples to anyway.
 
 ## What it degrades to
 
-The assistant is built to fall back rather than fail (§39):
+The assistant is built to fall back rather than fail:
 
 | failure | what happens |
 |---|---|
@@ -108,7 +108,7 @@ Speech-to-speech degrades to speech-to-text. It does not collapse.
 ## Observability
 
 Every stage is timed into `voice_events`, because "the assistant felt slow" is not
-actionable (§44-45):
+actionable:
 
 ```
 TURN_COMPLETED  772.89ms   stt 273.98  agent 324.05  tts 174.86
@@ -170,10 +170,10 @@ none; a waveform is legible at a glance and honest about what it is showing.
 
 ## What is not built yet
 
-- **Partial transcripts** (§9). The platform's STT surface transcribes a whole utterance,
+- **Partial transcripts**. The platform's STT surface transcribes a whole utterance,
   so there is nothing to stream yet. Emitting fake partials would be theatre.
-- **Sentence-level streaming TTS** (§21-22). Same reason: the TTS surface synthesises a
+- **Sentence-level streaming TTS**. Same reason: the TTS surface synthesises a
   whole utterance. The seam is `_speak` in `app/api/voice_ws.py` — one function.
-- **Server-side VAD** (§4). The browser's press-and-hold decides utterance boundaries
+- **Server-side VAD**. The browser's press-and-hold decides utterance boundaries
   today; the `vad_enabled` switch is carried through configuration ready for it.
-- **Wake word** — explicitly out of scope for the MVP (§17).
+- **Wake word** — explicitly out of scope.
