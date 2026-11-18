@@ -161,6 +161,9 @@ class DeploymentWorker:
         try:
             async with session.begin_nested():
                 audit = AuditService(AuditRepository(session))
+                # E46: a team's model alerts that team's channels too.
+                model = await ModelRepository(session).get(deployment.model_id)
+                team_id = model.team_id if model else None
                 await AlertService(AlertRepository(session), audit).raise_alert(
                     fingerprint=deployment_failed_fingerprint(deployment.id),
                     severity="CRITICAL",
@@ -169,6 +172,7 @@ class DeploymentWorker:
                     message=deployment.error_message or deployment.state_detail,
                     resource_type="deployment",
                     resource_id=str(deployment.id),
+                    team_id=team_id,
                 )
         except Exception:
             log.exception("deployment_failure_alert_failed", deployment=str(deployment.id))

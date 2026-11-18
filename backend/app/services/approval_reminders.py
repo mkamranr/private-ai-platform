@@ -141,6 +141,7 @@ class ApprovalReminders:
                 message=reminder.message,
                 resource_type=reminder.resource_type,
                 resource_id=reminder.resource_id,
+                team_id=reminder.team_id,
             )
         wanted = {r.fingerprint for r in due}
         cleared = 0

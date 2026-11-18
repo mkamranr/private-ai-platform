@@ -14,6 +14,7 @@ from app.models.agents import Agent, AgentRun, Tool
 from app.models.auth import User
 from app.models.knowledge import Document, KnowledgeBase
 from app.models.models_registry import ApiClient, ApiKey, Model, ModelAlias, ModelDeployment
+from app.models.notifications import NotificationChannel
 from app.models.teams import Team, TeamMembership
 from app.models.workflows import Workflow, WorkflowApproval, WorkflowRun
 from app.repositories.base import BaseRepository
@@ -27,6 +28,7 @@ OWNED_TABLES: tuple[tuple[str, type], ...] = (
     ("knowledge_bases", KnowledgeBase),
     ("workflows", Workflow),
     ("tools", Tool),
+    ("notification_channels", NotificationChannel),
 )
 
 

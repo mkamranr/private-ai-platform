@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Team notification channels (E46)
+- **Each team's alerts in its own chat.** A notification channel can now belong to a team. It then announces only that team's alerts: reminders about approvals for its agents and workflows, its token and cost budgets, and failed deployments of its models. Channels without a team still announce everything.
+- On the Alerts page, choose the team under *Alerts about* on the channel form, or set `team_id` in the API. Alerts that concern a team show a team chip.
+- A team cannot be deleted while it has a channel.
+- **Upgrade.** Migration `d5f7a9c1e3b4` adds `team_id` to `alerts` and `notification_channels`. Existing channels and alerts have no team, so nothing changes until you set one.
+
 ### Turn off approver reminder emails for yourself (E45)
 - **Your choice.** Anyone who can decide approvals can now stop the E39 reminder emails for themselves. Click your name at the top of the console, then switch off *Email me reminders about approvals I can decide*. Or call `PUT /api/v1/users/me/preferences`. Emails already queued for you are cancelled. Alerts and channels still announce the approval.
 - **Upgrade.** Migration `c3e5a7b9d1f2` adds `users.approval_reminder_emails`. It defaults to on, so nothing changes until someone switches it off.

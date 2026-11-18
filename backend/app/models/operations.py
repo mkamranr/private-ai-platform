@@ -163,6 +163,12 @@ class Alert(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     resolved_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+    #: E46: the team the alert concerns (a team's approval, budget or model), so a team's
+    #: notification channel can announce it. None = platform-wide. History outlives the
+    #: team: deleting it leaves its old alerts platform-wide.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL"), index=True
+    )
 
     @property
     def is_open(self) -> bool:

@@ -379,8 +379,20 @@ class BudgetWatcher:
         self._alerts = alerts
         self._alert_repo = alert_repo
         self._labels = _Labels(keys, teams)
+        self._teams = teams
         self._warn = warn_percent
         self._clock = clock
+
+    async def _team_of(self, scope: str, subject: str) -> uuid.UUID | None:
+        """E46: the team a team-scoped budget belongs to, so its alert reaches that
+        team's channels. None for other scopes, and for a team deleted since."""
+        if scope not in (QuotaScope.TEAM, CostBudgetScope.TEAM):
+            return None
+        try:
+            team = await self._teams.get(uuid.UUID(subject))
+        except ValueError:
+            return None
+        return team.id if team else None
 
     async def run(self) -> WatchResult:
         result = WatchResult()
@@ -466,6 +478,7 @@ class BudgetWatcher:
             message=f"{used:,} of {limit:,} tokens {when}. {tail}",
             resource_type="gateway_quota",
             resource_id=str(quota.id),
+            team_id=await self._team_of(quota.scope, subject),
         )
 
     # -- cost budgets --------------------------------------------------------
@@ -507,6 +520,7 @@ class BudgetWatcher:
                 ),
                 resource_type="cost_budget",
                 resource_id=str(budget.id),
+                team_id=await self._team_of(budget.scope, budget.subject),
             )
             result.raised.append(fingerprint)
         await self._clear_unwanted(COST_ALERT_SOURCE, wanted, result)

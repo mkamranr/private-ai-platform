@@ -139,6 +139,12 @@ class NotificationChannel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(64), default="UTC", server_default="UTC", nullable=False
     )
 
+    #: E46: a team's channel announces only that team's alerts; None (the default)
+    #: announces every alert, as before. A team cannot be deleted while it has one.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), index=True
+    )
+
     # -- health ----------------------------------------------------------------
     last_success_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     last_failure_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))

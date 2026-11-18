@@ -3793,7 +3793,7 @@ function alertRow(a, manage) {
     <tr>
       <td>${pill(a.severity)}</td>
       <td>
-        <div class="fw-semibold">${esc(a.title)}</div>
+        <div class="fw-semibold">${esc(a.title)} ${teamChip(a.team_id)}</div>
         ${a.message ? `<div class="small text-secondary">${esc(a.message)}</div>` : ''}
       </td>
       <td class="small text-secondary">${esc(titleCase(a.source))}</td>
@@ -4158,7 +4158,8 @@ async function renderTeams() {
 
 const RESOURCE_LABEL = {
   models: 'Models', aliases: 'Aliases', api_clients: 'API clients', agents: 'Agents',
-  knowledge_bases: 'Knowledge bases',
+  knowledge_bases: 'Knowledge bases', workflows: 'Workflows', tools: 'Tools',
+  notification_channels: 'Notification channels',
 };
 
 async function renderTeamDetail(teamId) {

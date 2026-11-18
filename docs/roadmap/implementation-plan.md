@@ -154,7 +154,7 @@ dashboard real signals.
 - [x] Outbox (`notification_deliveries`) with a dispatcher job (`notification_dispatch`, 30 s): retries with back-off up to `max_attempts`, a failing channel deferred for the rest of a run, a `notification_channel_failing` alert after three failures, 30-day history.
 - [x] API under `/notifications` with permission `notification.manage` (ADMIN, SUPER_ADMIN); test send; audited create, update, delete and test. Alerts page: channels, recent notifications, add/edit form. Metric `ai_platform_notifications_total`.
 - [x] Migration `c4e8a1f2d6b9` upgrades and downgrades cleanly. Doc: [docs/notifications.md](../notifications.md).
-- [ ] No digests ~~or quiet hours~~ (quiet hours since E42), per-team routing, PagerDuty native API, HTML email or SMS.
+- [ ] No digests ~~or quiet hours~~ (quiet hours since E42), ~~per-team routing~~ (since E46), PagerDuty native API, HTML email or SMS.
 
 ## E14: Auth hardening
 
@@ -417,6 +417,15 @@ dashboard real signals.
 - [x] Console: the account dialog (click your name) is now *Your account*, with an *Email* switch shown only to holders of `tool.approve` or `workflow.approve`.
 - [x] Tests: `TestOptOut` in `tests/api/test_approver_reminders.py`. Docs: [agents.md](../agents.md#reminder-emails-to-each-approver-e39), api.md.
 - [ ] An administrator cannot see or change someone else's choice; one switch for both tool and workflow approvals.
+
+## E46: Per-team notification routing (closes the E13 routing item)
+
+- [x] Migration `d5f7a9c1e3b4`: `alerts.team_id` (FK `teams`, SET NULL, indexed) and `notification_channels.team_id` (FK `teams`, RESTRICT, indexed).
+- [x] `AlertService.raise_alert(team_id=)`; a repeat takes the latest team. Set by approval reminders (agent's or workflow's team), team-scoped token and cost budgets (a deleted team gives none), and failed deployments (the model's team).
+- [x] Dispatcher: a channel with a team announces only alerts with that team; without one, every alert as before. `team_id` on create, update (`null` = platform; a change resets `active_since`), read, and the audit snapshot; an unknown team is 422. A team's channels count in `owned_counts`, so the team cannot be deleted while it has one.
+- [x] Console: *Alerts about* on the channel form, the team in the channel's rules, a team chip on alerts; the team detail lists workflows, tools and channels. `AlertRead.team_id`.
+- [x] Tests: `tests/api/test_team_notifications.py`. Docs: [notifications.md](../notifications.md#team-channels-e46), teams.md.
+- [ ] Channels are still managed with `notification.manage` only (no team-owner self-service); one team per channel; API-key and end-user budgets, backend health and blocked models stay platform-wide.
 
 ## Phase acceptance (applies to each)
 

@@ -117,6 +117,7 @@ class AlertRepository(BaseRepository[Alert]):
         message: str | None,
         resource_type: str | None,
         resource_id: str | None,
+        team_id: uuid.UUID | None = None,
     ) -> AlertUpsert:
         """Open an alert, or count another occurrence of the open one.
 
@@ -135,6 +136,7 @@ class AlertRepository(BaseRepository[Alert]):
             message=message,
             resource_type=resource_type,
             resource_id=resource_id,
+            team_id=team_id,
             occurrences=1,
         )
         upsert: Any = stmt.on_conflict_do_update(
@@ -148,6 +150,8 @@ class AlertRepository(BaseRepository[Alert]):
                 "message": stmt.excluded.message,
                 "severity": stmt.excluded.severity,
                 "title": stmt.excluded.title,
+                # A resource moved to another team since: route by where it is now.
+                "team_id": stmt.excluded.team_id,
                 "updated_at": func.now(),
             },
         ).returning(Alert.id, literal_column("(xmax = 0)").label("created"))

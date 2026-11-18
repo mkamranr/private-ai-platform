@@ -137,6 +137,7 @@ is counted from `usage_records.team_id`, the same way key budgets are. See
 | a team **owner** | manage that team's members without `team.manage` (needs `team.view` to reach the routes) |
 
 - A team that owns resources cannot be deleted (409, and the error lists what it owns).
+  Since E46 a team's notification channels count too.
   Move or delete the resources first. Otherwise they would either be destroyed or
   silently become shared with everyone.
 - A team that has owners always keeps at least one.
