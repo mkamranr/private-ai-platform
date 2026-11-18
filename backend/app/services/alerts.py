@@ -53,6 +53,7 @@ class AlertService:
         message: str | None = None,
         resource_type: str | None = None,
         resource_id: str | None = None,
+        team_id: uuid.UUID | None = None,
     ) -> AlertUpsert:
         if str(severity) not in set(AlertSeverity):
             raise ValidationError(f"Unknown alert severity {severity!r}.")
@@ -64,6 +65,7 @@ class AlertService:
             message=message,
             resource_type=resource_type,
             resource_id=resource_id,
+            team_id=team_id,
         )
         if result.created:
             log.warning("alert_raised", fingerprint=fingerprint, severity=str(severity))

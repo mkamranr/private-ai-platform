@@ -30,6 +30,35 @@ Each channel also chooses:
   Today's sources are `backend_health`, `deployment`, `quota_budget`, `cost_budget`,
   `backup_schedule`, `notifications`, `auth`, `ops_runner` and `approvals` (reminders
   before an approval expires, E22).
+- **Team (E46):** *Every team* (the default) or one team. A team's channel announces only
+  alerts about that team. See [Team channels](#team-channels-e46).
+
+## Team channels (E46)
+
+Point a team at its own chat or mailing list. Pick the team under *Alerts about* on the
+channel form, or set `team_id` in the API. These alerts carry a team:
+
+| Alert | Its team |
+|---|---|
+| `approvals`: a reminder about a waiting approval (E22, E43) | the agent's or workflow's team |
+| `quota_budget`, `cost_budget`: a team-scoped budget (by `team`) | that team |
+| `deployment`: *Model deployment failed* | the model's team |
+
+The rest are platform-wide (`team_id` null): backend health, backups, sign-in, the runner,
+blocked models still running, a failing channel, and budgets for an API key, an end user or
+the whole platform. A team's channel never announces these. A channel with no team
+announces every alert, including each team's, as before. The Alerts page shows a team chip
+on alerts that have a team.
+
+- An alert that is raised again takes the resource's current team. If an agent moves to
+  another team, its next reminder goes to the new team's channel.
+- When you change a channel's team, it starts from the change, like turning it back on. It
+  does not replay the new team's open alerts.
+- A team that has a channel cannot be deleted. The error lists `notification_channels`.
+  Delete the channel or make it a platform channel first. Deleting a team leaves its old
+  alerts platform-wide.
+- Managing channels still needs `notification.manage`. A team owner cannot set up their
+  team's channel themselves.
 
 **Not sent:**
 
@@ -201,7 +230,7 @@ Under `/api/v1/notifications`. Every route needs `notification.manage`.
 |---|---|
 | `GET /channels` | channels with health and queued count, plus `smtp_configured`, `console_url_configured` and the known `sources` |
 | `POST /channels` | 201. A webhook needs `url`; an email channel needs `recipients`. 409 for a duplicate name, 422 for a refused URL, an unknown source, a bad address or a short signing secret |
-| `PATCH /channels/{id}` | Omitted fields are unchanged. An empty string removes `signing_secret` or `authorization`. The kind can't change |
+| `PATCH /channels/{id}` | Omitted fields are unchanged. An empty string removes `signing_secret` or `authorization`. `team_id: null` makes it a platform channel (E46). The kind can't change |
 | `DELETE /channels/{id}` | 204. The channel's delivery history is removed with it |
 | `POST /channels/{id}/test` | sends now; `{ok, detail, code}`. A failure is still a 200 |
 | `GET /deliveries` | `?channel_id=&status=&limit=&offset=` |
@@ -219,8 +248,8 @@ Audit actions:
   one by one when the window ends. During an incident with many alerts, a chat channel
   receives one message per alert. A minimum severity, or a source filter, keeps busy
   channels quiet.
-- **Per-team routing.** Channels see every alert that matches their filter, whichever team
-  owns the resource.
+- **Team owners managing their own channels.** Team channels (E46) are set up by holders
+  of `notification.manage`. An API key's budget alerts are not routed to the key's team.
 - **Paging services' native APIs**, such as PagerDuty's Events API. Use a JSON webhook to
   an internal relay instead.
 - **HTML email** and **SMS**.

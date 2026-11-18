@@ -6,6 +6,10 @@ again if it escalates to a higher severity, and once more when it is resolved if
 channel announced it and ``notify_resolved`` is on. A recurring alert is announced once,
 not on every occurrence: the database refuses a second delivery with the same key.
 
+**Teams (E46).** A channel with a ``team_id`` announces only alerts about that team: its
+agents' and workflows' approvals, its budgets and quotas, its models' failed deployments.
+A channel without one announces every alert, whichever team it concerns.
+
 **What is not sent.** Alerts raised before the channel was created or last turned on (so
 a new channel does not replay every open alert), downgrades from CRITICAL to WARNING, and
 an alert that opens and clears between two dispatcher runs (30 s by default): a condition
@@ -48,6 +52,7 @@ from app.models.notifications import (
     PayloadFormat,
 )
 from app.models.operations import Alert, AlertSeverity, AlertState
+from app.models.teams import Team
 from app.repositories.notifications import (
     NotificationChannelRepository,
     NotificationDeliveryRepository,
@@ -305,6 +310,7 @@ class NotificationService:
             "has_signing_secret": channel.has_signing_secret,
             "has_authorization": channel.has_authorization,
             "recipients": list(channel.recipients),
+            "team_id": str(channel.team_id) if channel.team_id else None,
             "quiet_hours": (
                 f"{channel.quiet_start}-{channel.quiet_end} {channel.quiet_timezone}"
                 if channel.quiet_start
@@ -329,6 +335,12 @@ class NotificationService:
         channel.quiet_start, channel.quiet_end = start, end
         channel.quiet_timezone = zone.strip()
 
+    async def _team(self, team_id: uuid.UUID | None) -> uuid.UUID | None:
+        """E46: a channel's team must exist."""
+        if team_id is not None and await self._channels.session.get(Team, team_id) is None:
+            raise ValidationError(f"No team with id {team_id}.", details={"field": "team_id"})
+        return team_id
+
     # -- writes ----------------------------------------------------------------
     async def create(self, data: dict[str, Any], *, actor: User) -> NotificationChannel:
         kind = data["kind"]
@@ -347,6 +359,7 @@ class NotificationService:
             consecutive_failures=0,
             created_by=actor.id,
             active_since=dt.datetime.now(dt.UTC),
+            team_id=await self._team(data.get("team_id")),
         )
         if kind == ChannelKind.WEBHOOK:
             if not data.get("url"):
@@ -409,6 +422,10 @@ class NotificationService:
                 channel.recipients = self._recipients(changes["recipients"])
         if {"quiet_start", "quiet_end", "quiet_timezone"} & changes.keys():
             self._set_quiet(channel, changes)
+        if "team_id" in changes and changes["team_id"] != channel.team_id:
+            channel.team_id = await self._team(changes["team_id"])
+            # Like turning it on: announce from now, not every open alert of its new scope.
+            channel.active_since = dt.datetime.now(dt.UTC)
 
         if channel.enabled and not was_enabled:
             # Turned back on: start from now rather than replaying what it missed.
@@ -568,6 +585,8 @@ class NotificationDispatcher:
             return None  # a channel is not told about its own failures
         if channel.sources and alert.source not in channel.sources:
             return None
+        if channel.team_id is not None and alert.team_id != channel.team_id:
+            return None  # E46: a team's channel announces only that team's alerts
         announced = {k: s for k, s in keys.items() if k.startswith("open:")}
         base = {
             "id": uuid.uuid4(),

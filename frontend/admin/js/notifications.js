@@ -36,7 +36,9 @@ function channelTarget(c) {
 function channelRules(c) {
   const from = c.sources.length ? c.sources.map((s) => esc(titleCase(s))).join(', ') : 'every source';
   const quiet = c.quiet_start ? ` · quiet ${esc(c.quiet_start)}–${esc(c.quiet_end)} ${esc(c.quiet_timezone)} (Critical only)` : '';
-  return `${esc(titleCase(c.min_severity))} and above · ${from}${c.notify_resolved ? ' · with resolutions' : ''}${quiet}`;
+  // E46: a team's channel hears only that team's alerts.
+  const team = c.team_id ? ` · ${esc(teamName(c.team_id) || 'one team')}'s alerts only` : '';
+  return `${esc(titleCase(c.min_severity))} and above · ${from}${team}${c.notify_resolved ? ' · with resolutions' : ''}${quiet}`;
 }
 
 function notifyChannelsCard(data) {
@@ -142,6 +144,17 @@ function openNotifyModal(channel = null) {
       <label class="form-check-label small" for="notify-src-${esc(s)}">${esc(titleCase(s))}</label>
     </div>`).join('');
 
+  // E46: every team the caller can see; a channel's team they cannot see stays selected.
+  const teams = teamCache.all.slice();
+  if (channel?.team_id && !teams.some((t) => t.id === channel.team_id)) {
+    teams.push({ id: channel.team_id, name: 'A team you cannot see' });
+  }
+  const teamSelect = document.getElementById('notify-team');
+  teamSelect.innerHTML = ['<option value="">Every team (platform channel)</option>']
+    .concat(teams.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`)).join('');
+  teamSelect.value = channel?.team_id || '';
+  document.getElementById('notify-team-row').classList.toggle('d-none', !teams.length);
+
   const urlHelp = document.getElementById('notify-url-help');
   urlHelp.textContent = channel?.url_display
     ? `Now ${channel.url_display}. Leave blank to keep the current address.`
@@ -182,6 +195,7 @@ onModalSubmit('notify-form', 'notify-error', async () => {
     quiet_start: value('notify-quiet-start') || (id ? '' : null),
     quiet_end: value('notify-quiet-end') || (id ? '' : null),
     quiet_timezone: value('notify-quiet-zone') || 'UTC',
+    team_id: value('notify-team') || null,
   };
   if (!id) body.kind = kind;
   if (kind === 'webhook') {

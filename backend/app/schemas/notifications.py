@@ -40,6 +40,8 @@ class ChannelCreate(BaseModel):
     quiet_timezone: str = Field(
         default="UTC", max_length=64, description="UTC, an offset such as +04:00, or an IANA name"
     )
+    #: E46: announce only this team's alerts. None announces every alert.
+    team_id: uuid.UUID | None = None
 
 
 class ChannelUpdate(BaseModel):
@@ -65,6 +67,8 @@ class ChannelUpdate(BaseModel):
     quiet_start: str | None = Field(default=None, max_length=5)
     quiet_end: str | None = Field(default=None, max_length=5)
     quiet_timezone: str | None = Field(default=None, max_length=64)
+    #: E46. null makes it a platform channel again (every alert).
+    team_id: uuid.UUID | None = None
 
 
 class ChannelRead(BaseModel):
@@ -90,6 +94,7 @@ class ChannelRead(BaseModel):
     quiet_start: str | None = None
     quiet_end: str | None = None
     quiet_timezone: str = "UTC"
+    team_id: uuid.UUID | None = None
     last_success_at: dt.datetime | None
     last_failure_at: dt.datetime | None
     last_error: str | None

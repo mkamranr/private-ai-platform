@@ -135,6 +135,8 @@ class AlertRead(ORMModel):
     acknowledged_by: uuid.UUID | None = None
     resolved_at: dt.datetime | None = None
     resolved_by: uuid.UUID | None = None
+    #: E46: the team the alert concerns; None = platform-wide.
+    team_id: uuid.UUID | None = None
 
 
 class AlertSummary(BaseModel):
