@@ -761,6 +761,9 @@ class NotificationsSettings(BaseModel):
     #: Verify the mail server's certificate. Turn off only for an internal relay with a
     #: self-signed certificate.
     smtp_verify_tls: bool = True
+    #: E48: send an HTML part alongside the plain text. Turn off for mail gateways that
+    #: strip or quarantine HTML; the plain text is always sent.
+    email_html: bool = True
     #: The console's address as people reach it, e.g. ``https://ai.example.internal``.
     #: Notifications link to the Alerts page when it is set.
     console_url: str | None = None

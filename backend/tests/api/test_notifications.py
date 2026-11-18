@@ -367,7 +367,8 @@ class TestDispatcher:
         (message,) = smtp.sent
         assert message["To"] == "ops@site.internal"
         assert message["Subject"] == "[AI Platform] [CRITICAL] Backend gpu-01 is not answering"
-        assert "https://ai.internal/#alerts" in message.get_content()
+        text = message.get_body(("plain",))
+        assert text is not None and "https://ai.internal/#alerts" in text.get_content()
         assert smtp.calls[:3] == ["connect mail.internal:587", "starttls", "login relay"]
 
     async def test_email_without_a_mail_server_fails_clearly(
