@@ -27,7 +27,7 @@ dashboard real signals.
 - [x] `InferenceBackendAdapter` ABC in `core/interfaces/` with declared capabilities; adapters for vLLM, Ollama and OpenAI-compatible endpoints.
 - [x] Routes: `/api/v1/backends` (CRUD, `test`, `models`, `models/register`) and `/api/v1/alerts` (list, summary, acknowledge, resolve).
 - [x] Shared outbound-URL validator `core/url_policy.py`, used by backends and the model registry. ~~MCP not yet switched over.~~ Closed in E51.
-- [x] Worker job `backend_health` raises/resolves alerts; deployment failures raise alerts. GPU-threshold alerts deferred.
+- [x] Worker job `backend_health` raises/resolves alerts; deployment failures raise alerts. ~~GPU-threshold alerts deferred.~~ Since E52.
 - [x] UI: Backends page, Alerts page, sidebar alert badge, dashboard status from real alert counts. Console restyled (navy sidebar, light theme default).
 - [x] Permissions `backend.view|manage`, `alert.view|manage` (existing dotted naming), seeded and reconciled.
 - [x] Tests: `test_url_policy.py`, `test_backend_adapters.py`, `tests/api/test_backends.py`.
@@ -463,6 +463,13 @@ dashboard real signals.
 - [x] `call_mcp` checks the endpoint again before every call (health check, discovery, tool call), so a server registered before E51 that points at a metadata host or a public AI service fails with `McpError` and shows `UNREACHABLE` with the reason. No migration.
 - [x] Tests: `tests/api/test_mcp_url_policy.py`. Docs: [mcp.md](../mcp.md#endpoint-policy), backends.md.
 - [ ] No DNS resolution: a private name that resolves to a metadata address is not caught (as for backends). An existing server cannot be edited, only deleted and registered again.
+
+## E52: GPU threshold alerts (closes the E1 GPU-threshold item)
+
+- [x] `GpuSettings`: `alerts_enabled`, `alert_temperature_warning_celsius` (83), `alert_temperature_critical_celsius` (90, warning must be lower), `alert_memory_warning_percent` (98, the node agent's level, above what model servers reserve). Runtime settings in a new *GPU monitoring* category. Uncorrectable ECC errors are always CRITICAL.
+- [x] `app/services/gpu_alerts.py` `GpuAlertWatcher`, run by the worker job `gpu_alerts` (`WORKERS__GPU_ALERT_INTERVAL_SECONDS`, 60): each GPU's newest sample from the last five minutes (`GpuMetricRepository.latest_per_gpu`, `DISTINCT ON`), one alert per GPU (`gpu_threshold:<gpu_id>`, resource `gpu`, no team) at the worst level, title naming the node, index and readings. Cleared on recovery, after five minutes without a sample, or when turned off. `gpu_threshold` added to the channel source filter. No migration.
+- [x] Tests: `tests/api/test_gpu_alerts.py`. Docs: [gpu.md](../gpu.md#threshold-alerts), settings.md, notifications.md.
+- [ ] Latest sample only: no "sustained for N minutes" and no hysteresis, so a GPU hovering at a threshold can raise and clear repeatedly. No per-node or per-GPU thresholds. Utilisation, power and PCIe replay counts are not alerted on.
 
 ## Phase acceptance (applies to each)
 

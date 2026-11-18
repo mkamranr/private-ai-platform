@@ -25,6 +25,7 @@ that silently ignores what it saved is worse than one that says "restart require
 |---|---|---|---|
 | `platform.public_base_url` | Networking | node install command, workflow webhook URL, SSO callback | next enrolment, webhook rotation or sign-in |
 | `gpu.metric_retention_days` | Retention | hourly GPU metric purge | next retention run |
+| `gpu.alerts_enabled`, `gpu.alert_temperature_warning_celsius`, `gpu.alert_temperature_critical_celsius`, `gpu.alert_memory_warning_percent` | GPU monitoring | GPU threshold alerts (see [gpu.md](gpu.md#threshold-alerts)) | next GPU alert check (1 min) |
 | `gateway.circuit_failure_threshold`, `circuit_window_seconds`, `circuit_open_seconds` | Gateway resilience | gateway circuit breaker | next gateway request |
 | `gateway.concurrency_lease_seconds` | Gateway resilience | per-model concurrency slots | next gateway request |
 | `ops.runner_stale_seconds`, `ops.max_log_lines` | Operations | ops runner status and reports | immediately |

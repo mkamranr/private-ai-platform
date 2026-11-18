@@ -58,6 +58,7 @@ CATEGORIES: tuple[tuple[str, str], ...] = (
     ("networking", "Networking"),
     ("gateway", "Gateway resilience"),
     ("operations", "Operations"),
+    ("monitoring", "GPU monitoring"),
     ("integrations", "Integrations"),
     ("chargeback", "Chargeback"),
     ("branding", "Email branding"),
@@ -135,6 +136,38 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "GPU samples older than this are deleted by the hourly retention job.",
         "Next retention run (hourly)",
         _bounded(1, 3650),
+    ),
+    RuntimeSetting(
+        "gpu.alerts_enabled",
+        "monitoring",
+        "GPU threshold alerts",
+        "Raise an alert when a GPU runs hot, nearly fills its memory or reports uncorrectable "
+        "ECC errors. Turning this off clears the open GPU alerts. Read by the gpu_alerts job.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
+        "gpu.alert_temperature_warning_celsius",
+        "monitoring",
+        "GPU warning temperature (°C)",
+        "A GPU at or above this temperature raises a WARNING alert. Must be below the "
+        "critical temperature. Read by the gpu_alerts job.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
+        "gpu.alert_temperature_critical_celsius",
+        "monitoring",
+        "GPU critical temperature (°C)",
+        "A GPU at or above this temperature raises a CRITICAL alert. Read by the gpu_alerts job.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
+        "gpu.alert_memory_warning_percent",
+        "monitoring",
+        "GPU memory warning (%)",
+        "A GPU with at least this share of its memory in use raises a WARNING alert. Model "
+        "servers usually reserve 90-95% up front, so keep this above that. Read by the "
+        "gpu_alerts job.",
+        "Next GPU alert check (every minute)",
     ),
     RuntimeSetting(
         "gateway.circuit_failure_threshold",

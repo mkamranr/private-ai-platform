@@ -78,6 +78,7 @@ from app.services.audit import AuditService
 from app.services.backup_schedule import BackupScheduler
 from app.services.budgets import BudgetWatcher, CostBudgetService
 from app.services.chargeback import ChargebackService
+from app.services.gpu_alerts import GpuAlertWatcher
 from app.services.inference_backends import InferenceBackendService
 from app.services.infrastructure import GpuService, NodeService
 from app.services.notification_senders import EmailSender, WebhookSender
@@ -353,6 +354,30 @@ class InfrastructureWorker:
         except Exception:
             log.exception("budget_check_failed")
 
+    async def check_gpu_alerts(self) -> None:
+        """Each GPU's latest sample against the alert thresholds (E52). Never raises."""
+        try:
+            async with self._session_factory() as session:
+                settings = await RUNTIME.effective(session, self._settings)
+                audit = AuditService(
+                    AuditRepository(session), session_factory=self._session_factory
+                )
+                alert_repo = AlertRepository(session)
+                watcher = GpuAlertWatcher(
+                    GpuMetricRepository(session), AlertService(alert_repo, audit), alert_repo
+                )
+                result = await watcher.run(settings.gpu)
+                await session.commit()
+            if result.raised or result.cleared:
+                log.info(
+                    "gpu_alerts_checked",
+                    gpus=result.checked,
+                    open=len(result.raised),
+                    cleared=len(result.cleared),
+                )
+        except Exception:
+            log.exception("gpu_alerts_failed")
+
     async def schedule_backups(self) -> None:
         """Queue scheduled backups and retention for the ops runner (E12). Never raises."""
         try:
@@ -459,6 +484,16 @@ class InfrastructureWorker:
             coalesce=True,
             max_instances=1,
             misfire_grace_time=budget_interval,
+        )
+        gpu_alert_interval = self._settings.workers.gpu_alert_interval_seconds
+        self._scheduler.add_job(
+            self.check_gpu_alerts,
+            IntervalTrigger(seconds=gpu_alert_interval),
+            id="gpu_alerts",
+            name="Compare GPU samples with the alert thresholds",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=gpu_alert_interval,
         )
         self._scheduler.add_job(
             self.schedule_backups,

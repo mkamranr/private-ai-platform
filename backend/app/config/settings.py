@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -382,6 +382,19 @@ class GpuSettings(BaseModel):
     fake_device_count: int = 4
     fake_device_model: str = "NVIDIA A100-SXM4-80GB"
     fake_memory_total_mib: int = 81920
+    # Threshold alerts (E52), checked by the `gpu_alerts` worker job against each GPU's
+    # latest sample. The defaults match the node agent's own health levels. Uncorrectable
+    # ECC errors are always CRITICAL and have no setting.
+    alerts_enabled: bool = True
+    alert_temperature_warning_celsius: int = Field(default=83, ge=30, le=120)
+    alert_temperature_critical_celsius: int = Field(default=90, ge=30, le=120)
+    alert_memory_warning_percent: int = Field(default=98, ge=50, le=100)
+
+    @model_validator(mode="after")
+    def _warning_below_critical(self) -> GpuSettings:
+        if self.alert_temperature_warning_celsius >= self.alert_temperature_critical_celsius:
+            raise ValueError("the GPU warning temperature must be below the critical temperature")
+        return self
 
 
 class EnrollmentSettings(BaseModel):
@@ -696,6 +709,8 @@ class WorkersSettings(BaseModel):
     #: How often token budgets and cost budgets are compared with usage (E12). Usage is
     #: summed from usage_records, so this is a few aggregate queries per run.
     budget_check_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    # GPU threshold alerts (E52). Samples arrive every `gpu.poll_interval_seconds`.
+    gpu_alert_interval_seconds: int = Field(default=60, ge=15, le=3600)
     #: How often alert notifications are queued and sent (E13). Each run is a few
     #: small queries when nothing changed, so a short interval costs little and gets
     #: a page out quickly.

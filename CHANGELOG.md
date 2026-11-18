@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### GPU alerts
+- **Hear about a hot or failing GPU.** A GPU that runs hot, nearly fills its memory or reports uncorrectable memory (ECC) errors now raises an alert on the Alerts page, one per GPU. It is sent to your notification channels like any other alert (source `gpu_threshold`) and clears itself when the GPU recovers.
+- **Your thresholds.** Settings page, *GPU monitoring*: warning and critical temperature (83 °C and 90 °C by default), memory warning (98%), and a switch to turn GPU alerts off. Changes apply within a minute.
+- **Upgrade.** Nothing to do: no migration. `WORKERS__GPU_ALERT_INTERVAL_SECONDS` (default 60) sets how often GPUs are checked.
+
 ### MCP server addresses checked
 - **The same rules as backends.** Registering an HTTP or SSE MCP server now refuses addresses the platform must never call: cloud metadata endpoints, public AI services, URLs with a username or password in them, and anything other than `http`/`https`. Private addresses and compose service names are allowed as before. STDIO servers are not affected.
 - The address is checked again on every call. A server registered earlier with a refused address shows *Unreachable* with the reason; delete it and register it again with a valid address.
