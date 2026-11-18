@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Move a resource between teams from the console (E44)
+- **No more API calls to reassign.** If you may move a model, alias, API client, agent, tool, knowledge base or workflow, its team chip is now a button (*Shared* for a shared one). It opens a *Move to team* dialog. If the move is refused, for example because an agent would lose access to its model, the dialog says why.
+- **Upgrade.** Nothing to do: console only, no migration.
+
 ### Reminders for approvals that never expire (E43)
 - **Nothing waits forever unnoticed.** With approval expiry turned off (`agents.approval_ttl_hours` 0), set `agents.approval_reminder_waiting_hours` (Settings page, *Security*) to raise a reminder for each approval that has waited that long, such as *Approval for create_ticket (IT Helpdesk) has waited 3 days*. It reaches the Alerts page, subscribed channels and, when on, each approver's email, and clears once someone decides.
 - **Upgrade.** Nothing to do: no migration, and it is off by default.

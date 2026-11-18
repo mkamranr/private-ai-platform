@@ -2600,6 +2600,32 @@
   </div>
 </div>
 
+<!-- Move to team modal (E44) ------------------------------------------------>
+<div class="modal fade" id="team-move-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="team-move-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Move <span id="team-move-name" class="mono"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <label class="form-label small text-secondary" for="team-move-select">Team</label>
+          <select class="form-select" id="team-move-select"></select>
+          <div class="form-text">Only members of the team (and holders of scope.all) see a
+            resource that belongs to a team; a shared one is visible to everyone. The move
+            takes effect on the next request and is recorded in the audit log.</div>
+          <div class="alert alert-danger small mt-3 mb-0 d-none" id="team-move-error"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Move</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- Deployment logs modal ---------------------------------------------------->
 <div class="modal fade" id="logs-modal" tabindex="-1">
   <div class="modal-dialog modal-xl">

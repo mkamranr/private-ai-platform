@@ -441,6 +441,35 @@ class TestReassignment:
         )
         assert out_of_b.status_code == 404
 
+    @pytest.mark.parametrize("kind", ["model", "alias", "api_client", "agent", "knowledge_base"])
+    async def test_every_kind_the_console_offers_moves_out_and_back(
+        self, kind: str, client: AsyncClient, tokens, session: AsyncSession, world: dict[str, Any]
+    ) -> None:
+        """E44: the console's Move to team dialog offers these kinds; each round-trips."""
+        target: Any
+        if kind == "api_client":
+            target = await session.get(ApiClient, world["keys"]["a"][0].client_id)
+        else:
+            plural = {"model": "models", "alias": "aliases", "agent": "agents"}
+            target = world[plural.get(kind, "bases")]["a"]
+        assert target is not None
+        headers = auth_header(tokens, world["alice"])
+        for team_id, previous in ((None, world["a"].id), (world["a"].id, None)):
+            moved = await client.put(
+                "/api/v1/scope",
+                headers=headers,
+                json={
+                    "resource_type": kind,
+                    "resource_id": str(target.id),
+                    "team_id": str(team_id) if team_id else None,
+                },
+            )
+            assert moved.status_code == 200, moved.text
+            body = moved.json()
+            assert body["previous_team_id"] == (str(previous) if previous else None)
+            await session.refresh(target)
+            assert target.team_id == team_id
+
     async def test_requires_the_resources_manage_permission(
         self, client: AsyncClient, tokens, session: AsyncSession, settings, world: dict[str, Any]
     ) -> None:

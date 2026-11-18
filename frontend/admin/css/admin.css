@@ -707,6 +707,9 @@ body.app-active main {
 /* Team chip (E3): which team owns a resource. Shared resources show nothing. */
 .chip-team { display: inline-flex; align-items: center; gap: .25rem; font-weight: 500; vertical-align: middle; }
 .chip-team svg { width: .85rem; height: .85rem; }
+/* E44: the chip is a button for someone who may move the resource to another team. */
+.chip-move { border: 1px dashed var(--bs-border-color); cursor: pointer; font-family: inherit; font-size: .72rem; line-height: inherit; }
+.chip-move:hover, .chip-move:focus-visible { border-style: solid; border-color: var(--bs-primary); }
 
 /* -------------------------------------------------------------------------- */
 /* E4: model governance and deployment revisions                              */
