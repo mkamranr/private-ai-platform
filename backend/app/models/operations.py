@@ -31,6 +31,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -222,6 +223,9 @@ class GatewayQuota(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "AND (max_concurrency IS NULL OR max_concurrency > 0)",
             name="limits_positive",
         ),
+        CheckConstraint(
+            "warn_percent IS NULL OR warn_percent BETWEEN 1 AND 99", name="warn_percent_valid"
+        ),
     )
 
     scope: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -233,6 +237,9 @@ class GatewayQuota(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     monthly_tokens: Mapped[int | None] = mapped_column(BigInteger)
     #: Requests in flight at once. Streams count until they finish.
     max_concurrency: Mapped[int | None] = mapped_column(Integer)
+    #: Share of a daily or monthly budget at which callers and operators are warned (E53).
+    #: Null uses the platform-wide ``gateway.budget_warning_percent``.
+    warn_percent: Mapped[int | None] = mapped_column(SmallInteger)
 
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(

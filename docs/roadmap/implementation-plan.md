@@ -471,6 +471,17 @@ dashboard real signals.
 - [x] Tests: `tests/api/test_gpu_alerts.py`. Docs: [gpu.md](../gpu.md#threshold-alerts), settings.md, notifications.md.
 - [ ] Latest sample only: no "sustained for N minutes" and no hysteresis, so a GPU hovering at a threshold can raise and clear repeatedly. No per-node or per-GPU thresholds. Utilisation, power and PCIe replay counts are not alerted on.
 
+## E53: Quota warnings, extended
+
+Daily and monthly warning alerts already existed (E12); this adds the parts the feature
+matrix still listed as missing.
+
+- [x] Migration `a1c3e5f7b9d2`: nullable `gateway_quotas.warn_percent` (1–99). Null uses `gateway.budget_warning_percent`, so existing quotas behave as before. `GatewayPolicy.warn_percent_for`; the budget watcher uses it for alerts.
+- [x] `X-Quota-Warning: <scope>; period=<daily|monthly>; used=<n>%` on gateway responses (buffered and streamed) for every budget at or past its share, most used first. `GatewayPolicy._check_budgets` returns the warnings; `admit` and `drop_scope` set the header through a per-request holder in `core/request_context.py` that the request middleware adds to the response.
+- [x] `GET /quotas`: `warn_percent`, `effective_warn_percent`, `status` (`ok`, `near_limit`, `exhausted`, `unknown`) and `used_percent`. Usage & Quotas page: *Warn at* column and form field, *Warn at…* button, status pill, bars amber at the quota's share. Audit snapshots include `warn_percent`.
+- [x] Tests: `tests/api/test_quota_warnings.py`. Docs: [gateway-policy.md](../gateway-policy.md#warning-share-per-quota), api.md.
+- [ ] No per-minute warning (it refills each minute). The header is not sent on the platform's own calls (they have no caller to tell). Not exposed through CORS `Access-Control-Expose-Headers`.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

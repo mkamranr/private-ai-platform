@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Quota warnings
+- **A warning share per quota.** Each quota can now warn at its own percentage of its daily or monthly budget (*Warn at* on the Usage & Quotas page). Leave it empty to keep the platform default of 80%.
+- **Applications are told too.** A gateway response from a caller past the warning share carries an `X-Quota-Warning` header, for example `api_key; period=monthly; used=85%`, so an application can react before it is refused.
+- **See it at a glance.** The quotas list shows each quota's warning share and whether it is *Near limit* or *Used up*.
+- **Upgrade.** Migration `a1c3e5f7b9d2` adds one nullable column to `gateway_quotas`. Existing quotas keep warning at the platform default.
+
 ### GPU alerts
 - **Hear about a hot or failing GPU.** A GPU that runs hot, nearly fills its memory or reports uncorrectable memory (ECC) errors now raises an alert on the Alerts page, one per GPU. It is sent to your notification channels like any other alert (source `gpu_threshold`) and clears itself when the GPU recovers.
 - **Your thresholds.** Settings page, *GPU monitoring*: warning and critical temperature (83 °C and 90 °C by default), memory warning (98%), and a switch to turn GPU alerts off. Changes apply within a minute.

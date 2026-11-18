@@ -439,7 +439,9 @@ class BudgetWatcher:
                         )
                     }
                 for subject, used in usage.items():
-                    severity = level(Decimal(used), Decimal(limit), self._warn)
+                    severity = level(
+                        Decimal(used), Decimal(limit), quota.warn_percent or self._warn
+                    )
                     if severity is None:
                         continue
                     fingerprint = quota_budget_fingerprint(quota.id, period, subject)

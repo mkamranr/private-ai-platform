@@ -4360,11 +4360,11 @@ function circuitsCard(data) {
 }
 
 /** used/limit as a thin bar; red once the budget is spent. */
-function budgetCell(used, limit) {
+function budgetCell(used, limit, warn = 80) {
   if (limit == null) return '<span class="text-secondary">—</span>';
   if (used == null) return `<span class="small">${fmtInt(limit)}</span>`;
   const pct = Math.min(100, Math.round((100 * used) / limit));
-  const tone = pct >= 100 ? 'bg-danger' : pct >= 80 ? 'bg-warning' : 'bg-primary';
+  const tone = pct >= 100 ? 'bg-danger' : pct >= warn ? 'bg-warning' : 'bg-primary';
   return `<div class="small">${fmtInt(used)} <span class="text-secondary">/ ${fmtInt(limit)}</span></div>
     <div class="progress" style="height:4px" role="progressbar" aria-label="Budget used"
          aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
@@ -4386,20 +4386,33 @@ function quotasCard(quotas) {
         ${q.description ? `<div class="small text-secondary">${esc(q.description)}</div>` : ''}
       </td>
       <td>${budgetCell(q.usage.minute, q.tokens_per_minute)}</td>
-      <td>${budgetCell(q.usage.day, q.daily_tokens)}</td>
-      <td>${budgetCell(q.usage.month, q.monthly_tokens)}</td>
+      <td>${budgetCell(q.usage.day, q.daily_tokens, q.effective_warn_percent)}</td>
+      <td>${budgetCell(q.usage.month, q.monthly_tokens, q.effective_warn_percent)}</td>
       <td class="text-end">${q.max_concurrency ?? '—'}</td>
-      <td>${q.enabled ? pill('HEALTHY', 'On') : pill('DISABLED', 'Off')}</td>
+      <td class="text-end text-nowrap">${q.effective_warn_percent}%${q.warn_percent == null
+        ? ' <span class="small text-secondary">default</span>' : ''}</td>
+      <td>${quotaStatusPill(q)}</td>
       <td class="text-end text-nowrap">${manage ? `
+        <button class="btn btn-sm btn-outline-secondary" data-quota-warn="${esc(q.id)}"
+                data-quota-warn-value="${q.warn_percent ?? ''}"
+                data-quota-warn-default="${q.warn_percent == null ? q.effective_warn_percent : ''}">Warn at…</button>
         <button class="btn btn-sm btn-outline-secondary" data-quota-toggle="${esc(q.id)}"
                 data-quota-enabled="${q.enabled}">${q.enabled ? 'Disable' : 'Enable'}</button>
         <button class="btn btn-sm btn-outline-danger" data-quota-delete="${esc(q.id)}"
                 data-quota-name="${esc(q.subject_label || q.subject)}">Remove</button>` : ''}</td>
     </tr>`).join('');
   return sectionCard('Quotas',
-    'Usage is counted from the usage records. A specific row wins over the "every …" row for its scope.',
+    'Usage is counted from the usage records. A specific row wins over the "every …" row for its scope. ' +
+    'Past its warning share a daily or monthly budget raises an alert, and gateway responses carry an X-Quota-Warning header.',
     tableHtml('<th>Scope</th><th>Subject</th><th>Per minute</th><th>Today</th><th>This month</th>' +
-              '<th class="text-end">At once</th><th>Status</th><th></th>', rows));
+              '<th class="text-end">At once</th><th class="text-end">Warn at</th><th>Status</th><th></th>', rows));
+}
+
+function quotaStatusPill(q) {
+  if (!q.enabled) return pill('DISABLED', 'Off');
+  if (q.status === 'exhausted') return pill('CRITICAL', 'Used up');
+  if (q.status === 'near_limit') return pill('WARNING', `Near limit · ${q.used_percent}%`);
+  return pill('HEALTHY', 'On');
 }
 
 function usageByModelCard(rows) {
@@ -4461,6 +4474,28 @@ function wireQuotaActions() {
         method: 'PATCH', body: JSON.stringify({ enabled }),
       });
       alert(enabled ? 'Quota enabled.' : 'Quota disabled — it no longer limits anything.', 'success');
+      await refresh({ force: true });
+    });
+  });
+  document.querySelectorAll('[data-quota-warn]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      const fallback = button.dataset.quotaWarnDefault;
+      const answer = prompt(
+        'Warn at what percentage of the daily or monthly budget (1-99)? ' +
+        'Leave empty to use the platform default' + (fallback ? ` (${fallback}%)` : '') + '.',
+        button.dataset.quotaWarnValue);
+      if (answer === null) return;
+      const text = answer.trim();
+      const warn_percent = text === '' ? null : Number(text);
+      if (warn_percent !== null && !(Number.isInteger(warn_percent) && warn_percent >= 1 && warn_percent <= 99)) {
+        alert('Enter a whole number from 1 to 99, or leave it empty.', 'danger');
+        return;
+      }
+      await api(`/quotas/${button.dataset.quotaWarn}`, {
+        method: 'PATCH', body: JSON.stringify({ warn_percent }),
+      });
+      alert(warn_percent === null ? 'The quota now warns at the platform default.'
+                                  : `The quota now warns at ${warn_percent}%.`, 'success');
       await refresh({ force: true });
     });
   });
@@ -4534,6 +4569,7 @@ onModalSubmit('quota-form', 'quota-error', async (form) => {
       daily_tokens: numberField('q-daily'),
       monthly_tokens: numberField('q-monthly'),
       max_concurrency: numberField('q-conc'),
+      warn_percent: numberField('q-warn'),
       description: field('q-desc') || null,
     }),
   });

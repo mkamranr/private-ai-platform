@@ -42,6 +42,7 @@ from app.config.settings import GatewaySettings
 from app.core import metrics
 from app.core.errors import RateLimitError
 from app.core.logging import get_logger
+from app.core.request_context import set_response_header
 from app.models.operations import GatewayQuota, QuotaScope
 from app.repositories.operations import GatewayQuotaRepository
 
@@ -75,12 +76,37 @@ class _Slot:
     member: str
 
 
+#: Response header naming each budget past its warning share (E53).
+QUOTA_WARNING_HEADER = "X-Quota-Warning"
+
+
+@dataclass(frozen=True, slots=True)
+class QuotaWarning:
+    """A daily or monthly budget at or past its warning share, not yet used up."""
+
+    scope: str
+    period: str  # "daily" | "monthly"
+    used_percent: int
+
+    def header_item(self) -> str:
+        return f"{self.scope}; period={self.period}; used={self.used_percent}%"
+
+
 @dataclass(slots=True)
 class Admission:
     """What one request was admitted against, so it can be charged and released."""
 
     charges: list[_Charge] = field(default_factory=list)
     slots: list[_Slot] = field(default_factory=list)
+    warnings: list[QuotaWarning] = field(default_factory=list)
+
+    def warning_header(self) -> str | None:
+        """``X-Quota-Warning`` value: every warning, the most used first. None when there
+        are none."""
+        if not self.warnings:
+            return None
+        ordered = sorted(self.warnings, key=lambda w: w.used_percent, reverse=True)
+        return ", ".join(w.header_item() for w in ordered)
 
 
 def _describe(scope: str, subject: str) -> str:
@@ -138,8 +164,9 @@ class GatewayPolicy:
             for scope, quota in quotas.items():
                 subject = subject_of[scope]
                 if quota.has_token_limits:
-                    await self._check_budgets(scope, subject, quota)
+                    found = await self._check_budgets(scope, subject, quota)
                     admission.charges.append(_Charge(scope, subject, quota))
+                    admission.warnings.extend(found)
                 if quota.max_concurrency:
                     slot = await self._acquire(scope, subject, quota.max_concurrency)
                     if slot is not None:
@@ -150,7 +177,9 @@ class GatewayPolicy:
             for slot in taken:
                 admission.slots.remove(slot)
             admission.charges = [c for c in admission.charges if c.scope not in quotas]
+            admission.warnings = [w for w in admission.warnings if w.scope not in quotas]
             raise
+        set_response_header(QUOTA_WARNING_HEADER, admission.warning_header())
 
     async def account(self, admission: Admission, subjects: Sequence[tuple[str, str]]) -> None:
         """Record which token budgets a call counts against, without checking them (E19).
@@ -190,6 +219,8 @@ class GatewayPolicy:
         await self._release_slots(slots)
         admission.slots = [s for s in admission.slots if s.scope != scope]
         admission.charges = [c for c in admission.charges if c.scope != scope]
+        admission.warnings = [w for w in admission.warnings if w.scope != scope]
+        set_response_header(QUOTA_WARNING_HEADER, admission.warning_header())
 
     async def release(self, admission: Admission) -> None:
         """Give back every concurrency slot. Idempotent."""
@@ -240,10 +271,17 @@ class GatewayPolicy:
             minute = None
         return {"minute": minute, "day": day, "month": month}
 
+    def warn_percent_for(self, quota: GatewayQuota) -> int:
+        """The warning share that applies to ``quota`` (E53)."""
+        return quota.warn_percent or self._settings.budget_warning_percent
+
     # -- internals ---------------------------------------------------------
     async def _check_budgets(
         self, scope: str, subject: str, quota: GatewayQuota, pending: int = 0
-    ) -> None:
+    ) -> list[QuotaWarning]:
+        """Refuse if a budget is used up; otherwise the budgets past their warning share."""
+        warnings: list[QuotaWarning] = []
+        warn = self.warn_percent_for(quota)
         now = self._clock()
         keys = _keys(scope, subject, now)
         who = _describe(scope, subject)
@@ -281,6 +319,8 @@ class GatewayPolicy:
                     used=used,
                     retry_after=math.ceil((tomorrow - now).total_seconds()),
                 )
+            if used * 100 >= quota.daily_tokens * warn:
+                warnings.append(QuotaWarning(scope, "daily", used * 100 // quota.daily_tokens))
 
         if quota.monthly_tokens:
             used = (
@@ -299,6 +339,9 @@ class GatewayPolicy:
                     used=used,
                     retry_after=math.ceil((_next_month(now) - now).total_seconds()),
                 )
+            if used * 100 >= quota.monthly_tokens * warn:
+                warnings.append(QuotaWarning(scope, "monthly", used * 100 // quota.monthly_tokens))
+        return warnings
 
     async def _budget_used(
         self, key: str, scope: str, subject: str, since: dt.datetime, ttl: int
