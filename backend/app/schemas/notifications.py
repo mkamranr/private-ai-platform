@@ -135,4 +135,7 @@ class DeliveryRead(BaseModel):
     sent_at: dt.datetime | None
     last_error: str | None
     response_code: int | None
+    #: E47: when quiet hours held it, and the digest it was sent in (if any).
+    held_at: dt.datetime | None = None
+    digest_id: uuid.UUID | None = None
     created_at: dt.datetime

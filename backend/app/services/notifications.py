@@ -15,6 +15,11 @@ a new channel does not replay every open alert), downgrades from CRITICAL to WAR
 an alert that opens and clears between two dispatcher runs (30 s by default): a condition
 that fixed itself that fast is a blip, not a page.
 
+**Quiet hours (E42) and digests (E47).** Inside a channel's quiet hours only CRITICAL
+goes out; the rest is held until the window ends. Then, for a chat webhook or an email
+channel, two or more held messages go out as one digest. A generic JSON webhook still
+receives them one by one.
+
 **Retries.** A failed delivery is retried after 30 s, 2 min, 10 min, 30 min and 2 h, up to
 ``notifications.max_attempts``. After a channel fails three times in a row the platform
 raises an in-app alert about it (``notification_channel_failing``), which clears at the
@@ -28,7 +33,7 @@ import datetime as dt
 import re
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -65,6 +70,7 @@ from app.services.notification_senders import (
     Message,
     SendResult,
     WebhookSender,
+    digest_message,
     message_for,
     test_message,
 )
@@ -72,6 +78,8 @@ from app.services.notification_senders import (
 log = get_logger(__name__)
 
 SEVERITY_RANK = {AlertSeverity.INFO: 0, AlertSeverity.WARNING: 1, AlertSeverity.CRITICAL: 2}
+#: E47: held deliveries for one channel that go out as a digest rather than one by one.
+DIGEST_MIN = 2
 #: Every alert source the platform raises today, for the channel source filter.
 KNOWN_SOURCES = (
     "backend_health",
@@ -527,6 +535,8 @@ class DispatchResult:
     deferred: int = 0
     #: Held for a channel's quiet hours (E42).
     held: int = 0
+    #: Digest messages sent for what quiet hours held (E47).
+    digests: int = 0
     pruned: int = 0
     notes: list[str] = field(default_factory=list)
 
@@ -637,7 +647,10 @@ class NotificationDispatcher:
             alerts = {a.id: a for a in rows.scalars()}
         failed_this_run: set[uuid.UUID] = set()
         touched: dict[uuid.UUID, NotificationChannel] = {}
+        digested = await self._send_digests(due, alerts, now, result, failed_this_run, touched)
         for delivery, channel in due:
+            if delivery.id in digested:
+                continue
             if not channel.enabled:
                 delivery.status = DeliveryStatus.CANCELLED
                 delivery.last_error = "The channel was turned off."
@@ -651,6 +664,7 @@ class NotificationDispatcher:
                 until = _quiet_until(channel, now)
                 if until is not None:
                     delivery.next_attempt_at = until
+                    delivery.held_at = delivery.held_at or now
                     result.held += 1
                     continue
             alert = alerts.get(delivery.alert_id) if delivery.alert_id else None
@@ -694,6 +708,97 @@ class NotificationDispatcher:
         await self._deliveries.flush()
         for channel in touched.values():
             await self._channel_health(channel)
+
+    async def _send_digests(
+        self,
+        due: Sequence[tuple[NotificationDelivery, NotificationChannel]],
+        alerts: dict[uuid.UUID, Alert],
+        now: dt.datetime,
+        result: DispatchResult,
+        failed_this_run: set[uuid.UUID],
+        touched: dict[uuid.UUID, NotificationChannel],
+    ) -> set[uuid.UUID]:
+        """E47: when a channel's quiet hours end, what they held goes out as one message.
+
+        Only for chat webhooks and email, which people read: a generic JSON webhook feeds
+        a program that expects one document per alert, so it still gets them one by one.
+        A single held delivery is sent as usual. Every delivery in a digest shares its
+        outcome, attempts and ``digest_id``; a failed digest is retried as a whole.
+        Returns the deliveries handled here."""
+        settings = self._settings.notifications
+        groups: dict[uuid.UUID, tuple[NotificationChannel, list[NotificationDelivery]]] = {}
+        for delivery, channel in due:
+            if (
+                delivery.held_at is None
+                or delivery.event == DeliveryEvent.TEST
+                or delivery.alert_id not in alerts
+                or not channel.enabled
+                or channel.id in failed_this_run
+                or (
+                    channel.kind == ChannelKind.WEBHOOK
+                    and channel.payload_format == PayloadFormat.GENERIC
+                )
+                or _quiet_until(channel, now) is not None
+            ):
+                continue
+            groups.setdefault(channel.id, (channel, []))[1].append(delivery)
+
+        handled: set[uuid.UUID] = set()
+        for channel, group in groups.values():
+            if len(group) < DIGEST_MIN:
+                continue
+            group.sort(key=lambda d: (d.held_at or now, d.created_at))
+            digest_id = uuid.uuid4()
+            items = [
+                message_for(
+                    alerts[d.alert_id],  # type: ignore[index]
+                    event=d.event,
+                    severity=d.severity,
+                    delivery_id=str(d.id),
+                    console_url=settings.console_url,
+                )
+                for d in group
+            ]
+            outcome = await self._sender.send(
+                channel,
+                digest_message(
+                    items,
+                    channel_name=channel.name,
+                    delivery_id=str(digest_id),
+                    console_url=settings.console_url,
+                ),
+            )
+            record_outcome(channel, outcome, now)
+            touched[channel.id] = channel
+            for delivery in group:
+                delivery.attempts += 1
+                delivery.response_code = outcome.code
+                handled.add(delivery.id)
+                if outcome.ok:
+                    delivery.status = DeliveryStatus.SENT
+                    delivery.sent_at = now
+                    delivery.last_error = None
+                    delivery.digest_id = digest_id
+                    result.sent += 1
+                    continue
+                delivery.last_error = outcome.detail[:2000]
+                if delivery.attempts >= settings.max_attempts:
+                    delivery.status = DeliveryStatus.FAILED
+                    result.failed += 1
+                else:
+                    delivery.next_attempt_at = now + retry_delay(delivery.attempts)
+                    result.retrying += 1
+            if outcome.ok:
+                result.digests += 1
+            else:
+                failed_this_run.add(channel.id)
+                log.warning(
+                    "notification_digest_failed",
+                    channel=channel.name,
+                    deliveries=len(group),
+                    detail=outcome.detail,
+                )
+        return handled
 
     async def _channel_health(self, channel: NotificationChannel) -> None:
         fingerprint = channel_failing_fingerprint(channel.id)

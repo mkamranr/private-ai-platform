@@ -213,6 +213,10 @@ class NotificationDelivery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     #: The webhook's HTTP status, or the SMTP reply code, of the last attempt.
     response_code: Mapped[int | None] = mapped_column(Integer)
+    #: E47: when quiet hours first held it (E42). None = never held.
+    held_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: E47: the digest message it went out in, shared by every delivery in that digest.
+    digest_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
     def __repr__(self) -> str:
         return f"<NotificationDelivery {self.event} {self.status}>"

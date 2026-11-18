@@ -154,7 +154,7 @@ dashboard real signals.
 - [x] Outbox (`notification_deliveries`) with a dispatcher job (`notification_dispatch`, 30 s): retries with back-off up to `max_attempts`, a failing channel deferred for the rest of a run, a `notification_channel_failing` alert after three failures, 30-day history.
 - [x] API under `/notifications` with permission `notification.manage` (ADMIN, SUPER_ADMIN); test send; audited create, update, delete and test. Alerts page: channels, recent notifications, add/edit form. Metric `ai_platform_notifications_total`.
 - [x] Migration `c4e8a1f2d6b9` upgrades and downgrades cleanly. Doc: [docs/notifications.md](../notifications.md).
-- [ ] No digests ~~or quiet hours~~ (quiet hours since E42), ~~per-team routing~~ (since E46), PagerDuty native API, HTML email or SMS.
+- [ ] No digests (~~of what quiet hours held~~ since E47; no scheduled summary) ~~or quiet hours~~ (quiet hours since E42), ~~per-team routing~~ (since E46), PagerDuty native API, HTML email or SMS.
 
 ## E14: Auth hardening
 
@@ -393,7 +393,7 @@ dashboard real signals.
 - [x] Migration `b1d3f5a7c9e0`: `notification_channels.quiet_start`, `quiet_end`, `quiet_timezone` (default `UTC`). API fields on create, update and read; audited.
 - [x] Dispatcher: inside the window, non-CRITICAL deliveries (not tests) move to the window's end without an attempt (`held` in the run result and log).
 - [x] Console: quiet hours on the channel form and in the channel's rules line. Tests: `tests/unit/test_quiet_hours.py`, `tests/api/test_quiet_hours.py`. Doc: [notifications.md](../notifications.md#how-delivery-works).
-- [ ] One window a day, the same every day (no weekends or holidays); no digest of what was held.
+- [ ] One window a day, the same every day (no weekends or holidays); ~~no digest of what was held~~ (since E47).
 
 ## E43: Reminders for approvals that never expire (closes the last E22 open item)
 
@@ -426,6 +426,13 @@ dashboard real signals.
 - [x] Console: *Alerts about* on the channel form, the team in the channel's rules, a team chip on alerts; the team detail lists workflows, tools and channels. `AlertRead.team_id`.
 - [x] Tests: `tests/api/test_team_notifications.py`. Docs: [notifications.md](../notifications.md#team-channels-e46), teams.md.
 - [ ] Channels are still managed with `notification.manage` only (no team-owner self-service); one team per channel; API-key and end-user budgets, backend health and blocked models stay platform-wide.
+
+## E47: A digest of what quiet hours held (closes the E42 digest item)
+
+- [x] Migration `e7a9c1d3f5b6`: `notification_deliveries.held_at` (first held by quiet hours) and `digest_id`.
+- [x] Dispatcher: once a channel's window has ended, two or more held deliveries due for a chat webhook or an email channel go out as one message (`digest_message`, event `digest`, the highest severity; one line per delivery, oldest first, 30 listed and the rest counted). Every delivery in it gets the outcome, an attempt and the `digest_id`; a failed digest is retried as a whole. A generic JSON webhook, and a single held delivery, are sent one by one as before. `DispatchResult.digests`, logged by the scheduler.
+- [x] `DeliveryRead.held_at`, `digest_id`. Tests: `TestDigest` and the long-digest test in `tests/api/test_quiet_hours.py`. Doc: [notifications.md](../notifications.md).
+- [ ] No scheduled (hourly or daily) summary; no digest for generic JSON webhooks; a raised-and-resolved alert is two lines, not one.
 
 ## Phase acceptance (applies to each)
 

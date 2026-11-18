@@ -104,6 +104,16 @@ deliveries that are due.
     channel is saved; use an offset instead. An offset does not follow daylight saving.
   - API: `quiet_start` and `quiet_end` (`HH:MM`, both or neither) and `quiet_timezone` on
     create and update; empty strings for both remove the window. Audited as `quiet_hours`.
+  - **Digest (E47).** When the window ends, a chat webhook or an email channel gets
+    what it held as **one message** if there are two or more. The message is titled
+    *[DIGEST] 5 notifications held during quiet hours for ops-chat* and has one line per
+    alert, oldest first, for example `- [WARNING] Backend gpu-01 is not answering (raised
+    2026-11-18 23:12 UTC)`. An alert that was raised and then resolved during the window
+    gets two lines. The first 30 lines are listed and the rest are counted. A generic JSON
+    webhook still gets one document per alert, because a program reading it expects
+    that. A single held message goes out on its own. A digest is retried as a whole. Each
+    delivery in it is marked sent and shares a `digest_id`, shown with `held_at` in
+    `GET /deliveries`.
 
 Only one control-plane instance runs the workers (see `WORKERS__ENABLED`). Deliveries are
 locked with `FOR UPDATE SKIP LOCKED`, so a second instance would not double-send, but it
@@ -244,10 +254,10 @@ Audit actions:
 
 ## Not built
 
-- **Digests.** Each event is its own message, and messages held by quiet hours go out
-  one by one when the window ends. During an incident with many alerts, a chat channel
-  receives one message per alert. A minimum severity, or a source filter, keeps busy
-  channels quiet.
+- **Digests outside quiet hours.** Since E47, what quiet hours held goes out as one
+  digest. Otherwise each event is its own message, so during an incident with many
+  alerts a chat channel receives one message per alert. A minimum severity or a source
+  filter keeps busy channels quiet. There is no daily or hourly summary.
 - **Team owners managing their own channels.** Team channels (E46) are set up by holders
   of `notification.manage`. An API key's budget alerts are not routed to the key's team.
 - **Paging services' native APIs**, such as PagerDuty's Events API. Use a JSON webhook to

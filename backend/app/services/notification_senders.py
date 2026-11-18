@@ -39,6 +39,11 @@ from app.models.notifications import DeliveryEvent, PayloadFormat
 from app.models.operations import Alert
 
 USER_AGENT = "private-ai-platform-notifier"
+#: E47: the event of a digest message. Never stored as a delivery's event: each delivery
+#: in a digest keeps its own (raised, escalated, resolved).
+DIGEST_EVENT = "digest"
+#: Lines listed in one digest; the rest are counted.
+DIGEST_MAX_LINES = 30
 _EVENT_LABEL: dict[str, str] = {
     DeliveryEvent.RAISED: "Raised",
     DeliveryEvent.ESCALATED: "Escalated",
@@ -66,6 +71,8 @@ class Message:
     resource_type: str | None = None
     resource_id: str | None = None
     console_url: str | None = None
+    #: E47: for a digest, the messages it gathers (each with its own event).
+    items: tuple[Message, ...] = ()
 
     @property
     def link(self) -> str | None:
@@ -77,6 +84,8 @@ class Message:
             return f"[RESOLVED] {self.title}"
         if self.event == DeliveryEvent.TEST:
             return f"[TEST] {self.title}"
+        if self.event == DIGEST_EVENT:
+            return f"[DIGEST] {self.title}"
         return f"[{self.severity}] {self.title}"
 
 
@@ -122,6 +131,33 @@ def test_message(*, channel_name: str, delivery_id: str, console_url: str | None
     )
 
 
+def digest_message(
+    items: list[Message], *, channel_name: str, delivery_id: str, console_url: str | None
+) -> Message:
+    """E47: one message for what a channel's quiet hours held. Its severity is the
+    highest among the items."""
+    rank = {"INFO": 0, "WARNING": 1, "CRITICAL": 2}
+    worst = max((i.severity for i in items), key=lambda s: rank.get(s, 0), default="INFO")
+    return Message(
+        event=DIGEST_EVENT,
+        severity=worst,
+        title=f"{len(items)} notifications held during quiet hours for {channel_name}",
+        message=None,
+        source="notifications",
+        delivery_id=delivery_id,
+        raised_at=dt.datetime.now(dt.UTC),
+        console_url=console_url,
+        items=tuple(items),
+    )
+
+
+def _digest_line(item: Message) -> str:
+    event = _EVENT_LABEL.get(item.event, item.event).lower()
+    at = item.resolved_at if item.event == DeliveryEvent.RESOLVED else item.raised_at
+    tag = "RESOLVED" if item.event == DeliveryEvent.RESOLVED else item.severity
+    return f"- [{tag}] {item.title} ({event} {_when(at)})"
+
+
 def _iso(value: dt.datetime | None) -> str | None:
     return value.isoformat() if value else None
 
@@ -157,6 +193,13 @@ def generic_payload(msg: Message) -> dict[str, Any]:
 
 def plain_text(msg: Message) -> str:
     """The human-readable body, shared by chat webhooks and email."""
+    if msg.event == DIGEST_EVENT:
+        lines = [msg.heading, *(_digest_line(i) for i in msg.items[:DIGEST_MAX_LINES])]
+        if len(msg.items) > DIGEST_MAX_LINES:
+            lines.append(f"... and {len(msg.items) - DIGEST_MAX_LINES} more on the Alerts page.")
+        if msg.link:
+            lines.append(msg.link)
+        return "\n".join(lines)
     lines = [msg.heading]
     if msg.message:
         lines.append(msg.message)
