@@ -27,6 +27,7 @@ from typing import Any
 
 import httpx
 
+from app.core.errors import ValidationError
 from app.core.interfaces.tools import (
     ToolDefinition,
     ToolExecutor,
@@ -36,6 +37,7 @@ from app.core.interfaces.tools import (
 )
 from app.core.logging import get_logger
 from app.core.security import SecretCipher
+from app.core.url_policy import check_outbound_url
 
 log = get_logger(__name__)
 
@@ -304,7 +306,15 @@ async def call_mcp(
 
     Shared by the executor and by discovery, so the two cannot disagree about what the
     protocol looks like.
+
+    The endpoint is checked against the outbound-URL policy again at call time (E51), so a
+    server registered before the policy applied to MCP cannot be used to reach a metadata
+    host or a public AI service.
     """
+    try:
+        check_outbound_url(endpoint, field="endpoint")
+    except ValidationError as exc:
+        raise McpError(f"refused by the outbound URL policy: {exc}") from exc
     request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:

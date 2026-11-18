@@ -20,7 +20,7 @@ declares its capabilities so deploy/stop/metrics can be added per type.
 ## Outbound URL policy
 
 Every backend URL passes `core/url_policy.check_outbound_url`, shared with the model
-registry: only `http`/`https`; no credentials in the URL; no cloud-metadata or
+registry, MCP servers, notification channels and workflow HTTP steps: only `http`/`https`; no credentials in the URL; no cloud-metadata or
 link-local hosts; no public AI SaaS hosts (the platform is private by design). Redirects
 are never followed. Private and loopback addresses are allowed, because that is where
 on-prem backends live — from inside a container use the host's network address or

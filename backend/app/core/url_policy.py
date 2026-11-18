@@ -1,9 +1,9 @@
 """Outbound URL policy for addresses an administrator registers (§25, plan §5.17).
 
 One policy, used by every place the platform is told "call this address": inference
-backends, external model endpoints, and (next) MCP servers. Before this module each
-registration path had its own idea of what was acceptable, and a rule that lives in
-three places eventually holds in two of them.
+backends, external model endpoints, MCP servers (E51), notification channels and workflow
+HTTP steps. Before this module each registration path had its own idea of what was
+acceptable, and a rule that lives in three places eventually holds in two of them.
 
 What it refuses, and why:
 

@@ -26,7 +26,7 @@ dashboard real signals.
 - [x] Nullable `models.backend_id` (on the model rather than the deployment: an external backend's models are served without a platform deployment). **No backfill** of existing models.
 - [x] `InferenceBackendAdapter` ABC in `core/interfaces/` with declared capabilities; adapters for vLLM, Ollama and OpenAI-compatible endpoints.
 - [x] Routes: `/api/v1/backends` (CRUD, `test`, `models`, `models/register`) and `/api/v1/alerts` (list, summary, acknowledge, resolve).
-- [x] Shared outbound-URL validator `core/url_policy.py`, used by backends and the model registry. MCP not yet switched over.
+- [x] Shared outbound-URL validator `core/url_policy.py`, used by backends and the model registry. ~~MCP not yet switched over.~~ Closed in E51.
 - [x] Worker job `backend_health` raises/resolves alerts; deployment failures raise alerts. GPU-threshold alerts deferred.
 - [x] UI: Backends page, Alerts page, sidebar alert badge, dashboard status from real alert counts. Console restyled (navy sidebar, light theme default).
 - [x] Permissions `backend.view|manage`, `alert.view|manage` (existing dotted naming), seeded and reconciled.
@@ -456,6 +456,13 @@ dashboard real signals.
 - [x] Routing key: write-only, Fernet-encrypted, 32 letters and digits, never audited (`has_routing_key` only); required for the format; a signing secret is refused on it. A test send triggers then resolves. Never digested (E47); quiet hours still hold.
 - [x] Console: *PagerDuty (Events API v2)* format, a routing key field in place of the signing secret and header, PagerDuty's URL filled in. Tests: `tests/api/test_pagerduty.py`. Doc: [notifications.md](../notifications.md#pagerduty).
 - [ ] No PagerDuty acknowledgement back to the platform (one-way); no Opsgenie or VictorOps format.
+
+## E51: MCP servers use the shared outbound-URL policy (closes the E1 MCP item)
+
+- [x] `McpRegistryService.register_server` and `register_from_manifest` pass HTTP and SSE endpoints through `check_outbound_url` (`checked_mcp_endpoint`, field `endpoint`, 422 when refused). STDIO endpoints are commands and are not checked. The endpoint is stored as given, not normalised.
+- [x] `call_mcp` checks the endpoint again before every call (health check, discovery, tool call), so a server registered before E51 that points at a metadata host or a public AI service fails with `McpError` and shows `UNREACHABLE` with the reason. No migration.
+- [x] Tests: `tests/api/test_mcp_url_policy.py`. Docs: [mcp.md](../mcp.md#endpoint-policy), backends.md.
+- [ ] No DNS resolution: a private name that resolves to a metadata address is not caught (as for backends). An existing server cannot be edited, only deleted and registered again.
 
 ## Phase acceptance (applies to each)
 

@@ -19,7 +19,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 11 | GPU monitoring | P1 | Existing | `node-agent/`, `models/infrastructure.py` | Thresholds feeding alerts |
 | 12 | RAG knowledge bases | P1 | Existing (E5) | `services/knowledge.py`, `retrieval.py`, `workers/ingestion.py` | Per-document ACL, whole-base re-embed |
 | 13 | Reranking / retrieval trace | P1 | Existing (E5) | `services/knowledge.py` (`retrieve`), `services/rag_eval.py`, `api/v1/retrieval.py` | Answer faithfulness scoring (judge model), query history |
-| 14 | MCP registry / policies | P1 | Existing | `models/agents.py`, `services/tool_pipeline.py`, `mcp/` | Shared SSRF policy, MCP Servers page |
+| 14 | MCP registry / policies | P1 | Existing | `models/agents.py`, `services/tool_pipeline.py`, `services/agent_registry.py`, `mcp/` | ~~Shared SSRF policy~~ (E51); managed on the Tools & MCP page rather than a page of its own |
 | 15 | Agent builder | P1 | Existing | `services/agent_registry.py`, `agent_runtime.py`, `agents/*.yaml` | Global kill switch |
 | 16 | Human approval | P1 | Existing (E6) | `agent_runs` approval state, `workflow_approvals`, Approvals page (agent and workflow steps) | none |
 | 17 | Usage quotas | P1 | Existing (E2, E3) | `gateway_quotas`, `services/gateway_policy.py`, Usage & Quotas page | Soft warnings at a budget threshold |

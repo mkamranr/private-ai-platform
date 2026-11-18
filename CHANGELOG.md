@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### MCP server addresses checked
+- **The same rules as backends.** Registering an HTTP or SSE MCP server now refuses addresses the platform must never call: cloud metadata endpoints, public AI services, URLs with a username or password in them, and anything other than `http`/`https`. Private addresses and compose service names are allowed as before. STDIO servers are not affected.
+- The address is checked again on every call. A server registered earlier with a refused address shows *Unreachable* with the reason; delete it and register it again with a valid address.
+- **Upgrade.** Nothing to do: no migration.
+
 ### PagerDuty channels
 - **Page on-call directly.** A webhook channel can now use the *PagerDuty (Events API v2)* format: paste the integration's routing key and alerts open, update and resolve PagerDuty incidents, one per alert. *Send test* opens an incident and closes it at once.
 - The routing key is stored encrypted and never shown or audited.
