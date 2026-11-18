@@ -490,6 +490,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_audit_api.py` (the first tests of the audit API). Docs: [security.md](../security.md#audit), api.md (stale `/audit-logs` path fixed).
 - [ ] Built in memory, not streamed; the cap stands in for paging. No scheduled or push export to a SIEM. No `until` field on the page (the API has it).
 
+## E55: Stop every agent at once (closes the feature-matrix kill-switch gap)
+
+- [x] Runtime setting `agents.kill_switch` (Security, default off), read through the runtime-settings cache on every check (`deps.agents_halted`), so other replicas follow within 10 seconds. Toggling is audited by `SETTING_UPDATED`.
+- [x] `AgentRunService`: `start` and `approve` refuse with `AgentsStoppedError` (503, `agents_stopped`), audited `AGENT_EXECUTED` DENIED on an independent transaction; a waiting approval stays pending. `_persisting` checks before every `LLM_REQUEST` and `TOOL_REQUESTED` whether or not usage is recorded, so `agent:` runs through `/v1` stop too; the budget stop and this one share `_stop`. `GatewayService.admit_agent` refuses before any quota is taken. Voice goes through `start`.
+- [x] `GET /agents/status` (`agent.view`). Agents page: red banner while stopped, *Stop all agents* / *Resume agents* button for `settings.manage` holders, asking for a reason. No migration.
+- [x] Tests: `tests/api/test_agent_kill_switch.py`. Docs: [agents.md](../agents.md#stopping-every-agent-at-once), settings.md, api.md.
+- [ ] Workflows are not affected (by decision). The model or tool call in progress finishes. No per-team or per-agent switch (disable the agent for that). Not shown in the developer portal or chat beyond the 503 message.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

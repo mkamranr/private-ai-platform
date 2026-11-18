@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Stop all agents
+- **One switch for an incident.** *Stop all agents* on the Agents page stops every agent at once: no run starts or is approved, and running agents stop before their next step. This covers the console, the API, voice and `agent:` models in chat. *Resume agents* turns it back off. Runs waiting for approval keep waiting and can be approved after resuming.
+- Everyone on the Agents page sees a banner while agents are stopped. The switch needs the right to change settings, asks for a reason and is recorded in the audit log. It is also on the Settings page under Security (`agents.kill_switch`).
+- Workflows are not affected.
+- **Upgrade.** Nothing to do: no migration.
+
 ### Audit log export and request IDs
 - **Download the audit log.** *Export CSV* and *Export JSONL* on the Audit Log page download every record your filters match, newest first, up to 100,000. CSV opens safely in a spreadsheet; JSON Lines suits a log pipeline or SIEM. Each export is itself recorded in the audit log.
 - **Follow one request.** Each record now shows the ID of the request that wrote it. Click it, or paste an ID from a log line, to see everything that request did.

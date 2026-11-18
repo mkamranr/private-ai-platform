@@ -39,6 +39,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `agents.approval_ttl_hours` | Security | hours an agent or workflow approval waits before it expires and its run fails; 0 = never (see [agents.md](agents.md#expiry)) | next expiry check (15 min) |
 | `agents.approval_reminder_hours` | Security | hours before that expiry an approval raises a reminder alert (source `approvals`); 0 = off (see [agents.md](agents.md#reminders)) | next expiry check (15 min) |
 | `agents.approval_reminder_waiting_hours` | Security | while approvals never expire, hours an approval waits before it raises a reminder; 0 = off (see [agents.md](agents.md#reminders)) | next expiry check (15 min) |
+| `agents.kill_switch` | Security | stop every agent: no run starts or is approved, running agents stop before their next step (see [agents.md](agents.md#stopping-every-agent-at-once)) | within 10 seconds, mid-run included |
 | `agents.approval_reminder_email_approvers` | Security | also email each reminder to every person who can decide it, once each, at most 25 per approval; needs the mail server (see [agents.md](agents.md#reminder-emails-to-each-approver)) | next expiry check (15 min) |
 | `notifications.email_brand_name` | Email branding | the name at the top of every notification email (see [notifications.md](notifications.md#branding)) | next email |
 | `notifications.email_brand_color` | Email branding | the accent colour, `#rrggbb` | next email |

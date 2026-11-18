@@ -179,6 +179,30 @@ approval.
 The channel reminders above are unchanged: point a channel at the approvers' chat as well,
 or instead.
 
+## Stopping every agent at once
+
+*Stop all agents* on the Agents page (or the runtime setting `agents.kill_switch`, under
+Security on the Settings page) is the switch for an incident: an agent misbehaving, a
+tool that turned out to be dangerous, a model giving bad answers. While it is on:
+
+- **No run starts**: from the console, the API (`POST /agents/{id}/execute`), voice, or an
+  `agent:<slug>` model through `/v1`, which answers 503 with the code `agents_stopped`
+  before any quota is taken.
+- **No approval is accepted.** A run waiting for one keeps waiting (it can still expire)
+  and can be approved once agents are resumed.
+- **Running agents stop before their next model or tool call.** The run ends `FAILED`
+  with *Stopped by an administrator* and a `RUN_FAILED` event in its trace. The call in
+  progress when the switch was turned on still finishes.
+
+Every refusal is audited as `AGENT_EXECUTED` with result `DENIED`, and turning the switch
+on or off is audited as `SETTING_UPDATED` with the reason given. Other replicas follow
+within 10 seconds. Everyone who can see the Agents page sees a red banner while agents are
+stopped (`GET /agents/status`, which needs only `agent.view`); the button needs
+`settings.manage`.
+
+Workflows are not affected, including their model and tool steps. Disable a workflow, or
+the tool, to stop those.
+
 ## Teams: what an agent may use
 
 An agent runs as **its own team**, so its model and knowledge bases must be ones that

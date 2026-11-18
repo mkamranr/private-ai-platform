@@ -575,7 +575,16 @@ const RUN_STATE_CLASS = {
 };
 
 async function renderAgents() {
-  const agents = await api('/agents');
+  const [agents, status] = await Promise.all([api('/agents'), api('/agents/status')]);
+  // E55: the platform-wide switch. Everyone here sees the banner; only settings.manage
+  // holders get the button, since it is a runtime setting change.
+  document.getElementById('agents-stopped').classList.toggle('d-none', !status.stopped);
+  const kill = document.getElementById('agents-kill');
+  kill.classList.toggle('d-none', !can('settings.manage'));
+  kill.textContent = status.stopped ? 'Resume agents' : 'Stop all agents';
+  kill.className = `btn btn-sm ms-auto ${status.stopped ? 'btn-success' : 'btn-outline-danger'}` +
+    (can('settings.manage') ? '' : ' d-none');
+  kill.dataset.stopped = String(status.stopped);
   if (!agents.length) {
     document.getElementById('agents-body').innerHTML = empty(
       'No agents. An agent is a model plus a prompt plus an explicit set of tools — ' +
@@ -5216,6 +5225,22 @@ onModalSubmit('user-form', 'user-error', async (form) => {
   alert(`Created ${user.username} with ${user.roles.length} role(s).`, 'success');
   await renderUsers();
 });
+
+document.getElementById('agents-kill').addEventListener('click', (event) => guard(event.target, async () => {
+  const stopping = event.target.dataset.stopped !== 'true';
+  const reason = prompt(stopping
+    ? 'Stop every agent now? No run will start or be approved, and running agents stop ' +
+      'before their next step. Reason (recorded in the audit log):'
+    : 'Resume agents? Runs can start and be approved again. Reason (recorded in the audit log):', '');
+  if (reason === null) return;
+  await api('/settings/agents.kill_switch', {
+    method: 'PUT', body: JSON.stringify({ value: stopping, reason: reason.trim() || null }),
+  });
+  alert(stopping
+    ? 'All agents are stopped. Other replicas follow within 10 seconds.'
+    : 'Agents resumed. Runs waiting for approval can be approved again.', stopping ? 'warning' : 'success');
+  await refresh({ force: true });
+}));
 
 document.getElementById('aud-apply').onclick = (event) =>
   guard(event.target, () => refresh({ force: true }));

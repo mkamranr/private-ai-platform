@@ -117,6 +117,16 @@ class DependencyUnavailableError(AppError):
     message = "A required platform dependency is unavailable."
 
 
+class AgentsStoppedError(DependencyUnavailableError):
+    """Every agent is stopped by the platform-wide switch, ``agents.kill_switch`` (E55)."""
+
+    code = "agents_stopped"
+    message = (
+        "Agents are stopped by an administrator. No agent can start, continue or be "
+        "approved until they are resumed."
+    )
+
+
 class AirgapViolationError(AppError):
     """Raised when code attempts egress the air-gap policy forbids (Rule 4)."""
 

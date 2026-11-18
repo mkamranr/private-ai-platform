@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config.settings import Settings, external_key_for
 from app.core import metrics
 from app.core.errors import (
+    AgentsStoppedError,
     AuthenticationError,
     DependencyUnavailableError,
     NotFoundError,
@@ -583,7 +584,11 @@ class GatewayService:
 
     async def admit_agent(self, context: GatewayContext, model_name: str) -> None:
         """Admit an `agent:` call against the key's, team's, end user's and model's
-        quotas, once for the whole run. Before E17 agent calls skipped every quota."""
+        quotas, once for the whole run. Before E17 agent calls skipped every quota.
+
+        E55: refused outright while every agent is stopped, before any quota is taken."""
+        if self._settings.agents.kill_switch:
+            raise AgentsStoppedError()
         await self._admit_model(context, model_name)
 
     async def record_agent_usage(

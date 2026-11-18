@@ -352,6 +352,7 @@ The response echoes the **alias**, never the underlying model.
 | method | path | permission |
 |---|---|---|
 | GET | `/agents` | `agent.view` |
+| GET | `/agents/status` | `agent.view` — `{"stopped": true}` while every agent is stopped (`agents.kill_switch`) |
 | POST | `/agents` | `agent.create` |
 | GET | `/agents/{id}` | `agent.view` |
 | PUT | `/agents/{id}` | `agent.edit` |
