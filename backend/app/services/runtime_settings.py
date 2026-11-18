@@ -138,6 +138,15 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         _bounded(1, 3650),
     ),
     RuntimeSetting(
+        "agents.kill_switch",
+        "security",
+        "Stop all agents",
+        "While on, no agent run starts (console, API, voice or agent: models through /v1), "
+        "no agent approval is accepted, and running agents stop before their next model or "
+        "tool call. Workflows are not affected. Read on every agent run and step.",
+        "Within 10 seconds",
+    ),
+    RuntimeSetting(
         "gpu.alerts_enabled",
         "monitoring",
         "GPU threshold alerts",

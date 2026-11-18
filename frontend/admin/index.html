@@ -588,8 +588,15 @@
       <section id="page-agents" class="page d-none">
         <div class="d-flex align-items-center mb-3">
           <h4 class="mb-0">Agents</h4>
-          <button class="btn btn-sm btn-primary ms-auto" data-bs-toggle="modal"
+          <button class="btn btn-sm btn-outline-danger ms-auto d-none" id="agents-kill"
+                  title="Stop every agent at once: no run starts, no approval is accepted, and running agents stop before their next step.">Stop all agents</button>
+          <button class="btn btn-sm btn-primary ms-2" data-bs-toggle="modal"
                   data-bs-target="#agent-modal">Create agent</button>
+        </div>
+        <div id="agents-stopped" class="alert alert-danger d-none" role="alert">
+          <strong>All agents are stopped.</strong> No agent run can start or be approved, and
+          running agents stopped before their next step. This includes <code>agent:</code>
+          models in chat and through the API. Workflows are not affected.
         </div>
         <div id="agents-body"></div>
       </section>

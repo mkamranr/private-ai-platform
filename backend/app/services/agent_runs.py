@@ -13,11 +13,17 @@ from __future__ import annotations
 import datetime as dt
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.core.errors import ConflictError, NotFoundError, RateLimitError, ValidationError
+from app.core.errors import (
+    AgentsStoppedError,
+    ConflictError,
+    NotFoundError,
+    RateLimitError,
+    ValidationError,
+)
 from app.core.interfaces.agent import (
     AgentSpec,
     RunContext,
@@ -70,7 +76,10 @@ class AgentRunService:
         audit: AuditService,
         usage: UsageRecorder | None = None,
         budget: BudgetCheck | None = None,
+        halted: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
+        #: Reads ``agents.kill_switch`` (E55); None means agents are never stopped.
+        self._halted = halted
         #: GatewayService.record_internal_usage in production (E19); None records nothing.
         self._usage = usage
         #: GatewayService.check_internal_budget in production (E24); None checks nothing.
@@ -101,6 +110,7 @@ class AgentRunService:
         """
         if not agent.enabled:
             raise ConflictError(f"The agent '{agent.slug}' is disabled.")
+        await self._refuse_if_halted(actor, "start", agent_id=agent.id, slug=agent.slug)
 
         version = await self._versions.get_current(agent.id)
         if version is None:
@@ -196,6 +206,9 @@ class AgentRunService:
         pending = await self._executions.pending_for_run(run.id)
         if pending is None:
             raise ConflictError("This run has no pending tool call.")
+        # E55: refused, not recorded as a decision. The run keeps waiting, so it can be
+        # approved once agents are resumed (or expire as usual).
+        await self._refuse_if_halted(actor, "approve", agent_id=run.agent_id, run_id=run.id)
 
         # Self-approval is refused. An agent that lets its invoker rubber-stamp its own
         # privileged call turns the approval workflow into a formality — which is exactly
@@ -310,6 +323,24 @@ class AgentRunService:
         events = self._persist_each(run, stream)
         try:
             async for event in events:
+                # E55: before every model and tool call, however the run started. An
+                # agent: call through /v1 has no usage target, so this cannot hang off the
+                # budget check below.
+                if (
+                    event.type in (RunEventType.LLM_REQUEST, RunEventType.TOOL_REQUESTED)
+                    and await self._is_halted()
+                ):
+                    yield event
+                    yield await self._stop(
+                        run,
+                        event,
+                        "Stopped by an administrator: all agents are stopped.",
+                        payload={"stopped_by": "kill_switch"},
+                        log_event="agent_run_stopped_by_kill_switch",
+                    )
+                    await events.aclose()  # type: ignore[attr-defined]
+                    await stream.aclose()  # type: ignore[attr-defined]
+                    return
                 if (
                     event.type == RunEventType.LLM_REQUEST
                     and usage is not None
@@ -351,10 +382,52 @@ class AgentRunService:
             return exc
         return None
 
+    async def _is_halted(self) -> bool:
+        return self._halted is not None and await self._halted()
+
+    async def _refuse_if_halted(self, actor: User, attempt: str, **context: object) -> None:
+        """Raise ``AgentsStoppedError`` while the switch is on, with a DENIED audit row
+        written on its own transaction (the request is about to roll back)."""
+        if not await self._is_halted():
+            return
+        agent_id = context.pop("agent_id", None)
+        await self._audit.record_independent(
+            AuditAction.AGENT_EXECUTED,
+            result=AuditResult.DENIED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="agent",
+            resource_id=str(agent_id) if agent_id else None,
+            message="Refused: all agents are stopped by an administrator.",
+            metadata={"attempt": attempt, "kill_switch": True}
+            | {key: str(value) for key, value in context.items()},
+        )
+        raise AgentsStoppedError()
+
     async def _stop_for_budget(
         self, run: AgentRun, request: RunEvent, refusal: RateLimitError
     ) -> RunEvent:
-        message = f"Stopped before the next model call: {refusal.message}"
+        return await self._stop(
+            run,
+            request,
+            f"Stopped before the next model call: {refusal.message}",
+            payload={"budget": refusal.details},
+            log_event="agent_run_stopped_by_budget",
+            quota=refusal.details.get("quota"),
+            scope=refusal.details.get("scope"),
+        )
+
+    async def _stop(
+        self,
+        run: AgentRun,
+        request: RunEvent,
+        message: str,
+        *,
+        payload: dict,
+        log_event: str,
+        **log_fields: object,
+    ) -> RunEvent:
+        """End ``run`` as FAILED just before the call ``request`` announced."""
         run.state = RunState.FAILED
         run.error = message
         run.finished_at = dt.datetime.now(dt.UTC)
@@ -363,7 +436,7 @@ class AgentRunService:
             run_id=str(run.id),
             type=RunEventType.RUN_FAILED,
             sequence=request.sequence + 1,
-            payload={"error": message, "budget": refusal.details},
+            payload={"error": message, **payload},
         )
         self._events.add(
             AgentRunEvent(
@@ -374,12 +447,7 @@ class AgentRunService:
             )
         )
         await self._events.flush()
-        log.warning(
-            "agent_run_stopped_by_budget",
-            run=str(run.id),
-            quota=refusal.details.get("quota"),
-            scope=refusal.details.get("scope"),
-        )
+        log.warning(log_event, run=str(run.id), **log_fields)
         return failed
 
     async def _persist_each(

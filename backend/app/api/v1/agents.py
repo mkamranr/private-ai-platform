@@ -15,6 +15,7 @@ from app.api.deps import (
     AgentRunServiceDep,
     AuditDep,
     DefinitionImporterDep,
+    EffectiveSettingsDep,
     McpRegistryDep,
     ScopeDep,
     ScopeGuardDep,
@@ -375,6 +376,17 @@ async def list_agents(
     scope: ScopeDep,
 ) -> list[AgentRead]:
     return [AgentRead.model_validate(a) for a in scope.filter(await service.list_agents())]
+
+
+@router.get("/agents/status", summary="Whether agents are stopped platform-wide")
+async def agents_status(
+    settings: EffectiveSettingsDep,
+    _actor: Annotated[User, require_permission(Perm.AGENT_VIEW)],
+) -> dict[str, bool]:
+    """``stopped`` is the ``agents.kill_switch`` runtime setting (E55). Readable with
+    ``agent.view``, so everyone on the Agents page can see why runs are refused, without
+    the right to read every setting."""
+    return {"stopped": settings.agents.kill_switch}
 
 
 @router.post(

@@ -14,7 +14,7 @@ routes is where authorisation gaps get shipped.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -862,6 +862,16 @@ def get_agent_runtime(
     )
 
 
+def agents_halted(session: AsyncSession) -> Callable[[], Awaitable[bool]]:
+    """Reads ``agents.kill_switch`` (E55) through the runtime-settings cache, so a change
+    made on any replica is seen within its ten seconds, even mid-run."""
+
+    async def halted() -> bool:
+        return (await RUNTIME.effective(session, get_settings())).agents.kill_switch
+
+    return halted
+
+
 def get_agent_run_service(
     session: SessionDep,
     registry: AgentRegistryDep,
@@ -879,6 +889,7 @@ def get_agent_run_service(
         audit,
         usage=gateway.record_internal_usage,
         budget=gateway.check_internal_budget,
+        halted=agents_halted(session),
     )
 
 
@@ -970,6 +981,7 @@ def build_agent_run_service(session: AsyncSession, app_state: Any) -> AgentRunSe
         audit,
         usage=gateway.record_internal_usage,
         budget=gateway.check_internal_budget,
+        halted=agents_halted(session),
     )
 
 

@@ -652,6 +652,9 @@ class AgentsSettings(BaseModel):
     #: (E39): active, holding ``tool.approve`` or ``workflow.approve``, able to see the
     #: agent's or workflow's team. Off by default; needs a mail server.
     approval_reminder_email_approvers: bool = False
+    #: Stop every agent at once (E55): no run starts, no approval is accepted, and running
+    #: agents stop before their next model or tool call. Workflows are not affected.
+    kill_switch: bool = False
     # Tool types deliberately disabled: §M12 lists them but §25 forbids
     # unrestricted shell execution. They stay off until a hardened executor
     # exists (see docs/security.md).

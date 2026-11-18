@@ -76,9 +76,7 @@ class TestRequestIdFilter:
         assert body["total"] == 2
         assert {item["request_id"] for item in body["items"]} == {request_id}
 
-    async def test_too_long_is_refused(
-        self, client: AsyncClient, tokens, superuser: User
-    ) -> None:
+    async def test_too_long_is_refused(self, client: AsyncClient, tokens, superuser: User) -> None:
         response = await client.get(
             URL, params={"request_id": "x" * 65}, headers=auth_header(tokens, superuser)
         )
