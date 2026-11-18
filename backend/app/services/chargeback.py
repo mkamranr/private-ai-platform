@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from app.core.csv_safe import safe_cell
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.core.scope import Scope
@@ -656,15 +657,5 @@ def _amount(value: Decimal | None) -> str:
     return "" if value is None else str(value)
 
 
-def _cell(value: Any) -> str:
-    """A text cell a spreadsheet will not run as a formula.
-
-    End-user names come from request bodies, so ``=HYPERLINK(...)`` is a value anyone
-    with an API key can plant in this report.
-    """
-    if value is None:
-        return ""
-    text = str(value)
-    if text and text[0] in "=+-@\t\r":
-        return "'" + text
-    return text
+#: End-user names come from request bodies; see ``core/csv_safe.py``.
+_cell = safe_cell
