@@ -30,6 +30,7 @@ from app.core.interfaces.agent import AgentSpec
 from app.core.interfaces.tools import RiskLevel, ToolDefinition, ToolType
 from app.core.logging import get_logger
 from app.core.security import SecretCipher
+from app.core.url_policy import check_outbound_url
 from app.models.agents import (
     Agent,
     AgentSkill,
@@ -256,6 +257,21 @@ class ToolRegistryService:
         return definition
 
 
+def checked_mcp_endpoint(endpoint: str, transport: str) -> str:
+    """Apply the shared outbound-URL policy (E51) to an MCP server's endpoint.
+
+    HTTP and SSE endpoints are addresses the platform will call, so they get the same
+    rules as inference backends: no metadata hosts, no public AI services, no credentials
+    in the URL, http(s) only. A STDIO endpoint is a command, not an address, and is left
+    alone. The endpoint is stored as given (whitespace aside), not normalised, so an
+    existing server's address does not change shape under it.
+    """
+    endpoint = endpoint.strip()
+    if transport.upper() != "STDIO":
+        check_outbound_url(endpoint, field="endpoint")
+    return endpoint
+
+
 class McpRegistryService:
     def __init__(
         self,
@@ -290,6 +306,7 @@ class McpRegistryService:
         credentials: str | None,
         actor: User,
     ) -> McpServer:
+        endpoint = checked_mcp_endpoint(endpoint, transport)
         if await self._servers.get_by_name(name):
             raise ConflictError(f"An MCP server named {name!r} already exists.")
 
@@ -366,6 +383,7 @@ class McpRegistryService:
         `mcp-<name>`, and letting a manifest set an arbitrary endpoint would reintroduce
         exactly the hand-maintained, drift-prone field this replaces.
         """
+        checked_mcp_endpoint(manifest.endpoint, "HTTP")
         server = await self._servers.get_by_name(manifest.name)
         description = manifest.description or manifest.display_name
         if server is None:

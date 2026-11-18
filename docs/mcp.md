@@ -202,6 +202,19 @@ Only **HTTP** works. `STDIO` and `SSE` appear in the schema but the executor spe
 JSON-RPC only; a stdio server needs the bridge above. This is a known gap, not a setting —
 selecting another transport today changes nothing.
 
+### Endpoint policy
+
+HTTP and SSE endpoints pass the same outbound URL policy as inference backends
+(`core/url_policy.py`, see [backends.md](backends.md#outbound-url-policy)): `http`/`https`
+only, no credentials in the URL, no cloud-metadata or link-local hosts, no public AI
+services. Private addresses and compose service names such as `http://mcp-files:8000/` are
+allowed. A refused endpoint gets a 422 naming the `endpoint` field. A `STDIO` endpoint is
+a command, not an address, and is not checked.
+
+The address is checked again on every call (health check, discovery, tool call). A server
+registered before this check existed and pointing somewhere refused shows `UNREACHABLE`,
+with the reason, until its endpoint is fixed: delete it and register it again.
+
 ---
 
 ## The shipped LDAP server
