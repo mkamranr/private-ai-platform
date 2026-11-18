@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Turn off approver reminder emails for yourself (E45)
+- **Your choice.** Anyone who can decide approvals can now stop the E39 reminder emails for themselves. Click your name at the top of the console, then switch off *Email me reminders about approvals I can decide*. Or call `PUT /api/v1/users/me/preferences`. Emails already queued for you are cancelled. Alerts and channels still announce the approval.
+- **Upgrade.** Migration `c3e5a7b9d1f2` adds `users.approval_reminder_emails`. It defaults to on, so nothing changes until someone switches it off.
+
 ### Move a resource between teams from the console (E44)
 - **No more API calls to reassign.** If you may move a model, alias, API client, agent, tool, knowledge base or workflow, its team chip is now a button (*Shared* for a shared one). It opens a *Move to team* dialog. If the move is refused, for example because an agent would lose access to its model, the dialog says why.
 - **Upgrade.** Nothing to do: console only, no migration.

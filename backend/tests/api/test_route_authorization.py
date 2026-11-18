@@ -86,6 +86,8 @@ ANY_AUTHENTICATED: set[tuple[str, str]] = {
     ("DELETE", "/api/v1/auth/trusted-devices/{device_id}"),
     ("DELETE", "/api/v1/auth/trusted-devices"),
     ("POST", "/api/v1/users/me/password"),
+    # E45: anyone sets their own preferences.
+    ("PUT", "/api/v1/users/me/preferences"),
     ("GET", "/api/v1/teams/mine"),
     # Checks the permission for the *kind* of resource being moved, which is only known
     # from the body — covered in test_teams.TestReassignment.

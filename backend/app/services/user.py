@@ -167,6 +167,22 @@ class UserService:
         )
         return user
 
+    async def update_own_preferences(self, user: User, changes: dict[str, bool]) -> User:
+        """Someone's own preferences (E45). Audited only when something changes."""
+        changed = {k: v for k, v in changes.items() if getattr(user, k) != v}
+        for key, value in changed.items():
+            setattr(user, key, value)
+        if changed:
+            await self._audit.record(
+                AuditAction.USER_UPDATED,
+                user_id=user.id,
+                username=user.username,
+                resource_type="user",
+                resource_id=str(user.id),
+                metadata={"preferences": changed},
+            )
+        return user
+
     async def change_own_password(
         self, user: User, *, current_password: str, new_password: str
     ) -> User:

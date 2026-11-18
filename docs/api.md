@@ -539,6 +539,7 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 | POST | `/users/{id}/unlock` | `user.manage` — lifts a lockout early, clears its alert (E14) |
 | POST | `/users/{id}/sessions/revoke` | `user.manage` — signs the user out everywhere (E14) |
 | POST | `/users/{id}/mfa/reset` | `user.manage` — removes MFA (lost phone) and signs the user out (E15) |
+| PUT | `/users/me/preferences` | **none**: your own preferences (E45). Today only `approval_reminder_emails` (the E39 approver emails, on by default). Fields left out are unchanged |
 | POST | `/users/me/password` | **none** — anyone may change their own, and requires the current one. Signs out every session (E14) |
 
 ### API keys (M20)

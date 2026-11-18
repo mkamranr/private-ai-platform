@@ -13,7 +13,9 @@ the people who could decide it:
 * who can see the agent's or workflow's team: a member of it, a holder of ``scope.all``
   or a superuser; a shared agent or workflow is visible to every holder;
 * not the person who started a workflow run, unless that step allows self-approval,
-  because they could not decide it anyway (a superuser can, and stays on the list).
+  because they could not decide it anyway (a superuser can, and stays on the list);
+* who have not turned these emails off for themselves (E45, ``approval_reminder_emails``
+  on their account; an email already queued for them is cancelled).
 
 At most :data:`MAX_APPROVERS` people per approval, so a mistake in role assignment
 cannot email the whole company. Each person is emailed once per approval: the outbox
@@ -92,6 +94,8 @@ class ApproverReminders:
         """Who can decide this approval, by the rules in the module docstring."""
         stmt = select(User).where(
             User.is_active.is_(True),
+            # E45: someone who turned these emails off is skipped before the cap.
+            User.approval_reminder_emails.is_(True),
             or_(User.is_superuser.is_(True), _holds(_PERMISSION[reminder.kind])),
         )
         if reminder.team_id is not None:
@@ -194,6 +198,8 @@ class ApproverReminders:
                 reason = "Emails to approvers were turned off."
             elif not user.is_active:
                 reason = "The account is no longer active."
+            elif not user.approval_reminder_emails:
+                reason = "The person turned these emails off."
             elif not await self._still_pending(row):
                 reason = "The approval was decided or expired first."
             if reason:

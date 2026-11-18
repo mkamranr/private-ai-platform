@@ -153,7 +153,8 @@ check that raises the alert:
 - who can see the agent's or workflow's team: its members, holders of `scope.all`, and
   superusers. A shared agent or workflow asks every holder;
 - not whoever started the workflow run, unless the step allows self-approval, because they
-  could not decide it. A superuser who started it is still asked.
+  could not decide it. A superuser who started it is still asked;
+- who have not turned these emails off for themselves (E45).
 
 At most 25 people per approval: explicit holders first, then superusers, by username.
 Each person is emailed **once per approval**, however many checks repeat the reminder.
@@ -166,6 +167,14 @@ retried with the channels' back-off up to `NOTIFICATIONS__MAX_ATTEMPTS`. One sti
 when its approval is decided or expires, when the account is turned off, or when the
 setting is turned off is cancelled rather than sent. Finished rows are deleted after 30
 days. A failed send is logged by account id, never by address.
+
+**Turning them off for yourself (E45).** Click your name at the top of the console. Under
+*Email*, switch off *Email me reminders about approvals I can decide*. The switch appears
+only if you hold `tool.approve` or `workflow.approve`. You can also call
+`PUT /api/v1/users/me/preferences` with `{"approval_reminder_emails": false}`. You are then
+left out before the 25-person cap is applied, and any email already queued for you is
+cancelled. The change is audited as `USER_UPDATED`. Alerts and channels still announce the
+approval.
 
 The channel reminders above are unchanged: point a channel at the approvers' chat as well,
 or instead.

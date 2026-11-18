@@ -146,6 +146,12 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
     )
 
+    #: E45: whether this person wants the E39 reminder emails about approvals they can
+    #: decide. Their own choice, on by default; alerts and channels are unaffected.
+    approval_reminder_emails: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles,
         back_populates="users",

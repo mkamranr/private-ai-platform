@@ -283,7 +283,47 @@ document.getElementById('user-badge').onclick = () => openMfaDialog();
 async function openMfaDialog() {
   const element = document.getElementById('mfa-modal');
   bootstrap.Modal.getOrCreateInstance(element).show();
+  renderAccountPrefs();
   await renderMfaDialog();
+}
+
+/* E45: the person's own choice about reminder emails for approvals they can decide.
+ * Shown only to someone who could be sent them. */
+function renderAccountPrefs() {
+  const box = document.getElementById('account-prefs');
+  const approver = can('tool.approve') || can('workflow.approve');
+  box.classList.toggle('d-none', !approver);
+  if (!approver) return;
+  box.innerHTML = `
+    <h6 class="mb-2">Email</h6>
+    <div class="form-check form-switch">
+      <input class="form-check-input" type="checkbox" role="switch" id="pref-approval-emails"
+             ${currentUser.approval_reminder_emails === false ? '' : 'checked'}>
+      <label class="form-check-label small" for="pref-approval-emails">Email me reminders about
+        approvals I can decide</label>
+    </div>
+    <div class="form-text">Sent only while an administrator has these emails turned on. Alerts
+      and team channels are not affected.</div>
+    <div class="alert alert-danger small py-2 mt-2 mb-0 d-none" id="pref-error"></div>`;
+  const toggle = document.getElementById('pref-approval-emails');
+  toggle.onchange = async () => {
+    const error = document.getElementById('pref-error');
+    error.classList.add('d-none');
+    toggle.disabled = true;
+    try {
+      const saved = await api('/users/me/preferences', {
+        method: 'PUT',
+        body: JSON.stringify({ approval_reminder_emails: toggle.checked }),
+      });
+      currentUser.approval_reminder_emails = saved.approval_reminder_emails;
+    } catch (err) {
+      toggle.checked = !toggle.checked;
+      error.textContent = err.message;
+      error.classList.remove('d-none');
+    } finally {
+      toggle.disabled = false;
+    }
+  };
 }
 
 async function renderMfaDialog() {

@@ -369,7 +369,7 @@ dashboard real signals.
 - [x] `app/services/approver_reminders.py`: approvers are active users with `tool.approve` / `workflow.approve` (or superusers) who can see the resource's team (member, `scope.all`, superuser; shared = every holder), minus a workflow run's starter unless the step allows self-approval. At most 25 per approval, explicit holders first.
 - [x] Outbox `approver_reminders` (migration `f7b9d1e3a5c6`), unique per approval and person; sent with the notification mail server and back-off; cancelled when the approval is decided or expires, the account is turned off, or the setting is off; finished rows pruned after 30 days. Run by the `approval_expiry` job after the E22 reminders, in its own transaction.
 - [x] `Reminder` carries the kind, approval id, team and excluded starter. Tests: `tests/api/test_approver_reminders.py`. Doc: [agents.md](../agents.md#reminder-emails-to-each-approver-e39).
-- [ ] Email only (no chat direct messages); no per-person opt-out; the link goes to the console's Alerts page.
+- [ ] Email only (no chat direct messages); ~~no per-person opt-out~~ (since E45); the link goes to the console's Alerts page.
 
 ## E40: Timings in chargeback reports and exports (closes the E16 chargeback item)
 
@@ -408,6 +408,15 @@ dashboard real signals.
 - [x] On models, aliases, API clients (from the key list), agents, tools, knowledge bases and workflows (list and detail). Shown only with the kind's permission (`TEAM_MOVE_PERMISSION`, as `ASSIGNABLE`) and when the caller could have put the resource in its current team; otherwise the plain chip.
 - [x] No backend change. Test: `test_every_kind_the_console_offers_moves_out_and_back` in `tests/api/test_teams.py` (alias, API client and knowledge base moves had no API test). Doc: [teams.md](../teams.md#moving-a-resource-between-teams).
 - [ ] API clients have no page of their own, so they are moved from a key's row; a client with no keys is moved with the API. No bulk move.
+
+## E45: Each person can turn off approver reminder emails (closes the E39 opt-out item)
+
+- [x] `users.approval_reminder_emails` (migration `c3e5a7b9d1f2`, default true): existing accounts keep getting the emails.
+- [x] `PUT /api/v1/users/me/preferences` (no permission: the caller's own account; fields left out unchanged; audited as `USER_UPDATED` with `preferences` only when something changes). Shown on `GET /auth/me` and `UserRead`.
+- [x] `ApproverReminders.approvers` skips people who opted out before the 25-person cap; a queued email to someone who has since opted out is cancelled (*The person turned these emails off.*).
+- [x] Console: the account dialog (click your name) is now *Your account*, with an *Email* switch shown only to holders of `tool.approve` or `workflow.approve`.
+- [x] Tests: `TestOptOut` in `tests/api/test_approver_reminders.py`. Docs: [agents.md](../agents.md#reminder-emails-to-each-approver-e39), api.md.
+- [ ] An administrator cannot see or change someone else's choice; one switch for both tool and workflow approvals.
 
 ## Phase acceptance (applies to each)
 

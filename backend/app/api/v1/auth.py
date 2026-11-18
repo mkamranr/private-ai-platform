@@ -418,6 +418,7 @@ async def me(user: CurrentUserDep) -> CurrentUserRead:
                     "created_at",
                     "auth_provider",
                     "mfa_enabled",
+                    "approval_reminder_emails",
                 )
             },
             "roles": user.roles,
