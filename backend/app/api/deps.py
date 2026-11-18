@@ -1404,8 +1404,9 @@ def get_cost_budget_service(
 CostBudgetServiceDep = Annotated[CostBudgetService, Depends(get_cost_budget_service)]
 
 
-def get_channel_sender(settings: SettingsDep, cipher: CipherDep) -> ChannelSender:
-    """Overridden in tests with fake transports."""
+def get_channel_sender(settings: EffectiveSettingsDep, cipher: CipherDep) -> ChannelSender:
+    """Overridden in tests with fake transports. The effective settings, so a test send
+    shows the email branding (E49) as currently set on the Settings page."""
     return ChannelSender(cipher, WebhookSender(), EmailSender(settings.notifications))
 
 

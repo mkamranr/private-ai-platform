@@ -230,10 +230,12 @@ class InfrastructureWorker:
         # a mail problem never undoes the reminder alerts committed above.
         try:
             async with self._session_factory() as session:
+                # The effective settings, so the email branding (E49) and console URL
+                # changed on the Settings page apply here too.
                 await ApproverReminders(
                     session,
-                    EmailSender(self._settings.notifications),
-                    self._settings.notifications,
+                    EmailSender(settings.notifications),
+                    settings.notifications,
                 ).run(reminders.due, enabled=settings.agents.approval_reminder_email_approvers)
                 await session.commit()
         except Exception:

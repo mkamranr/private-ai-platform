@@ -60,6 +60,7 @@ CATEGORIES: tuple[tuple[str, str], ...] = (
     ("operations", "Operations"),
     ("integrations", "Integrations"),
     ("chargeback", "Chargeback"),
+    ("branding", "Email branding"),
 )
 
 
@@ -231,6 +232,45 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next expiry check (within 15 minutes)",
     ),
     RuntimeSetting(
+        "notifications.email_brand_name",
+        "branding",
+        "Email brand name",
+        "The name at the top of every notification and approver reminder email.",
+        "Next email sent",
+    ),
+    RuntimeSetting(
+        "notifications.email_brand_color",
+        "branding",
+        "Email accent colour",
+        "A colour such as #4f46e5, used for the header mark and the button. Text on it "
+        "turns dark or light to stay readable.",
+        "Next email sent",
+    ),
+    RuntimeSetting(
+        "notifications.email_brand_tagline",
+        "branding",
+        "Email tagline",
+        "A short line under the brand name, for example the team that runs the platform. "
+        "Empty for none.",
+        "Next email sent",
+    ),
+    RuntimeSetting(
+        "notifications.email_footer",
+        "branding",
+        "Email footer",
+        "Text at the foot of every email, for example who to contact about an alert. "
+        "Empty for none.",
+        "Next email sent",
+    ),
+    RuntimeSetting(
+        "notifications.email_subject_prefix",
+        "branding",
+        "Email subject prefix",
+        "Put before every subject. Mail filters often match on it, so change it with care. "
+        "Empty for none.",
+        "Next email sent",
+    ),
+    RuntimeSetting(
         "ops.backup_interval_hours",
         "operations",
         "Scheduled backup every (hours)",
@@ -329,6 +369,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
     DeploymentSetting("platform.name", "general", "Platform name"),
     DeploymentSetting("platform.environment", "general", "Environment"),
     DeploymentSetting("platform.version", "general", "Version"),
+    DeploymentSetting("notifications.email_logo_path", "branding", "Email logo file"),
     DeploymentSetting("logging.level", "general", "Log level"),
     DeploymentSetting("auth.access_token_ttl_seconds", "security", "Access token lifetime (s)"),
     DeploymentSetting("auth.refresh_token_ttl_seconds", "security", "Refresh token lifetime (s)"),

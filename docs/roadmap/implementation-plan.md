@@ -439,7 +439,16 @@ dashboard real signals.
 - [x] `html_body(msg)`: the same content as the plain text, as a self-contained page (inline styles; no images, fonts, scripts or remote resources; every value escaped; the only link is the console's Alerts page). Severity colour bar, facts table, digest list (E47).
 - [x] `EmailSender` sends `multipart/alternative` (text, then HTML), for channel emails and the approver reminders (E39). `NOTIFICATIONS__EMAIL_HTML` (default true) turns the HTML part off. No migration.
 - [x] Tests: `tests/unit/test_html_email.py`; `test_email` reads the plain part. Doc: [notifications.md](../notifications.md#email).
-- [ ] One built-in layout (no templates or branding); the subject and plain text are unchanged.
+- [ ] ~~One built-in layout (no templates or branding)~~ (branded since E49); the subject and plain text are unchanged.
+
+## E49: Branded notification email templates
+
+- [x] `app/services/email_templates.py`: one table-based layout for every email (alert raised, escalated, resolved; digest; channel test; approver reminder). Header with logo or monogram, name and tagline; severity badge and accent bar; a sentence of context; message panel and facts; digest with per-severity counts; button to the Alerts or (approver reminders) Approvals page; footer with the brand's text and why the person received it. Preview text, dark-mode and narrow-screen styles. Self-contained and escaped as in E48.
+- [x] Runtime settings (new category *Email branding*): `notifications.email_brand_name`, `email_brand_color` (`#rrggbb`), `email_brand_tagline`, `email_footer`, `email_subject_prefix` (default `[AI Platform]`, as before). Deployment setting `NOTIFICATIONS__EMAIL_LOGO_PATH`: PNG, JPEG or GIF up to 200 KB, embedded as a `cid:` part (multipart/related), skipped with a log line when unusable.
+- [x] `Message.kind` (`approval` for E39 reminders, which now link to `#approvals`). Approver reminders and channel test sends use the effective settings, so branding changed in the console applies to them.
+- [x] `GET /notifications/email-preview` and *Preview email* on the Alerts page (sandboxed frame). Settings page: a colour picker, and optional text may be emptied.
+- [x] Tests: `tests/unit/test_html_email.py` (rewritten), `tests/api/test_email_branding.py`. Docs: [notifications.md](../notifications.md#branding-e49), settings.md.
+- [ ] One layout (no per-channel templates or custom HTML); the logo is a file on the backend, not uploaded through the console.
 
 ## Phase acceptance (applies to each)
 

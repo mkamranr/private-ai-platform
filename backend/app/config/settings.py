@@ -764,6 +764,20 @@ class NotificationsSettings(BaseModel):
     #: E48: send an HTML part alongside the plain text. Turn off for mail gateways that
     #: strip or quarantine HTML; the plain text is always sent.
     email_html: bool = True
+    # -- E49: branding of notification emails (runtime settings, except the logo) --------
+    #: The name in the email header.
+    email_brand_name: str = Field(default="Private AI Platform", min_length=1, max_length=60)
+    #: The accent colour: header mark, button and the bar on digests and tests.
+    email_brand_color: str = Field(default="#4f46e5", pattern=r"^#[0-9a-fA-F]{6}$")
+    #: A line under the name, e.g. "IT Operations".
+    email_brand_tagline: str = Field(default="", max_length=120)
+    #: Shown at the foot of every email, e.g. who to contact.
+    email_footer: str = Field(default="", max_length=500)
+    #: Put before every subject; mail filters often match on it. Empty for none.
+    email_subject_prefix: str = Field(default="[AI Platform]", max_length=40)
+    #: A PNG, JPEG or GIF of at most 200 KB, embedded in each email (never linked). Read
+    #: from the backend's filesystem, so it belongs in .env with a mounted file.
+    email_logo_path: str | None = None
     #: The console's address as people reach it, e.g. ``https://ai.example.internal``.
     #: Notifications link to the Alerts page when it is set.
     console_url: str | None = None

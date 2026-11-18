@@ -42,6 +42,11 @@ that silently ignores what it saved is worse than one that says "restart require
 | `agents.approval_reminder_hours` | Security | hours before that expiry an approval raises a reminder alert (source `approvals`); 0 = off (E22, [agents.md](agents.md#reminders-e22)) | next expiry check (15 min) |
 | `agents.approval_reminder_waiting_hours` | Security | while approvals never expire, hours an approval waits before it raises a reminder; 0 = off (E43, [agents.md](agents.md#reminders-e22)) | next expiry check (15 min) |
 | `agents.approval_reminder_email_approvers` | Security | also email each reminder to every person who can decide it, once each, at most 25 per approval; needs the mail server (E39, [agents.md](agents.md#reminder-emails-to-each-approver-e39)) | next expiry check (15 min) |
+| `notifications.email_brand_name` | Email branding | the name at the top of every notification email (E49, [notifications.md](notifications.md#branding-e49)) | next email |
+| `notifications.email_brand_color` | Email branding | the accent colour, `#rrggbb` | next email |
+| `notifications.email_brand_tagline` | Email branding | a line under the name; empty for none | next email |
+| `notifications.email_footer` | Email branding | text at the foot of every email, such as who to contact; empty for none | next email |
+| `notifications.email_subject_prefix` | Email branding | put before every subject, `[AI Platform]` by default; empty for none | next email |
 
 **Deliberately not editable:**
 

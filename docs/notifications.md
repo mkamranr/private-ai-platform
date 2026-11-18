@@ -215,6 +215,7 @@ and never goes in the database:
 | `NOTIFICATIONS__SMTP_VERIFY_TLS` | true | turn off only for an internal relay with a self-signed certificate |
 | `NOTIFICATIONS__SMTP_TIMEOUT_SECONDS` | 10 | |
 | `NOTIFICATIONS__EMAIL_HTML` | true | send an HTML version as well as the plain text (E48) |
+| `NOTIFICATIONS__EMAIL_LOGO_PATH` | unset | a logo embedded in each email (E49, see [Branding](#branding-e49)) |
 
 - The subject is `[AI Platform] [CRITICAL] <title>`.
 - **HTML (E48).** Each message is `multipart/alternative`: the plain text, plus an HTML
@@ -226,6 +227,52 @@ and never goes in the database:
   is escaped, so an alert's text cannot add markup. The approver reminder emails (E39) use
   the same format. If a mail gateway strips or quarantines HTML, set
   `NOTIFICATIONS__EMAIL_HTML=false` to send plain text only.
+
+### Branding (E49)
+
+Every notification email uses one branded layout. The header shows your logo, or a
+monogram of the brand's initials on the accent colour, next to the brand name and tagline.
+Below it is a card with:
+
+- a badge saying what happened (*Critical*, *Warning*, *Resolved*, *Digest*, *Approval
+  waiting*, *Test*) and a coloured bar;
+- the title and a sentence of context, for example *A critical alert was raised* or *This
+  alert has been resolved. No action is needed.*;
+- the alert's message and a short table of facts;
+- a button in the accent colour to the console.
+
+The footer holds your own text and says why the person received the email. A digest
+lists its alerts with a count for each severity. An approver reminder (E39) links to the
+**Approvals** page instead of Alerts, and says how to turn these emails off.
+
+Set the branding on the **Settings** page under *Email branding*. These are runtime
+settings, so they apply from the next email without a restart:
+
+| Setting | Default | |
+|---|---|---|
+| Email brand name | `Private AI Platform` | |
+| Email accent colour | `#4f46e5` | `#rrggbb`. Text on it turns dark or light to stay readable |
+| Email tagline | empty | for example *IT Operations* |
+| Email footer | empty | for example who to contact about an alert |
+| Email subject prefix | `[AI Platform]` | mail filters often match on it; empty for none |
+
+**Logo.** Set `NOTIFICATIONS__EMAIL_LOGO_PATH` to a PNG, JPEG or GIF of at most 200 KB
+on the backend's filesystem, mounted into the container. It is shown 32 px high. The
+logo is **attached to each email** as an inline image (`cid:`), never linked, so opening
+an email loads nothing. A missing, oversized or non-image file is logged
+(`email_logo_unreadable`, `email_logo_too_large`, `email_logo_not_an_image`) and the
+email goes out with the monogram. The logo is a deployment setting, so it can't be
+changed in the console, because the backend reads it from disk.
+
+**Preview.** *Preview email* on the Alerts page (next to *+ Add channel*) shows a sample of
+each kind, branded as currently set, with its subject. It is also available as
+`GET /api/v1/notifications/email-preview?kind=raised|resolved|digest|approval|test`
+(`notification.manage`). The preview needs no mail server and sends nothing.
+
+The layout works in common mail clients: it uses tables for Outlook, adapts to narrow
+screens, has dark-mode colours where the client supports them, and includes preview
+text. It stays self-contained, with no web fonts, scripts or remote images, and every
+value, including your branding text, is escaped.
 - A channel has up to 20 recipients; use a distribution list for more.
 - If the server refuses some recipients but not all, the message counts as sent and the
   result says how many were refused.
@@ -254,6 +301,7 @@ Under `/api/v1/notifications`. Every route needs `notification.manage`.
 | `DELETE /channels/{id}` | 204. The channel's delivery history is removed with it |
 | `POST /channels/{id}/test` | sends now; `{ok, detail, code}`. A failure is still a 200 |
 | `GET /deliveries` | `?channel_id=&status=&limit=&offset=` |
+| `GET /email-preview` | `?kind=raised`, `resolved`, `digest`, `approval` or `test`: `{kind, subject, text, html}`, branded as currently set; nothing is sent (E49) |
 
 Audit actions:
 
