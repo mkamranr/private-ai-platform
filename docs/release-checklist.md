@@ -1,9 +1,8 @@
 # Release checklist
 
 This is the procedure for cutting a release. Work through it top to bottom. Every item
-is something a release has got wrong before, or a hard constraint from the
-[expansion plan](roadmap/Private-AI-Platform-Expansion-Plan.md) §2 that nothing else
-enforces.
+is something a release has got wrong before, or a hard constraint of the platform that
+nothing else enforces.
 
 ## 1. Version and notes
 

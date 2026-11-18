@@ -1,6 +1,6 @@
-# Chat (M17)
+# Chat
 
-Open WebUI, consuming the platform gateway and **nothing else** (§M17).
+Open WebUI, consuming the platform gateway and **nothing else**.
 
 Not forked, not patched. Everything below is configuration, so upgrading is a digest
 bump rather than a merge — which matters because the alternative is carrying a patch set
@@ -22,7 +22,7 @@ chat.ai-platform.local   Open WebUI
 
 Routed by **name**, not by path. Open WebUI's built assets reference absolute paths
 (`/static/…`), so it can only be served from a site root — `/chat/` would return a page
-whose scripts all 404. Giving it a hostname keeps §14's "only nginx is published" intact.
+whose scripts all 404. Giving it a hostname keeps the "only nginx is published" rule intact.
 
 A developer machine usually has no DNS entry for `chat.*`, so nginx also listens on 8081
 and `docker-compose.dev.yml` publishes it. The listener exists in both environments;
@@ -95,29 +95,29 @@ Every one of these is a deviation from an Open WebUI default, taken deliberately
 
 | Setting | Value | Why |
 |---|---|---|
-| `ENABLE_PERSISTENT_CONFIG` | `false` | Open WebUI otherwise writes its settings to the database on first boot and ignores the environment ever after. An operator would edit `docker-compose.yml`, see nothing change, and have no way to tell why. Off, this file is the single source of truth (Rule 5). |
-| `ENABLE_OLLAMA_API` | `false` | §M17: the platform gateway is the only model source. |
+| `ENABLE_PERSISTENT_CONFIG` | `false` | Open WebUI otherwise writes its settings to the database on first boot and ignores the environment ever after. An operator would edit `docker-compose.yml`, see nothing change, and have no way to tell why. Off, this file is the single source of truth. |
+| `ENABLE_OLLAMA_API` | `false` | The platform gateway is the only model source. |
 | `BYPASS_MODEL_ACCESS_CONTROL` | `true` | Open WebUI keeps its own per-model access list. Leaving it on means two authorisation systems for one resource, maintained separately and diverging quietly. The platform's **aliases** are the control surface: expose a model by pointing an alias at it. |
 | `ENABLE_EVALUATION_ARENA_MODELS` | `false` | The arena injects a pseudo-model answering from somewhere nobody registered — on a governed platform, a model that cannot be accounted for. |
 | `ENABLE_COMMUNITY_SHARING` | `false` | Sharing uploads the conversation to openwebui.com. Air-gapped, the button can only fail; connected, it exfiltrates. |
-| `OFFLINE_MODE` | `true` | Sets `HF_HUB_OFFLINE=1` and stops the version check phoning home (Rule 4). |
+| `OFFLINE_MODE` | `true` | Sets `HF_HUB_OFFLINE=1` and stops the version check phoning home. |
 | `RAG_EMBEDDING_ENGINE` | `openai` | Embeddings go through the gateway, so document upload never reaches for a sentence-transformers model from HuggingFace. **Needs an EMBEDDING model deployed** — otherwise upload fails. |
 | `DEFAULT_USER_ROLE` | `pending` | New accounts wait for an administrator. That is what makes leaving signup open safe on a closed network. Development overrides this to `user`. |
-| `DATABASE_URL` | platform Postgres | Its own schema in the platform's database rather than the image's default SQLite: one database to back up (M25), and one that survives a room full of people chatting at once. Created by `make seed`, not by a Postgres init script — those run only on first initialisation, so an existing install would never get it. |
+| `DATABASE_URL` | platform Postgres | Its own schema in the platform's database rather than the image's default SQLite: one database to back up, and one that survives a room full of people chatting at once. Created by `make seed`, not by a Postgres init script — those run only on first initialisation, so an existing install would never get it. |
 
 Signup stays open by default because it is how the first administrator is created; new
 accounts are `pending` until approved. Turn it off (`OPEN_WEBUI__ENABLE_SIGNUP=false`)
-once Phase 6 puts OIDC in front.
+once OIDC sign-in is in front.
 
 ---
 
 ## What the platform does not do here
 
 * **No SSO between the console and chat.** They are two applications with two sessions.
-  Phase 6's OIDC is what unifies them; until then, an operator has two logins.
+  Single sign-on through OIDC is what unifies them; until then, an operator has two logins.
 * **No conversation content leaves Open WebUI.** The platform records that a request
   happened, by whom, against which model, and how many tokens — never the messages.
-  Prompt/response capture is Phase 7's tracing concern, and is a decision to take
+  Prompt/response capture is a tracing concern, and is a decision to take
   explicitly rather than by accident.
 * **No per-user model policy.** Every chat user sees every serving alias. If that needs
   to change it belongs in the platform's RBAC, not in Open WebUI's parallel one.

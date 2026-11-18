@@ -1,24 +1,21 @@
 # API reference
 
-The complete `/api/v1` surface across all 28 modules (§8), **with the permission each
-route requires**. Written whole now so each module implements against a settled
-contract; routes are added as their module lands.
-
-Referenced by the module prompt in §26.
+The complete `/api/v1` surface across all 28 modules, **with the permission each
+route requires**.
 
 ---
 
 ## Conventions
 
 **Base path** `/api/v1`. Reached through nginx on `${PLATFORM_HTTP_PORT}` (8080 by
-default); the backend publishes no host port of its own (§14).
+default); the backend publishes no host port of its own.
 
 **Authentication** `Authorization: Bearer <jwt>` for platform routes,
-`Authorization: Bearer <api-key>` for gateway routes (P6).
+`Authorization: Bearer <api-key>` for gateway routes.
 
 **Authorisation** every route below names its required permission. `require_permission`
 in `app/api/deps.py` is the only authorisation primitive; enforcement is server-side,
-always (§M03). A superuser bypasses all checks.
+always. A superuser bypasses all checks.
 
 **Errors** one shape everywhere:
 
@@ -57,7 +54,7 @@ a request.
 
 ---
 
-## Health and version — Phase 0 ✅ implemented
+## Health and version
 
 No authentication: Docker, Compose and later Kubernetes probe these before any
 credential exists. Responses carry no hostnames, DSNs or stack traces.
@@ -86,32 +83,32 @@ credential exists. Responses carry no hostnames, DSNs or stack traces.
 
 ---
 
-## Authentication — Phase 0 ✅ implemented
+## Authentication
 
 | method | path | permission | notes |
 |---|---|---|---|
-| POST | `/auth/passkey/options`, `/auth/passkey/verify` | — | E30: sign in with a passkey alone (no username, password or code). Options name no account; verify takes `{challenge_token, credential}` → token pair |
-| POST | `/auth/login` | — | `{username, password}` → token pair. Success and failure both audited. After repeated failures from the address: 401 `challenge_required`, then resend with `challenge: {token, solution}` (E29, see [security.md](security.md#sign-in-hardening-e14)) |
-| POST | `/auth/refresh` | — | `{refresh_token}` → new pair. Each refresh token works once (E14) |
-| POST | `/auth/logout` | authenticated | Revokes this access token, and `{refresh_token}` if given (E14) |
-| POST | `/auth/logout-all` | authenticated | Every token for this account stops working (E14) |
-| POST | `/auth/mfa/verify` | — | `{mfa_token, code}` → token pair. The second sign-in step (E15) |
-| POST | `/auth/mfa/enrol/start` | — | `{mfa_token}` → secret, `otpauth://` URI, QR SVG, when policy requires set-up (E15) |
-| POST | `/auth/mfa/enrol/finish` | — | `{mfa_token, code}` → token pair + recovery codes (E15) |
-| GET | `/auth/mfa` | authenticated | Own MFA status: enabled, recovery codes left, required by policy (E15) |
-| POST | `/auth/mfa/setup` | authenticated | `{password}` → secret, URI, QR SVG. Not on until confirmed (E15) |
-| POST | `/auth/mfa/enable` | authenticated | `{code}` → new token pair + recovery codes; other sessions signed out (E15) |
-| POST | `/auth/mfa/disable` | authenticated | `{password, code}`. 403 while policy requires MFA (E15) |
-| POST | `/auth/mfa/recovery-codes` | authenticated | `{code}` → ten new recovery codes (E15) |
-| POST | `/auth/mfa/passkey/options` | — | `{mfa_token}` → `{public_key, challenge_token}` for `navigator.credentials.get` (E20) |
-| POST | `/auth/mfa/passkey/verify` | — | `{mfa_token, challenge_token, credential, remember_device}` → token pair. A passkey answers the second step (E20) |
-| GET | `/auth/passkeys` | authenticated | Own passkeys: name, transports, synced, added, last used (E20) |
-| POST | `/auth/passkeys/options` | authenticated | `{password}` → `{public_key, challenge_token}` for `navigator.credentials.create`. Needs MFA on; 409 when the site has no host name over HTTPS (E20) |
-| POST | `/auth/passkeys` | authenticated | `{challenge_token, credential, name}` → 201, the passkey (E20) |
-| DELETE | `/auth/passkeys/{id}` | authenticated | Remove one of your passkeys (E20) |
-| GET | `/auth/trusted-devices` | authenticated | Browsers trusted to skip the second step (E20) |
-| DELETE | `/auth/trusted-devices/{id}` | authenticated | Forget one (E20) |
-| DELETE | `/auth/trusted-devices` | authenticated | Forget them all (E20) |
+| POST | `/auth/passkey/options`, `/auth/passkey/verify` | — | Sign in with a passkey alone (no username, password or code). Options name no account; verify takes `{challenge_token, credential}` → token pair |
+| POST | `/auth/login` | — | `{username, password}` → token pair. Success and failure both audited. After repeated failures from the address: 401 `challenge_required`, then resend with `challenge: {token, solution}` (see [security.md](security.md#sign-in-hardening)) |
+| POST | `/auth/refresh` | — | `{refresh_token}` → new pair. Each refresh token works once |
+| POST | `/auth/logout` | authenticated | Revokes this access token, and `{refresh_token}` if given |
+| POST | `/auth/logout-all` | authenticated | Every token for this account stops working |
+| POST | `/auth/mfa/verify` | — | `{mfa_token, code}` → token pair. The second sign-in step |
+| POST | `/auth/mfa/enrol/start` | — | `{mfa_token}` → secret, `otpauth://` URI, QR SVG, when policy requires set-up |
+| POST | `/auth/mfa/enrol/finish` | — | `{mfa_token, code}` → token pair + recovery codes |
+| GET | `/auth/mfa` | authenticated | Own MFA status: enabled, recovery codes left, required by policy |
+| POST | `/auth/mfa/setup` | authenticated | `{password}` → secret, URI, QR SVG. Not on until confirmed |
+| POST | `/auth/mfa/enable` | authenticated | `{code}` → new token pair + recovery codes; other sessions signed out |
+| POST | `/auth/mfa/disable` | authenticated | `{password, code}`. 403 while policy requires MFA |
+| POST | `/auth/mfa/recovery-codes` | authenticated | `{code}` → ten new recovery codes |
+| POST | `/auth/mfa/passkey/options` | — | `{mfa_token}` → `{public_key, challenge_token}` for `navigator.credentials.get` |
+| POST | `/auth/mfa/passkey/verify` | — | `{mfa_token, challenge_token, credential, remember_device}` → token pair. A passkey answers the second step |
+| GET | `/auth/passkeys` | authenticated | Own passkeys: name, transports, synced, added, last used |
+| POST | `/auth/passkeys/options` | authenticated | `{password}` → `{public_key, challenge_token}` for `navigator.credentials.create`. Needs MFA on; 409 when the site has no host name over HTTPS |
+| POST | `/auth/passkeys` | authenticated | `{challenge_token, credential, name}` → 201, the passkey |
+| DELETE | `/auth/passkeys/{id}` | authenticated | Remove one of your passkeys |
+| GET | `/auth/trusted-devices` | authenticated | Browsers trusted to skip the second step |
+| DELETE | `/auth/trusted-devices/{id}` | authenticated | Forget one |
+| DELETE | `/auth/trusted-devices` | authenticated | Forget them all |
 | GET | `/auth/me` | authenticated | Identity + resolved permission list |
 
 Login failures return one message regardless of cause — distinguishing "no such user"
@@ -125,23 +122,23 @@ account locks after too many wrong passwords. A locked account gets the same `40
 message as a wrong password. Logout revokes tokens by their `jti`, and a session
 version claim (`sv`) lets one change sign out every session. A refresh token presented
 again after it was exchanged signs the account out everywhere. See
-[security.md](security.md#sign-in-hardening-e14).
+[security.md](security.md#sign-in-hardening).
 
-With two-factor authentication on (E15), `/auth/login` answers a correct password with
+With two-factor authentication on, `/auth/login` answers a correct password with
 `{mfa_required: true, mfa_token, enrolment_required, expires_in}` instead of tokens. A
 client that only reads `access_token` must check `mfa_required` first. See
-[security.md](security.md#two-factor-authentication-e15).
+[security.md](security.md#two-factor-authentication).
 
-E20 adds `passkey_available` and `remember_days` to that challenge. `/auth/mfa/verify` and
+The challenge also carries `passkey_available` and `remember_days`. `/auth/mfa/verify` and
 `/auth/mfa/passkey/verify` take `remember_device: true`, and the token pair then carries
 `device_token` and `device_expires_at`. Send the `device_token` back as `device_token` on
 the next `/auth/login` for that account to skip the second step. `/auth/mfa` gains
 `passkeys_supported`, `passkeys`, `trusted_devices` and `remember_days`. See
-[security.md](security.md#passkeys-and-trusted-browsers-e20).
+[security.md](security.md#passkeys-and-trusted-browsers).
 
 ---
 
-## Users, roles, permissions — Phase 0 ✅ implemented
+## Users, roles, permissions
 
 | method | path | permission |
 |---|---|---|
@@ -163,7 +160,7 @@ is a separate duty.
 
 ---
 
-## Nodes and GPUs — Phase 1
+## Nodes and GPUs
 
 | method | path | permission |
 |---|---|---|
@@ -186,7 +183,7 @@ is a separate duty.
 `/gpus/{id}/metrics` takes `?since=&until=&resolution=`. Never return raw
 15-second samples over a long window — a month is ~175k rows per GPU.
 
-### Node enrolment (M04)
+### Node enrolment
 
 | | | |
 |---|---|---|
@@ -202,15 +199,15 @@ the caller is meant to be a shell script on a host with no user account. Every r
 unknown, expired, consumed, revoked, out of attempts — returns the same message, so a caller
 cannot learn which; the reason is on the enrolment row and in the audit log.
 
-The **node agent** exposes a separate API on each managed host (§M04), not part of
+The **node agent** exposes a separate API on each managed host, not part of
 `/api/v1`: `GET /health /system /cpu /memory /disk /network /gpus /docker /containers`
 and `POST /containers/create|start|stop|restart`, `DELETE /containers/{id}`. Reached
-over mTLS with a per-node bearer token. §M04 is explicit that the Docker socket must
+over mTLS with a per-node bearer token. The Docker socket must
 not be exposed over an unsecured network.
 
 ---
 
-## Model registry and deployment — Phase 2 ✅
+## Model registry and deployment
 
 Under `/api/v1`, authenticated with the platform JWT.
 
@@ -249,31 +246,31 @@ is `REGISTERED`. `POST /models/{id}/import` scans `storage_path` and promotes it
 `POST /api-keys` is the only response that ever contains the key. Only a hash and a
 prefix are stored; it cannot be shown again.
 
-`GET /deployments/{id}` deliberately omits `internal_url` (§12).
+`GET /deployments/{id}` deliberately omits `internal_url`.
 
 `GET /usage/by-user` groups by end user **and by whether the attribution is trusted**, so
 a self-reported `user` string never merges into a row with a signed identity. See
 [chat.md](chat.md#who-is-asking-the-interesting-part).
 
-`GET /dashboard` returns one response per §M21 section. `monitoring.view` gets you the
+`GET /dashboard` returns one response per dashboard section. `monitoring.view` gets you the
 endpoint; each section additionally requires its own permission and is **omitted** — not
 zeroed — without it. A zero is a claim about the platform; "you cannot see this" is a
 different claim, and rendering them identically lies to the operator.
 
-E8 adds the `dependencies`, `backends`, `alerts`, `knowledge`, `agents` and `workflows`
+The response includes the `dependencies`, `backends`, `alerts`, `knowledge`, `agents` and `workflows`
 sections, gateway error and rate figures, `source`/`collected_at` on fleet, GPU and backend
 figures, and `unavailable`: sections the caller may see whose source failed, with a reason.
 Those are absent too, never zeroed. Knowledge, agent and workflow counts follow team scope,
-and since E18 so do model and deployment counts and the gateway section.
+and so do model and deployment counts and the gateway section.
 See [settings.md](settings.md#dashboard).
 
-E16 adds timing fields to the dashboard's `gateway` section and to each `GET /usage` row:
+The dashboard's `gateway` section and each `GET /usage` row carry timing fields:
 `ttft_p50_ms`, `ttft_p95_ms`, `latency_p95_ms`, `output_tps_p50` and `timed_streams`.
 They are `null` when nothing in the period was measured, never 0. TTFT and throughput
-come from streamed calls only. See [gateway-policy.md](gateway-policy.md#timings-e16).
+come from streamed calls only. See [gateway-policy.md](gateway-policy.md#timings).
 
 `POST /models/{id}/deploy` → **202** with the deployment id. Poll
-`GET /deployments/{id}` for the §M08 state machine
+`GET /deployments/{id}` for the deployment state machine
 (`REQUESTED → VALIDATING → SCHEDULING → CREATING → STARTING → HEALTH_CHECK → RUNNING`,
 or `FAILED`).
 
@@ -289,16 +286,16 @@ or `FAILED`).
 }
 ```
 
-Omit `node_id`/`gpu_ids` to let the scheduler place it (§9). A placement failure
+Omit `node_id`/`gpu_ids` to let the scheduler place it. A placement failure
 returns a reason an operator can act on — "no node has 2 GPUs with 80 GiB free;
 node-01 has 1 free, node-02 is at 95% utilisation" — not "scheduling failed".
 
 ---
 
-## AI gateway — Phase 2 ✅
+## AI gateway
 
 OpenAI-compatible, so the `openai` client works unmodified. Callers never see a container
-address (§12).
+address.
 
 **Mounted at `/v1`, not under `/api/v1`.** The SDK derives every path from `base_url`, so
 `client.models.list()` is `GET {base_url}/models` — which under a shared root would
@@ -330,12 +327,12 @@ client.chat.completions.create(
 `GET /v1/models` lists only what is actually serving. A catalogue containing undeployed
 models would send every developer's first call into a 503.
 
-`stream=True` returns SSE, forwarded without buffering (§25). The gateway always requests
+`stream=True` returns SSE, forwarded without buffering. The gateway always requests
 `stream_options.include_usage` from the runtime and intercepts the final usage chunk, so
 token counts are recorded even when streaming and even when the client disconnects
 mid-response. That chunk is forwarded to the caller only if they asked for it.
 
-The response echoes the **alias**, never the underlying model (§13).
+The response echoes the **alias**, never the underlying model.
 
 | Situation | Status |
 |---|---|
@@ -346,11 +343,11 @@ The response echoes the **alias**, never the underlying model (§13).
 | Runtime unreachable | 503 `dependency_unavailable` |
 | Over the key's rate limit | 429 with `retry_after_seconds` |
 
-`model` accepts an alias (§13), a model name, or — from Phase 4 — `agent:<slug>`.
+`model` accepts an alias, a model name, or `agent:<slug>`.
 
 ---
 
-## Agents, skills, tools, MCP — Phase 4 ✅
+## Agents, skills, tools, MCP
 
 | method | path | permission |
 |---|---|---|
@@ -368,8 +365,8 @@ The response echoes the **alias**, never the underlying model (§13).
 | POST | `/runs/{run_id}/approve` | `tool.approve` |
 | GET | `/skills` | `skill.view` |
 | POST / PUT / DELETE | `/skills[/{id}]` | `skill.manage` |
-| GET | `/tools` | `tool.view`. Shared tools and your teams' (E35) |
-| POST / PUT / DELETE | `/tools[/{id}]` | `tool.manage`. `team_id` on create (E35); another team's tool is 404 |
+| GET | `/tools` | `tool.view`. Shared tools and your teams' |
+| POST / PUT / DELETE | `/tools[/{id}]` | `tool.manage`. `team_id` on create; another team's tool is 404 |
 | POST | `/tools/{id}/test` | `tool.manage` |
 | GET | `/mcp/servers` | `mcp.view` |
 | POST / PUT / DELETE | `/mcp/servers[/{id}]` | `mcp.manage` |
@@ -381,9 +378,9 @@ The response echoes the **alias**, never the underlying model (§13).
 `POST /runs/{run_id}/approve` requires **`tool.approve`**, deliberately separate from
 `tool.execute`: approving a HIGH-risk action is a different privilege from performing
 a routine one, and collapsing them would let any tool user approve their own
-privileged call (§10, §M24).
+privileged call.
 
-`GET /runs/{run_id}/events` returns the persisted §11 trace. `POST
+`GET /runs/{run_id}/events` returns the persisted run trace. `POST
 /agents/{id}/execute` with `stream: true` streams those events as SSE while the run is
 live, so a UI shows tool calls as they happen rather than after the fact.
 
@@ -396,14 +393,14 @@ before `/runs/{run_id}` because FastAPI matches in order and would otherwise par
 tool is, and changing them under an agent already granted it would silently change what
 that agent can do.
 
-**Agents in Open WebUI.** Open WebUI speaks only OpenAI chat-completions, but §M17
-wants agent selection in it. Rather than forking it, the gateway lists each agent as a
+**Agents in Open WebUI.** Open WebUI speaks only OpenAI chat-completions, yet users
+need to select agents in it. Rather than forking it, the gateway lists each agent as a
 pseudo-model `agent:<slug>` in `/models`; a request naming that prefix routes to the
 agent engine and streams the result as SSE deltas.
 
 ---
 
-## Knowledge and memory — Phase 5 ✅
+## Knowledge and memory
 
 | method | path | permission |
 |---|---|---|
@@ -419,21 +416,21 @@ agent engine and streams the result as SSE deltas.
 Upload returns **202**; ingestion (parse → chunk → embed → index) runs in a worker. Poll
 `GET /documents/{id}` for status, which walks
 `UPLOADED → PARSING → CHUNKING → EMBEDDING → INDEXED`, or ends at `FAILED` (with `error`)
-or `NO_TEXT` (with `status_detail` — usually a scanned file awaiting Phase 9's OCR).
+or `NO_TEXT` (with `status_detail` — usually a scanned file awaiting OCR).
 
-Memory (M16) adds `POST /memory/search`, `GET /memory/entries`,
+Memory has `POST /memory/search`, `GET /memory/entries`,
 `DELETE /memory/entries/{id}`, `POST /memory/forget-all` and
 `GET /conversations/{external_id}`, all under `knowledge.view` / `knowledge.manage`.
 **Every one is scoped**: a memory search without a `user_id` or `end_user` is refused with
-422 rather than searching a whole tenant. See [rag.md](rag.md#scoping-m16--the-security-core).
-Since E18 they also follow the agent's team: see [teams.md](teams.md#reads-that-follow-scope-e18).
+422 rather than searching a whole tenant. See [rag.md](rag.md#scoping--the-security-core).
+They also follow the agent's team: see [teams.md](teams.md#reads-that-follow-scope).
 
 `POST /deployments/reconcile?remove=true` (permission `model.stop`) finds model containers
 no deployment claims — see [rag.md](rag.md#orphaned-containers).
 
 ---
 
-## Developer portal — Phase 6
+## Developer portal
 
 | method | path | permission |
 |---|---|---|
@@ -447,12 +444,12 @@ retrievable — the platform stores a hash, so it genuinely cannot show the key 
 
 ---
 
-## Audit, settings, backup — Phase 6
+## Audit, settings, backup
 
 | method | path | permission |
 |---|---|---|
 | GET | `/audit-logs` | `audit.view` |
-| GET | `/settings` | `settings.view`. Runtime and deployment settings (E8) |
+| GET | `/settings` | `settings.view`. Runtime and deployment settings |
 | PUT | `/settings/{key}` | `settings.manage`. `value`, `reason`; runtime settings only, 404 otherwise, 422 when invalid |
 | DELETE | `/settings/{key}` | `settings.manage`. Back to the deployment value |
 
@@ -463,12 +460,12 @@ retrievable — the platform stores a hash, so it genuinely cannot show the key 
 since, until`. There is no write, update or delete endpoint — the audit log is
 append-only.
 
-Backups were not served by the API until E7. They are now under `/ops/backups`:
-see Operations and diagnostics, Expansion E7, below.
+Backups are under `/ops/backups`: see
+[Operations and diagnostics](#operations-and-diagnostics) below.
 
 ---
 
-## Monitoring (M19)
+## Monitoring
 
 | method | path | permission |
 |---|---|---|
@@ -492,12 +489,12 @@ for services that are allowed to be absent. `/health` is where reachability belo
 no Tempo: every agent run is stamped with a trace id whether or not tracing is deployed.
 `tempo_url` is present only when it is — a deep link into a Tempo that was never
 installed is a broken link. See [observability.md](observability.md). Another team's run
-answers 404 (E18).
+answers 404.
 
 
 ---
 
-## Voice assistant (M29)
+## Voice assistant
 
 | method | path | permission |
 |---|---|---|
@@ -521,9 +518,9 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 
 ---
 
-## Phase 6 additions
+## Additional routes
 
-### Authentication (M03)
+### Sign-in providers and OIDC
 
 | method | path | permission | notes |
 |---|---|---|---|
@@ -531,25 +528,25 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 | GET | `/auth/oidc/authorize` | — | 307 to the IdP. Mints a single-use `state` in Redis. |
 | GET | `/auth/oidc/callback` | — | Verifies the id_token signature against the IdP's published keys, then issues a platform token. |
 
-### Users (M03)
+### Users
 
 | method | path | permission |
 |---|---|---|
-| PUT | `/users/{id}/password` | `user.manage` — refused for a federated account. Signs the user out and lifts a lock (E14) |
-| POST | `/users/{id}/unlock` | `user.manage` — lifts a lockout early, clears its alert (E14) |
-| POST | `/users/{id}/sessions/revoke` | `user.manage` — signs the user out everywhere (E14) |
-| POST | `/users/{id}/mfa/reset` | `user.manage` — removes MFA (lost phone) and signs the user out (E15) |
-| PUT | `/users/me/preferences` | **none**: your own preferences (E45). Today only `approval_reminder_emails` (the E39 approver emails, on by default). Fields left out are unchanged |
-| POST | `/users/me/password` | **none** — anyone may change their own, and requires the current one. Signs out every session (E14) |
+| PUT | `/users/{id}/password` | `user.manage` — refused for a federated account. Signs the user out and lifts a lock |
+| POST | `/users/{id}/unlock` | `user.manage` — lifts a lockout early, clears its alert |
+| POST | `/users/{id}/sessions/revoke` | `user.manage` — signs the user out everywhere |
+| POST | `/users/{id}/mfa/reset` | `user.manage` — removes MFA (lost phone) and signs the user out |
+| PUT | `/users/me/preferences` | **none**: your own preferences. Today only `approval_reminder_emails` (the approval reminder emails sent to approvers, on by default). Fields left out are unchanged |
+| POST | `/users/me/password` | **none** — anyone may change their own, and requires the current one. Signs out every session |
 
-### API keys (M20)
+### API keys
 
 | method | path | permission |
 |---|---|---|
 | POST | `/api-keys` | `apikey.manage` — accepts `scopes` |
 | POST | `/api-keys/{id}/rotate` | `apikey.manage` — new key, old one expires after `grace_hours` |
 
-### Audit (M24)
+### Audit
 
 | method | path | permission |
 |---|---|---|
@@ -558,13 +555,13 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 
 No write verbs exist on `/audit`; all four return 405 from routing.
 
-### Models (M07, Phase 6)
+### Models
 
 | method | path | permission |
 |---|---|---|
 | POST | `/models/import-ollama` | `model.register` — catalogue an external Ollama's models |
 
-## Inference backends and alerts — Expansion E1
+## Inference backends and alerts
 
 Under `/api/v1`, authenticated with the platform JWT. See [backends.md](backends.md).
 
@@ -586,7 +583,7 @@ Under `/api/v1`, authenticated with the platform JWT. See [backends.md](backends
 Backend API keys are stored Fernet-encrypted and never returned; responses carry only
 `has_api_key`.
 
-## Gateway policy — Expansion E2
+## Gateway policy
 
 Under `/api/v1`, authenticated with the platform JWT. See [gateway-policy.md](gateway-policy.md).
 
@@ -608,7 +605,7 @@ Changes to existing routes, all backwards-compatible:
 - Gateway (`/v1`) calls may now return **429** for a quota (`details.scope`,
   `details.quota`) and **503** while a backend's circuit is open. Both send `Retry-After`.
 
-## Teams and scope — Expansion E3
+## Teams and scope
 
 Under `/api/v1`, authenticated with the platform JWT. See [teams.md](teams.md).
 
@@ -623,7 +620,7 @@ Under `/api/v1`, authenticated with the platform JWT. See [teams.md](teams.md).
 | POST | `/teams/{id}/members` | `team.manage` or team owner — `user_id`, `role` (`member`/`owner`) |
 | PATCH | `/teams/{id}/members/{user_id}` | `team.manage` or team owner — change the team role |
 | DELETE | `/teams/{id}/members/{user_id}` | `team.manage` or team owner |
-| PUT | `/scope` | the resource's manage permission — move a model, alias, API client, agent, knowledge base, workflow or tool (E35) to a team (`team_id`) or to shared (`null`) |
+| PUT | `/scope` | the resource's manage permission — move a model, alias, API client, agent, knowledge base, workflow or tool to a team (`team_id`) or to shared (`null`) |
 
 Changes to existing routes, all backwards-compatible:
 
@@ -638,7 +635,7 @@ Changes to existing routes, all backwards-compatible:
 - Gateway (`/v1`): a key reaches shared resources plus its client's team. Anything else
   is reported exactly like a name that does not exist.
 
-## Model governance and revisions — Expansion E4
+## Model governance and revisions
 
 Under `/api/v1`, authenticated with the platform JWT. See
 [model-governance.md](model-governance.md).
@@ -646,7 +643,7 @@ Under `/api/v1`, authenticated with the platform JWT. See
 | method | path | permission |
 |---|---|---|
 | PATCH | `/models/{id}` | `model.register` — display name, description, version, license, source reference, publisher, family, tags; omitted fields unchanged |
-| POST | `/models/{id}/approval` | `model.approve` — `status` (`approved`/`experimental`/`deprecated`/`blocked`), optional `note`, optional `stop_deployments` (E26: with `blocked`, default true). Response adds `stopped_deployments` and `stop_failed` |
+| POST | `/models/{id}/approval` | `model.approve` — `status` (`approved`/`experimental`/`deprecated`/`blocked`), optional `note`, optional `stop_deployments` (with `blocked`, default true). Response adds `stopped_deployments` and `stop_failed` |
 | POST | `/models/{id}/deploy/validate` | `model.deploy` — same body as `/deploy`; dry run, nothing reserved |
 | GET | `/deployments/{id}/revisions` | `model.view` — newest first, `current` marks the applied one |
 | POST | `/deployments/{id}/revisions` | `model.deploy` — `image`, `tensor_parallel_size`, `max_model_len`, `gpu_memory_utilization`, `change_note`; **202** |
@@ -664,7 +661,7 @@ Changes to existing routes, all backwards-compatible:
 - Gateway (`/v1`): a blocked model answers **403** `model_blocked` unless the alias has
   an unblocked fallback, and is left out of `GET /v1/models`.
 
-## Retrieval depth — Expansion E5
+## Retrieval depth
 
 Under `/api/v1`, authenticated with the platform JWT. See
 [rag-evaluation.md](rag-evaluation.md).
@@ -674,7 +671,7 @@ Under `/api/v1`, authenticated with the platform JWT. See
 | PATCH | `/knowledge-bases/{id}` | `knowledge.manage`. `display_name`, `description`, `enabled`, `reranker_model` (empty string removes it), `retrieval_top_k`, `rerank_candidates`, `min_score`, `clear_min_score` |
 | POST | `/documents/{id}/versions` | `document.upload`. Multipart `file`; **202**; the current version answers until the new one is indexed |
 | GET | `/documents/{id}/versions` | `knowledge.view`. Newest first |
-| POST | `/documents/{id}/reingest` | `document.upload`. **202**; terminal, current documents only. Clears `retry_at` (E32: when a budget-refused document will be retried by itself) |
+| POST | `/documents/{id}/reingest` | `document.upload`. **202**; terminal, current documents only. Clears `retry_at` (when a budget-refused document will be retried by itself) |
 | POST | `/retrieval/playground` | `knowledge.view`. `knowledge_base_ids`, `query`, `top_k`, `candidates`, `score_threshold`, `reranker` (`default`/`none`/`model`), `reranker_model`, `compare` |
 | GET / POST | `/knowledge-bases/{id}/eval-sets` | `knowledge.view` / `knowledge.manage` |
 | GET / PATCH / DELETE | `/eval-sets/{id}` | `knowledge.view` / `knowledge.manage` / `knowledge.manage` |
@@ -695,7 +692,7 @@ Changes to existing routes, all backwards-compatible:
   base configures a reranker.
 - `DELETE /documents/{id}` on a current version deletes every version of the document.
 
-## Workflows — Expansion E6
+## Workflows
 
 Under `/api/v1`, authenticated with the platform JWT unless noted. See
 [workflows.md](workflows.md).
@@ -710,7 +707,7 @@ Under `/api/v1`, authenticated with the platform JWT unless noted. See
 | POST | `/workflows/{id}/publish` | `workflow.edit`. `note`; 422 with `details.problems` when the draft is invalid |
 | POST | `/workflows/{id}/status` | `workflow.edit`. `PUBLISHED`, `PAUSED` or `ARCHIVED` |
 | GET | `/workflows/{id}/versions` | `workflow.view`. Newest first |
-| POST / DELETE | `/workflows/{id}/webhook` | `workflow.edit`. POST returns the token and (E36) `signing_secret` once; body `{"require_signature": bool, "overlap_minutes": 0-10080}` optional; with an overlap (E41) the replaced token and secret keep working until `previous_valid_until` |
+| POST / DELETE | `/workflows/{id}/webhook` | `workflow.edit`. POST returns the token and `signing_secret` once; body `{"require_signature": bool, "overlap_minutes": 0-10080}` optional; with an overlap the replaced token and secret keep working until `previous_valid_until` |
 | POST | `/workflows/{id}/runs` | `workflow.execute` (`test` also needs `workflow.edit`). `input`, `trigger` (`manual`/`api`), `test`, `wait` (default true). **201** |
 | GET | `/workflows/{id}/runs` | `workflow.view`. `?status=&limit=` |
 | GET | `/workflow-runs` | `workflow.view`. Recent runs across workflows in scope |
@@ -718,14 +715,14 @@ Under `/api/v1`, authenticated with the platform JWT unless noted. See
 | POST | `/workflow-runs/{id}/cancel` | `workflow.execute` |
 | GET | `/workflow-approvals/pending` | `workflow.approve` |
 | POST | `/workflow-approvals/{id}/decide` | `workflow.approve`. `approved`, `reason`; continues the run and returns it |
-| POST | `/workflow-hooks/{id}` | **No JWT**: header `X-Workflow-Token`. JSON body is the input. **202** with the queued run; 401 for any bad token. E36: `X-Workflow-Timestamp` + `X-Workflow-Signature: sha256=HMAC(secret, "ts.body")`, within 5 min, once; required when the workflow says so |
+| POST | `/workflow-hooks/{id}` | **No JWT**: header `X-Workflow-Token`. JSON body is the input. **202** with the queued run; 401 for any bad token. Signed requests: `X-Workflow-Timestamp` + `X-Workflow-Signature: sha256=HMAC(secret, "ts.body")`, within 5 min, once; required when the workflow says so |
 
 Changes to existing routes, backwards-compatible: `PUT /scope` accepts
 `resource_type: "workflow"`.
 
 ---
 
-## Operations and diagnostics — Expansion E7
+## Operations and diagnostics
 
 Under `/api/v1`. Operations are **jobs** that the host's ops runner executes. A request
 returns **202** with the queued job. A duplicate, or a request beside a restore, upgrade or
@@ -738,7 +735,7 @@ rollback, gets 409. See [operations.md](operations.md).
 | GET | `/ops/jobs/{id}` | `diagnostics.view`. With the output lines |
 | POST | `/ops/jobs/{id}/cancel` | `backup.manage`. Queued jobs, or running ones whose runner is offline |
 | GET / POST | `/ops/backups` | `backup.manage`. POST body: `reason` |
-| GET | `/ops/backups/schedule` | `backup.manage`. `enabled`, `interval_hours`, `keep`, `next_due_at`, `overdue`, `runner_online`, `last_job`, `prune_candidates`, `note` (E12) |
+| GET | `/ops/backups/schedule` | `backup.manage`. `enabled`, `interval_hours`, `keep`, `next_due_at`, `overdue`, `runner_online`, `last_job`, `prune_candidates`, `note` |
 | POST | `/ops/backups/{name}/verify` | `backup.manage` |
 | POST | `/ops/backups/{name}/restore` | `backup.restore`. `confirm` (the name), `reason`; refused for a backup under another encryption key |
 | GET | `/ops/bundles` | `system.upgrade` |
@@ -755,7 +752,7 @@ rollback, gets 409. See [operations.md](operations.md).
 Audit actions: `OPS_JOB_REQUESTED`, `OPS_JOB_CANCELLED`, `OPS_JOB_FINISHED`,
 `DIAGNOSTICS_EXPORTED`.
 
-## Chargeback — Expansion E9
+## Chargeback
 
 Under `/api/v1/chargeback`. Amounts are decimal strings in the `chargeback.currency`
 currency; `null` means not priced, never 0. See [chargeback.md](chargeback.md).
@@ -768,7 +765,7 @@ currency; `null` means not priced, never 0. See [chargeback.md](chargeback.md).
 | GET | `/chargeback/report` | `cost.view`. `?group_by=team\|api_key\|user\|end_user\|model&start=&end=` (UTC days, inclusive, max 366). Rows follow team scope; `idle` only with `scope.all` |
 | POST | `/chargeback/export` | `cost.view`. Same parameters; `text/csv`, every row; audited |
 
-| GET | `/chargeback/budgets` | `cost.view`. `currency`, `month_start`, `items[]` with `spend`, `spend_partial`, `percent`, `status` (`ok`, `warning`, `exceeded`, `unpriced`, `disabled`). Team budgets follow team scope; global and API-key budgets need `scope.all` (E12) |
+| GET | `/chargeback/budgets` | `cost.view`. `currency`, `month_start`, `items[]` with `spend`, `spend_partial`, `percent`, `status` (`ok`, `warning`, `exceeded`, `unpriced`, `disabled`). Team budgets follow team scope; global and API-key budgets need `scope.all` |
 | POST | `/chargeback/budgets` | `cost.manage`. `scope` (`global`, `team`, `api_key`), `subject` (id; none for global), `monthly_amount`, `warn_percent?` (1–99, default 80), `description?`, `enabled?`; 201; 409 for a second budget on the same subject, 422 for an unknown subject |
 | PATCH | `/chargeback/budgets/{id}` | `cost.manage`. Any of `monthly_amount`, `warn_percent`, `description`, `enabled` |
 | DELETE | `/chargeback/budgets/{id}` | `cost.manage`. 204 |
@@ -776,9 +773,9 @@ currency; `null` means not priced, never 0. See [chargeback.md](chargeback.md).
 Audit actions: `COST_RATE_CREATED`, `COST_RATE_DELETED`, `CHARGEBACK_EXPORTED`,
 `COST_BUDGET_CREATED`, `COST_BUDGET_UPDATED`, `COST_BUDGET_DELETED`.
 
-## Connector catalogue — Expansion E10
+## Connector catalogue
 
-Under `/api/v1/mcp/catalogue`. See [mcp.md](mcp.md#connector-catalogue-e10).
+Under `/api/v1/mcp/catalogue`. See [mcp.md](mcp.md#connector-catalogue).
 
 | method | path | permission |
 |---|---|---|
@@ -790,7 +787,7 @@ Under `/api/v1/mcp/catalogue`. See [mcp.md](mcp.md#connector-catalogue-e10).
 `POST /mcp/servers/import-manifests` now skips a manifest with problems and reports why.
 Audit action: `CONNECTOR_RISK_APPLIED`.
 
-## Alert notifications — Expansion E13
+## Alert notifications
 
 Under `/api/v1/notifications`; every route needs `notification.manage`. See
 [notifications.md](notifications.md).

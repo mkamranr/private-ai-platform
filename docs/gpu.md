@@ -1,4 +1,4 @@
-# GPU monitoring (M05)
+# GPU monitoring
 
 ## Probes
 
@@ -23,9 +23,9 @@ stable interface.
 
 ### `FakeGpuProbe`
 
-The most operationally important piece of Phase 1. The reference development machine has
+Operationally the most important probe. The reference development machine has
 no NVIDIA GPU, so without it nothing GPU-adjacent — registration, inventory sync, metric
-collection, retention, placement, the §20 MVP scenario — could be developed or
+collection, retention, placement, the end-to-end agent scenario — could be developed or
 regression-tested anywhere but the target hardware.
 
 Telemetry is *plausible*, not random: utilisation follows slow sine waves phase-shifted

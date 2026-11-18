@@ -1,6 +1,6 @@
 # Model governance and deployment revisions
 
-Expansion phase E4 (plan §5.3, §5.4). Every model in the catalogue now carries an
+Every model in the catalogue carries an
 **approval status**, a license and provenance. Every deployment keeps an append-only
 **revision history** that can be rolled back. A deploy can be **validated** before
 anything is reserved, and its logs can be **followed live**.
@@ -23,13 +23,13 @@ Code:
 - **New models start `experimental`**, however they arrive: the form, the API, manifest
   import, Ollama import or backend discovery. Approval is a person's decision, so no
   import path grants it.
-- **Upgrading changes nothing.** The migration marks every model that existed before E4
-  as `approved`, because it was already in use.
+- **Upgrading changes nothing.** The migration marks every model that existed before approval
+  status was introduced as `approved`, because it was already in use.
 - Approval status is independent of `status` (REGISTERED / AVAILABLE / …). `status`
   says whether the weights are present; approval says whether the organisation allows
   the model.
 - **Deprecating a model does not stop anything.** It only refuses new deployments.
-- **Blocking a model stops its running deployments (E26).** A blocked model is never
+- **Blocking a model stops its running deployments.** A blocked model is never
   served, so its containers would only hold GPUs. Each is stopped as from the
   Deployments page, audited `MODEL_STOPPED` with the message `Model <name> blocked`.
   - To keep them (to inspect one, say), send `"stop_deployments": false`, or untick
@@ -37,7 +37,7 @@ Code:
   - A deployment that cannot be stopped (its node is unreachable) does not undo the
     block. It is listed in the response's `stop_failed` and keeps running; the gateway
     refuses it either way.
-  - **The deployment worker retries (E28).** About once a minute it stops whatever is
+  - **The deployment worker retries.** About once a minute it stops whatever is
     still live of a blocked model, including a deployment that was still being created
     when the model was blocked. These stops are audited as `deployment-worker`. While
     one cannot be stopped, a WARNING alert *Blocked model still running* stays open; it
@@ -57,7 +57,7 @@ Code:
 
 ### Who may change it
 
-The new permission **`model.approve`** is held by `AI_ADMIN`, plus `ADMIN` and
+The permission **`model.approve`** is held by `AI_ADMIN`, plus `ADMIN` and
 `SUPER_ADMIN` (they hold every permission). It is deliberately separate from
 `model.register`: whoever imports a model should not automatically be the one who signs
 it off. A unit test asserts that no other role has it.
@@ -76,7 +76,7 @@ before and after.
 | field | meaning |
 |---|---|
 | `license` | free text, an SPDX id where there is one (`apache-2.0`, `llama3.1`) |
-| `source_reference` | where the weights came from, e.g. `huggingface:Qwen/Qwen3-30B-A3B@abc123`. Provenance only: **never fetched** (Rule 4) |
+| `source_reference` | where the weights came from, e.g. `huggingface:Qwen/Qwen3-30B-A3B@abc123`. Provenance only: **never fetched** |
 | `publisher` | who released the model |
 | `family` | groups versions and quantised variants of the same model; `version` and `quantization` tell them apart |
 | `tags` | up to 32 short labels, trimmed and de-duplicated |
@@ -87,7 +87,7 @@ before and after.
   editable there, and neither is the approval status.
 - `GET /models` accepts `approval_status=` and `family=` filters.
 
-**Deviation from the plan.** The plan sketches a separate `model_versions` table. Here
+**Versions and variants.** There is no separate `model_versions` table. Instead,
 each version or quantised variant stays its own model row (it has its own weights, path
 and deployments), and the `family` column groups them. That keeps every existing
 reference to a model id valid, and adds no join to the gateway's hot path.
@@ -122,7 +122,7 @@ length, GPU memory fraction, node and GPUs. It holds nothing secret; environment
 never copied in.
 
 - Revision 1 is recorded when the deployment is created. The migration recorded
-  revision 1 for every deployment that existed before E4.
+  revision 1 for every deployment that existed before revisions were introduced.
 - The history is append-only. A **rollback** does not rewind. It appends a new revision
   copying the old one's configuration, with `rolled_back_from` set, so the history
   always shows what actually ran when.
@@ -161,7 +161,7 @@ They are audited as `DEPLOYMENT_REVISED` (with the changed fields) and
 `DEPLOYMENT_ROLLED_BACK`.
 
 **This is not zero-downtime.** One deployment is one container. While the replacement
-loads, calls through an alias with a fallback go to the fallback (E2); other calls get
+loads, calls through an alias with a fallback go to the fallback; other calls get
 503. If the new revision fails its health check, roll back to the previous one.
 
 To roll out a newer engine image to one deployment at a time:
@@ -221,8 +221,8 @@ The existing `GET /deployments/{id}/logs` (one snapshot) is unchanged.
 - the filters;
 - deploy refusal for blocked and deprecated models;
 - blocking stops running deployments, unless asked not to, and reports one it could not
-  stop (`tests/api/test_block_stops_deployments.py`, E26);
-- the deployment worker's retry and its alert (`tests/api/test_blocked_sweep.py`, E28);
+  stop (`tests/api/test_block_stops_deployments.py`);
+- the deployment worker's retry and its alert (`tests/api/test_blocked_sweep.py`);
 - blocked handling in the gateway: 403, hidden from `/v1/models`, alias fallback; and
   deprecated models still serving;
 - validation without reservation;

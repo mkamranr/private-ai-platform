@@ -1,11 +1,11 @@
 # Teams and resource scope
 
-Expansion phase E3 (plan §5.12). Teams decide **which** models, keys, agents and
+Teams decide **which** models, keys, agents and
 knowledge bases a person or an application can reach. Permissions still decide **what**
 they can do with them. Both checks must pass.
 
 An install with no teams behaves exactly as before. Every existing resource is
-*shared*, and shared resources work the way everything did before E3.
+*shared*, and shared resources work the way everything did before teams were introduced.
 
 Code: `backend/app/core/scope.py` (the rule), `backend/app/services/teams.py` (teams,
 membership, the per-request guard), `backend/app/api/v1/teams.py` (API).
@@ -21,8 +21,8 @@ These resources carry an optional `team_id`:
 | API clients | a key belongs to its client's team |
 | agents | runs belong to their agent's team |
 | knowledge bases | documents belong to their base's team |
-| workflows (E6) | runs and approvals belong to their workflow's team |
-| tools (E35) | a team's tool may be granted only to that team's agents |
+| workflows | runs and approvals belong to their workflow's team |
+| tools | a team's tool may be granted only to that team's agents |
 
 - **`team_id` empty: shared.** Anyone who holds the resource's permission can see it.
 - **`team_id` = T: owned by team T.** Only members of T can see it, plus callers whose
@@ -48,13 +48,13 @@ cannot see. An agent runs with the platform's reach, so this check is what stops
 agent from becoming a way around team scope. Workflow definitions get the same check,
 on save and on publish, for the knowledge bases and model names their steps use.
 
-## What an agent or workflow may use (E18)
+## What an agent or workflow may use
 
-Since E18 an agent or workflow is also checked against **its own team**, because that is
+An agent or workflow is also checked against **its own team**, because that is
 what it runs as. It may use shared resources and its own team's, never another team's,
 whoever saved it. In particular a **shared** agent or workflow may use only **shared**
 models, aliases and knowledge bases: otherwise it would offer one team's model to
-everyone. This is the rule an API key already follows. Since E35 an agent's **tools** are
+everyone. This is the rule an API key already follows. An agent's **tools** are
 checked the same way: a team's tool may be granted only to that team's agents, and a
 shared agent only shared tools. Granting a tool you cannot see is 404.
 
@@ -87,16 +87,15 @@ To move a resource you need all of these:
 
 - the permission that changes that kind of resource: `model.register` (model),
   `model.deploy` (alias), `apikey.manage` (API client), `agent.edit` (agent),
-  `knowledge.manage` (knowledge base), `workflow.edit` (workflow), `tool.manage` (tool,
-  E35). (`workflow` was refused by `PUT /scope` with 422 until E35: the request schema left
-  it out.);
+  `knowledge.manage` (knowledge base), `workflow.edit` (workflow), `tool.manage`
+  (tool);
 - sight of the resource;
 - membership of both the team it leaves and the team it joins, unless you hold
   `scope.all`.
 
 Each move is audited as `SCOPE_ASSIGNED`, with the team before and after.
 
-**In the console (E44).** If you may move a resource, its team chip is a button (a shared
+**In the console.** If you may move a resource, its team chip is a button (a shared
 resource shows *Shared*). Click it, pick *Shared* or a team, and choose *Move*. It works on
 models, aliases, agents, tools, knowledge bases and workflows. For an API client, use the
 chip in its key's row on the Endpoints & Keys page. If the server refuses the move, the dialog
@@ -137,7 +136,7 @@ is counted from `usage_records.team_id`, the same way key budgets are. See
 | a team **owner** | manage that team's members without `team.manage` (needs `team.view` to reach the routes) |
 
 - A team that owns resources cannot be deleted (409, and the error lists what it owns).
-  Since E46 a team's notification channels count too.
+  A team's notification channels count too.
   Move or delete the resources first. Otherwise they would either be destroyed or
   silently become shared with everyone.
 - A team that has owners always keeps at least one.
@@ -159,7 +158,7 @@ would silently strip people's access.
 | Platform Admin | `ADMIN` (and `INFRA_ADMIN` for hosts only) | |
 | Model Admin | `AI_ADMIN` | |
 | Developer | `DEVELOPER` | |
-| Knowledge Admin | `KNOWLEDGE_ADMIN` | **new in E3**: knowledge bases and ingestion |
+| Knowledge Admin | `KNOWLEDGE_ADMIN` | knowledge bases and ingestion |
 | Agent Developer | `AGENT_ADMIN` | |
 | Auditor | `AUDITOR` | also holds `team.view` and `scope.all`, so an audit sees every team |
 | User | `USER` | |
@@ -167,13 +166,13 @@ would silently strip people's access.
 `scope.all` is held by `SUPER_ADMIN`, `ADMIN` and `AUDITOR` only. A unit test asserts
 that no other role has it.
 
-## Reads that follow scope (E18)
+## Reads that follow scope
 
 - **Traces.** `GET /traces/{trace_id}` of another team's agent run is 404, like an
   unknown trace id.
 - **Voice sessions.** A session cannot be opened against another team's agent (404).
-- **Memory and conversations** follow their **agent's** team, on top of the tenant and
-  end-user scope of M16. Entries with no agent, or whose agent was deleted, count as
+- **Memory and conversations** follow their **agent's** team, on top of their tenant and
+  end-user scope. Entries with no agent, or whose agent was deleted, count as
   shared. Search, list, `GET /conversations/{id}` and deleting one entry see only those.
   `POST /memory/forget-all` from a team-limited caller erases only those entries and
   leaves session state alone (it is keyed by person, not agent). A `scope.all` caller
@@ -190,10 +189,10 @@ that no other role has it.
 
 - **Quotas and circuit breakers** are platform settings, managed with `quota.*`.
 - **Skills and MCP servers** are a platform catalogue. Tools are too unless moved into a
-  team (E35): every existing tool, and every tool an MCP server's discovery creates, starts
+  team: every existing tool, and every tool an MCP server's discovery creates, starts
   shared. Moving a tool does not move its MCP server; discovery leaves a moved tool's team
   alone. Beyond team scope, an agent's tool calls are governed by `tool.*` permissions and
-  the §10 pipeline.
+  the tool pipeline.
 - **Fleet figures** (nodes, GPUs, backends, dependencies) are platform-wide.
 
 ## Verifying
@@ -213,5 +212,5 @@ A new route is covered the day it is added.
 - moving resources;
 - team quotas.
 
-`tests/api/test_team_scoping_e18.py` covers the E18 checks: save, move and run-time
+`tests/api/test_team_scoping_e18.py` covers the agent and workflow scope checks: save, move and run-time
 references for agents and workflows, traces, voice, memory and the dashboard.

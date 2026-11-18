@@ -1,12 +1,12 @@
-# Tools (M12)
+# Tools
 
 Every tool carries an **explicit permission** and a risk level
 (`LOW|MEDIUM|HIGH|CRITICAL`). Agents get no tool by default.
 
 `HIGH` and `CRITICAL` require human approval (`AGENTS__APPROVAL_REQUIRED_RISK_LEVELS`).
 
-`PYTHON` and `COMMAND` are registerable but **never executable** — §M12 lists them, §25
-forbids unrestricted shell execution by agents. Two independent reasons they cannot run:
+`PYTHON` and `COMMAND` are registerable but **never executable** — catalogued so an operator
+can see what exists, because agents must never have unrestricted shell execution. Two independent reasons they cannot run:
 the pipeline refuses the type, and the executor table has no entry for them.
 
 Credentials are stored Fernet-encrypted under a key mounted outside the database, and are
@@ -21,16 +21,16 @@ Type and parameter schema cannot be changed after registration: they define what
 *is*, and altering them under an agent already granted it would silently change what that
 agent can do.
 
-**Team tools (E35).** A tool can belong to a team (`team_id` when registering, or
+**Team tools.** A tool can belong to a team (`team_id` when registering, or
 `PUT /scope` with `resource_type: "tool"`). Members of other teams do not see it, and it
 may be granted only to agents of that team; a shared agent may use only shared tools.
 This is checked when an agent is saved, when it is moved, and at every run. Moving a tool
 into a team therefore stops shared agents that use it at their next run, with a message
 saying which tool. Existing and discovered tools are shared. See
-[teams.md](teams.md#what-an-agent-or-workflow-may-use-e18).
+[teams.md](teams.md#what-an-agent-or-workflow-may-use).
 
-**The §10 authorisation pipeline — including the intersection rule that makes agents safe
-— is documented in [agents.md](agents.md#the-tool-pipeline-10).** Read that before adding
+**The authorisation pipeline — including the intersection rule that makes agents safe
+— is documented in [agents.md](agents.md#the-tool-pipeline).** Read that before adding
 an executor.
 
 
@@ -76,9 +76,9 @@ is refused, including `__import__`, attribute access, comprehensions and lambdas
 Exponents are capped at 128: `9**9**9` is eight characters and exhausts memory, and there
 is no legitimate expression in this tool's remit that needs more.
 
-All five are **read-only**, and that is a boundary rather than a limitation. A tool that
+All six are **read-only**, and that is a boundary rather than a limitation. A tool that
 could stop a deployment would be a privileged action taken on a model's say-so; those
-belong behind REST at HIGH risk, where the §10 pipeline suspends them for human approval.
+belong behind REST at HIGH risk, where the authorisation pipeline suspends them for human approval.
 
 An existing tool is **never rewritten** by a re-import. Its type and parameter schema
 define what it *is*, and changing them under an agent already granted it would silently

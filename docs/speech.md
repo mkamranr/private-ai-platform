@@ -1,15 +1,15 @@
-# Speech, OCR and vision (M26, M28)
+# Speech, OCR and vision
 
 Four modalities, and the platform implements none of them. It routes to engines that do,
 exactly as it routes chat to vLLM — same alias resolution, same deployment lifecycle,
-same usage accounting. What Phase 9 adds is the routing, the pipeline and the mocks that
+same usage accounting. What the platform adds is the routing, the pipeline and the mocks that
 make all of it testable without a GPU.
 
 | | surface | engine | alias |
 |---|---|---|---|
 | Speech to text | `POST /v1/audio/transcriptions` | faster-whisper | `enterprise-transcribe` |
 | Text to speech | `POST /v1/audio/speech` | Fish Speech | `enterprise-speak` |
-| OCR | the ingestion pipeline (§M15) | PaddleOCR | `enterprise-ocr` |
+| OCR | the ingestion pipeline | PaddleOCR | `enterprise-ocr` |
 | Vision | `POST /v1/chat/completions` | any VLM | your own |
 
 ## Arabic is not an afterthought
@@ -61,8 +61,8 @@ that downloads and then will not play.
 
 Keys can be scoped to `audio` like any other surface, and audio is metered: seconds for
 transcription, characters for synthesis, since neither has tokens. Both appear in
-`/api/v1/usage` beside chat. Calls made by the voice assistant carry no API key; since
-E27 they are recorded for the signed-in person and charged to the agent's team.
+`/api/v1/usage` beside chat. Calls made by the voice assistant carry no API key; they
+are recorded for the signed-in person and charged to the agent's team.
 
 ## OCR
 

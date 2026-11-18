@@ -1,6 +1,6 @@
-# Retrieval depth: reranking, versions and evaluation (E5)
+# Retrieval depth: reranking, versions and evaluation
 
-Expansion E5 (plan §5.7) adds three things to the knowledge bases of [rag.md](rag.md):
+This page covers three additions to the knowledge bases of [rag.md](rag.md):
 
 * an optional **rerank stage** after vector search, configured per knowledge base;
 * **document versions**, so a document can be replaced without a gap in what it answers;
@@ -112,9 +112,8 @@ failure that has since been resolved. The document is not searchable until it is
 again. To change content without that gap, upload a version instead. Superseded and
 in-flight documents cannot be re-ingested (409).
 
-Re-chunking now **removes the previous vectors** before writing new ones. Before E5, a
-retried ingestion wrote fresh vector ids and left the old points in the collection as
-orphans.
+Re-chunking **removes the previous vectors** before writing new ones, so a retried
+ingestion does not leave old points in the collection as orphans.
 
 `GET /knowledge-bases/{id}/documents` hides superseded versions unless
 `?include_superseded=true`.
@@ -211,7 +210,7 @@ So a run stays readable and comparable after the documents or the set change.
 | GET | `/eval-sets/{id}/runs` | `knowledge.view` |
 | GET | `/eval-runs/{id}` | `knowledge.view`. Includes per-question results |
 
-Scope follows the knowledge base (E3): a set, its questions and its runs are visible to
+Scope follows the knowledge base: a set, its questions and its runs are visible to
 whoever can see the base, and they answer 404 to anyone who cannot.
 
 Audited: `KNOWLEDGE_BASE_UPDATED` (with each changed setting, from and to),
@@ -235,5 +234,4 @@ previous run. **View** opens the per-question results.
   like ingestion.
 * **No re-embed of a whole base.** Changing the embedding model or chunk size still means
   a new base. Re-ingest works per document.
-* **Per-document access control** (plan §5.7) is not part of E5. Scope stays per
-  knowledge base (E3).
+* **No per-document access control.** Scope stays per knowledge base.

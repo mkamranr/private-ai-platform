@@ -1,7 +1,4 @@
-# Settings and the dashboard (E8)
-
-Status: E8. It closes the last two Partial items in plan §5.1 (Unified dashboard) and §6
-(Settings page).
+# Settings and the dashboard
 
 ## Settings page
 
@@ -32,17 +29,17 @@ that silently ignores what it saved is worse than one that says "restart require
 | `gateway.concurrency_lease_seconds` | Gateway resilience | per-model concurrency slots | next gateway request |
 | `ops.runner_stale_seconds`, `ops.max_log_lines` | Operations | ops runner status and reports | immediately |
 | `ops.support_log_hours`, `ops.support_log_lines` | Operations | support bundle | next bundle |
-| `ops.backup_interval_hours`, `ops.backup_keep`, `ops.backup_keep_days` | Operations | backup schedule and retention by count and age (E12, E23, [backup.md](backup.md#schedule-and-retention-e12)) | next schedule check (5 min) |
-| `gateway.budget_warning_percent` | Gateway | warning share for token quota alerts (E12) | next budget check |
-| `gateway.enforce_platform_budgets` | Gateway | refuse the platform's own model and embedding calls once their team or model budget is used up (E24, [gateway-policy.md](gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls-e24)) | immediately |
-| `chargeback.currency` | Chargeback | every cost report (E9, [chargeback.md](chargeback.md)) | next report |
-| `auth.mfa_required` | Security | who must use two-factor authentication: `off`, `admins`, `all` (E15, [security.md](security.md#two-factor-authentication-e15)) | next sign-in |
-| `auth.mfa_remember_days` | Security | days "trust this browser" skips the two-factor step, 0–365; 0 turns it off and stops existing tokens (E20, [security.md](security.md#passkeys-and-trusted-browsers-e20)) | next sign-in |
-| `agents.approval_ttl_hours` | Security | hours an agent or workflow approval waits before it expires and its run fails; 0 = never (E17, [agents.md](agents.md#expiry-e17)) | next expiry check (15 min) |
-| `agents.approval_reminder_hours` | Security | hours before that expiry an approval raises a reminder alert (source `approvals`); 0 = off (E22, [agents.md](agents.md#reminders-e22)) | next expiry check (15 min) |
-| `agents.approval_reminder_waiting_hours` | Security | while approvals never expire, hours an approval waits before it raises a reminder; 0 = off (E43, [agents.md](agents.md#reminders-e22)) | next expiry check (15 min) |
-| `agents.approval_reminder_email_approvers` | Security | also email each reminder to every person who can decide it, once each, at most 25 per approval; needs the mail server (E39, [agents.md](agents.md#reminder-emails-to-each-approver-e39)) | next expiry check (15 min) |
-| `notifications.email_brand_name` | Email branding | the name at the top of every notification email (E49, [notifications.md](notifications.md#branding-e49)) | next email |
+| `ops.backup_interval_hours`, `ops.backup_keep`, `ops.backup_keep_days` | Operations | backup schedule and retention by count and age (see [backup.md](backup.md#schedule-and-retention)) | next schedule check (5 min) |
+| `gateway.budget_warning_percent` | Gateway | warning share for token quota alerts | next budget check |
+| `gateway.enforce_platform_budgets` | Gateway | refuse the platform's own model and embedding calls once their team or model budget is used up (see [gateway-policy.md](gateway-policy.md#enforcing-budgets-on-the-platforms-own-calls)) | immediately |
+| `chargeback.currency` | Chargeback | every cost report (see [chargeback.md](chargeback.md)) | next report |
+| `auth.mfa_required` | Security | who must use two-factor authentication: `off`, `admins`, `all` (see [security.md](security.md#two-factor-authentication)) | next sign-in |
+| `auth.mfa_remember_days` | Security | days "trust this browser" skips the two-factor step, 0–365; 0 turns it off and stops existing tokens (see [security.md](security.md#passkeys-and-trusted-browsers)) | next sign-in |
+| `agents.approval_ttl_hours` | Security | hours an agent or workflow approval waits before it expires and its run fails; 0 = never (see [agents.md](agents.md#expiry)) | next expiry check (15 min) |
+| `agents.approval_reminder_hours` | Security | hours before that expiry an approval raises a reminder alert (source `approvals`); 0 = off (see [agents.md](agents.md#reminders)) | next expiry check (15 min) |
+| `agents.approval_reminder_waiting_hours` | Security | while approvals never expire, hours an approval waits before it raises a reminder; 0 = off (see [agents.md](agents.md#reminders)) | next expiry check (15 min) |
+| `agents.approval_reminder_email_approvers` | Security | also email each reminder to every person who can decide it, once each, at most 25 per approval; needs the mail server (see [agents.md](agents.md#reminder-emails-to-each-approver)) | next expiry check (15 min) |
+| `notifications.email_brand_name` | Email branding | the name at the top of every notification email (see [notifications.md](notifications.md#branding)) | next email |
 | `notifications.email_brand_color` | Email branding | the accent colour, `#rrggbb` | next email |
 | `notifications.email_brand_tagline` | Email branding | a line under the name; empty for none | next email |
 | `notifications.email_footer` | Email branding | text at the foot of every email, such as who to contact; empty for none | next email |
@@ -51,7 +48,7 @@ that silently ignores what it saved is worse than one that says "restart require
 **Deliberately not editable:**
 
 - Secrets, hosts and credentials. A value that can be edited through the UI is a value an
-  attacker holding the UI can edit (§25).
+  attacker holding the UI can edit.
 - Token lifetimes. The token service is built once at startup.
 - Disabled tool types, approval risk levels and air-gap enforcement. These are safety
   controls that should not be one click away from an administrator session.
@@ -84,8 +81,8 @@ The effective settings are cached per process for up to 10 seconds.
 
 ## Dashboard
 
-`GET /dashboard?window_hours=1..2160` (up to 90 days since E37) still returns everything in one response, and each
-section still needs its own permission. E8 adds:
+`GET /dashboard?window_hours=1..2160` (up to 90 days) returns everything in one response, and each
+section needs its own permission. The sections include:
 
 | Section | Permission | What it shows |
 |---|---|---|
@@ -95,9 +92,9 @@ section still needs its own permission. E8 adds:
 | `knowledge` | `knowledge.view` | bases, current documents, indexed, in progress, failed, failed and added in the window |
 | `agents` | `agent.view` | runs in the window by outcome, waiting for approval, tool calls and failed tool calls |
 | `workflows` | `workflow.view` | runs in the window by outcome, waiting for approval |
-| `gateway` additions | `usage.view` | errors, error rate, requests per minute, fallbacks |
+| `gateway` (additional figures) | `usage.view` | errors, error rate, requests per minute, fallbacks |
 
-**Unavailable is not zero** (plan §5.1):
+**Unavailable is not zero:**
 
 - Each section runs in its own database savepoint. If one fails, the response leaves it
   out and lists it in `unavailable` with a short reason (the error type, never its
@@ -112,7 +109,7 @@ health check. The page prints them under the tiles. The dependency probes are ca
 15 seconds so that a dependency that is down cannot slow every refresh; `checked_at` says
 when they ran.
 
-**Longer ranges (E37).** Up to 7 days the traffic chart (`gateway.series`) has a point per
+**Longer ranges.** Up to 7 days the traffic chart (`gateway.series`) has a point per
 hour. Past that it has a point per UTC day, bucketed by the database, so 90 days is 91
 bars rather than 2,160. `gateway.bucket` says which (`"hour"` or `"day"`), and each
 point's `hour` is the start of its bucket. The totals, the error rate and requests per
@@ -121,7 +118,7 @@ A long range reads every usage record in it, so on a busy platform a 90-day view
 slower than a 24-hour one.
 
 **Team scope.** Knowledge, agent and workflow counts include only the resources the
-caller's team scope covers, which is the same rule their list pages follow (E3).
+caller's team scope covers, which is the same rule their list pages follow.
 
 **Refresh controls.** The page has:
 
@@ -136,5 +133,3 @@ caller's team scope covers, which is the same rule their list pages follow (E3).
 - Per-team or per-user preferences. These are platform settings only.
 - A dashboard range beyond 90 days, or a remembered range per user or team. The range
   resets to 24 hours on each visit.
-- Time to first token (TTFT) and throughput. The gateway does not record TTFT yet. The
-  Prometheus histograms carry latency.

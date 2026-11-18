@@ -1,6 +1,6 @@
 # Gateway policy: quotas, concurrency, circuit breakers, fallback
 
-Expansion phase E2. Everything here sits in front of the OpenAI-compatible gateway at
+Everything here sits in front of the OpenAI-compatible gateway at
 `/v1`. An install with no quota rows and no fallback aliases behaves exactly as before:
 the per-key request rate (`rate_limit_per_minute`) is still the only limit until an
 operator adds one.
@@ -26,7 +26,7 @@ these limits:
 | `api_key` | the key's **id** (not its secret or prefix) | |
 | `end_user` | a **trusted** forwarded identity, e.g. an email | Self-reported `user` values are never limited, because anyone could type someone else's name and exhaust their budget. |
 | `model` | the name of the model that **answers** (not an alias) | Repointing an alias cannot move traffic out from under a model's limit. |
-| `team` | the team's **id** (E3) | One budget shared by every key whose API client belongs to the team. See [teams.md](teams.md). |
+| `team` | the team's **id** | One budget shared by every key whose API client belongs to the team. See [teams.md](teams.md). |
 
 `*` as the subject means "each one individually, unless it has its own row". A `*` daily
 budget on `end_user` gives every chat user their own budget; it is never one shared pool.
@@ -53,12 +53,12 @@ and `details.used` for budgets.
   warning is logged.
 
 Key and end-user quotas apply to calls through `/v1`. Model quotas also apply to the voice
-assistant, which goes through the same gateway methods without an API key. Since E27 its
+assistant, which goes through the same gateway methods without an API key. Its
 speech-to-text and text-to-speech calls are recorded for the person speaking and charged
 to the **team of the agent** they talk to; that team's budget refuses them only when
-`gateway.enforce_platform_budgets` is on (E24), as for the platform's other calls. Agents
+`gateway.enforce_platform_budgets` is on, as for the platform's other calls. Agents
 and document ingestion reach models by another path; see
-[the platform's own model calls](#the-platforms-own-model-calls-e19).
+[the platform's own model calls](#the-platforms-own-model-calls).
 
 ### Concurrency leases
 
@@ -68,7 +68,7 @@ release its leases, so each one lapses after `GATEWAY__CONCURRENCY_LEASE_SECONDS
 
 ## Budget alerts
 
-The budget check (E12, every `workers.budget_check_interval_seconds`, default 300) raises
+The budget check (every `workers.budget_check_interval_seconds`, default 300) raises
 an in-app alert before a daily or monthly token quota runs out:
 
 - **WARNING** at `gateway.budget_warning_percent` of the limit (default 80, a runtime
@@ -82,7 +82,7 @@ usage drops below the warning share, which happens when the day or month resets 
 limit is raised. Per-minute limits and concurrency change too fast to be worth an alert.
 
 Cost budgets in currency are separate and are described in
-[chargeback.md](chargeback.md#budgets-e12).
+[chargeback.md](chargeback.md#budgets).
 
 ## Circuit breakers
 
@@ -131,19 +131,18 @@ that did not issue it. The external-runtime health probe uses the same key.
   alias.
 - **Permissions:** `quota.view` (AI admin, developer, auditor) and `quota.manage` (AI
   admin). Creating, changing and deleting a quota is audited.
-- **API:** see [api.md](api.md#gateway-policy--expansion-e2).
+- **API:** see [api.md](api.md#gateway-policy).
 
-## Agent calls (E17)
+## Agent calls
 
 An `agent:<slug>` call is admitted against the same quotas as any other call (API key,
 team, trusted end user, and the model the agent answers with) once for the whole run,
 and holds one concurrency slot until the run ends. It writes one usage row with
-`requested_model` = `agent:<slug>`. Before E17, agent calls skipped every quota and
-appeared in no report. A key over its budget now gets **429** for agent calls too.
+`requested_model` = `agent:<slug>`. A key over its budget gets **429** for agent calls too.
 
-## The platform's own model calls (E19)
+## The platform's own model calls
 
-The platform also calls models itself, not through `/v1`. Since E19 those calls write
+The platform also calls models itself, not through `/v1`. Those calls write
 usage rows too, so they appear on the Usage page, in chargeback and in budgets:
 
 | `endpoint` | `requested_model` | when |
@@ -157,7 +156,7 @@ calls. These rows have no API key. They are attributed to the person who started
 the agent or workflow** (`team_id`, empty for shared ones). They carry no timings.
 
 An `agent:<slug>` call through `/v1` is still recorded once, by the gateway, against the
-key (E17); the run does not record it a second time.
+key; the run does not record it a second time.
 
 Tokens are counted from the run's model responses as they happen, and recorded when the
 run's stream ends for any reason: completed, failed, suspended for an approval, or a
@@ -167,12 +166,12 @@ client that hung up.
 charged to the team's and the model's token budgets, so the next `/v1` call sees them,
 but an agent run or workflow step is not stopped by a budget. Stopping a workflow halfway
 through because a budget ran out is a decision we leave to you: see
-[Enforcing budgets on the platform's own calls](#enforcing-budgets-on-the-platforms-own-calls-e24).
+[Enforcing budgets on the platform's own calls](#enforcing-budgets-on-the-platforms-own-calls).
 API key and end-user quotas do not apply (there is no key).
 
-### Embeddings (E21)
+### Embeddings
 
-Since E21 the platform's own embedding calls are recorded the same way, one row per call,
+The platform's own embedding calls are recorded the same way, one row per call,
 with the token count the runtime reported (`completion_tokens` 0):
 
 | `endpoint` | `requested_model` | when | `user_id` | `team_id` |
@@ -193,9 +192,9 @@ embedding writes no row. By default quotas count these tokens like the rows abov
 never refuse them, so a document is not left unindexed because a budget ran out. A model
 server that reports no usage records 0 tokens, as it would for a `/v1/embeddings` call.
 
-### Reranking (E38)
+### Reranking
 
-Since E38 each rerank is recorded too: one row per call, after the vector search, when a
+Each rerank is recorded too: one row per call, after the vector search, when a
 knowledge base has a reranker (or the playground names one). The endpoint is the
 retrieval's own with `.rerank` added:
 
@@ -216,7 +215,7 @@ rather than an estimate, and the gateway logs `rerank_tokens_not_reported`. A fa
 rerank writes no row; the retrieval falls back to vector order and says so in its trace.
 Budgets count these tokens like the embedding rows above.
 
-### Enforcing budgets on the platform's own calls (E24)
+### Enforcing budgets on the platform's own calls
 
 Turn on `gateway.enforce_platform_budgets` (Settings page, *Gateway*; off by default) to
 refuse these calls once a **team** or **model** token budget (per minute, day or month)
@@ -225,17 +224,17 @@ crosses a budget finishes and the next one is refused. Concurrency limits do not
 
 | Call | When its budget is used up |
 |---|---|
-| Agent run started in the console or API (`agent.run`) | `POST /agents/{id}/execute` answers **429** with the budget's message and `Retry-After`; no run is created. A run already going is **stopped before its next model call** (E34, below), and so is a run resumed after an approval |
+| Agent run started in the console or API (`agent.run`) | `POST /agents/{id}/execute` answers **429** with the budget's message and `Retry-After`; no run is created. A run already going is **stopped before its next model call** (see below), and so is a run resumed after an approval |
 | Agent through `/v1` (`agent:<slug>`) | refused by the gateway's own admission, as before |
 | Workflow LLM step | the step **fails** with the budget's message; the workflow's `error` edges apply as for any failed step |
-| Ingestion | the document is marked **FAILED** with the budget's message and retried automatically once the budget resets (E32, below) |
+| Ingestion | the document is marked **FAILED** with the budget's message and retried automatically once the budget resets (see below) |
 | Knowledge search, playground, RAG evaluation, workflow retrieval | refused with 429, or the step fails |
 | Agent retrieval and memory | the run continues without the retrieved context or memory, as when the embedding model is down |
-| Reranking (E38) | the results stay in vector order with a warning in the trace, as when the reranker is down |
+| Reranking | the results stay in vector order with a warning in the trace, as when the reranker is down |
 
 The setting is read on every call, so switching it on or off takes effect at once.
 
-**Running agents stop at the budget (E34).** An agent run's tokens are recorded when
+**Running agents stop at the budget.** An agent run's tokens are recorded when
 the run stops, so the budget counters do not see them while it runs. Each model call in
 a run is therefore checked before it is made with the run's own tokens so far counted as
 used: a run that reaches its team's or model's budget (per minute, day or month) stops
@@ -246,7 +245,7 @@ spend are recorded as usual. A run resumed after an approval is checked before i
 call. `agent:` calls through `/v1` are not stopped: the gateway admitted them against the
 key's quotas when they started.
 
-**Refused documents are retried (E32).** A document whose embedding a budget refused
+**Refused documents are retried.** A document whose embedding a budget refused
 records when to try again: the refusal's `Retry-After` (the next minute, midnight UTC or
 the 1st of the month) plus one minute. The document's `retry_at` says when, and the
 console shows it under the error. About every 30 seconds the ingestion worker queues every
@@ -256,7 +255,7 @@ document per reset, never a loop. Any other failure is not retried. Re-ingesting
 hand clears the retry; a document replaced by a newer version is not retried. The retry
 is logged (`document_requeued_after_budget_reset`), not audited: nobody asked for it.
 
-## Timings (E16)
+## Timings
 
 Every chat call through `/v1` stores its timings on its usage record. The dashboard and
 the Usage & Quotas page report percentiles from them:
@@ -270,12 +269,12 @@ the Usage & Quotas page report percentiles from them:
 
 - **Unmeasured is null, not zero.** A buffered call has no visible first token, because
   its "first token" is the whole answer. Its `ttft_ms` and `generation_ms` are NULL, as
-  they are for every row written before E16. Percentiles skip NULLs, so with no streamed
+  they are for every row written before timings were recorded. Percentiles skip NULLs, so with no streamed
   traffic in a period the figures are `null` and the console shows "—".
   `timed_streams` says how many calls a figure rests on.
 - **What is excluded.**
   - Throughput leaves out client disconnects, failed streams and one-token answers.
-  - `agent:<slug>` calls are recorded since E17, but without timings: an agent's first
+  - `agent:<slug>` calls are recorded, but without timings: an agent's first
     token comes after its tool calls, and counting it would misstate the model's TTFT.
   - Voice calls are not timed.
 - **Clock.** Times are taken in the gateway process, so they include network time to the
@@ -287,8 +286,8 @@ the Usage & Quotas page report percentiles from them:
 ## Metrics
 
 - `ai_platform_gateway_time_to_first_token_seconds{model}` (histogram; streamed calls)
-- `ai_platform_gateway_request_duration_seconds{model,surface}` (histogram, E16)
-- `ai_platform_gateway_output_tokens_per_second{model}` (histogram, E16; same rule as the
+- `ai_platform_gateway_request_duration_seconds{model,surface}` (histogram)
+- `ai_platform_gateway_output_tokens_per_second{model}` (histogram; same rule as the
   table above)
 - `ai_platform_gateway_quota_rejections_total{scope,quota}`
 - `ai_platform_gateway_circuit_opens_total`

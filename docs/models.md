@@ -1,15 +1,15 @@
-# Models (M07, M08, M09)
+# Models
 
 The model platform: catalogue what is on disk, run it on a GPU, and put one stable
 OpenAI-compatible door in front of it.
 
 ---
 
-## Registry (M07)
+## Registry
 
 Types: `LLM | EMBEDDING | RERANKER | ASR | TTS | OCR | VISION | MULTIMODAL`.
 
-Models are imported from a local path — **never downloaded** (Rule 4). Weights arrive
+Models are imported from a local path — **never downloaded**. Weights arrive
 on physical media with the offline bundle; `storage_path` is an absolute path on the
 node, and a URL there is a bug.
 
@@ -77,9 +77,9 @@ platform developable and end-to-end testable on a machine with no NVIDIA driver.
 
 ---
 
-## Deployment (M08)
+## Deployment
 
-The §M08 lifecycle runs in a **worker**, not a request:
+The deployment lifecycle runs in a **worker**, not a request:
 
 ```
 REQUESTED → VALIDATING → SCHEDULING → CREATING → STARTING → HEALTH_CHECK → RUNNING
@@ -94,13 +94,13 @@ to load — longer than any sensible proxy timeout.
 What happens *synchronously*, inside the request:
 
 1. **Validation** — the model must be `AVAILABLE`.
-2. **Placement** (§9) — pick a node and GPUs, or honour explicit ones.
+2. **Placement** — pick a node and GPUs, or honour explicit ones.
 3. **GPU reservation** — taken in the same transaction as the deployment row.
 
 Only then does it return 202. Doing the reservation later would let two concurrent
 deploys both be told "accepted" and then fight over the same devices.
 
-### Placement (§9)
+### Placement
 
 `SimpleGpuScheduler` scores nodes by free memory and current utilisation, then takes the
 least loaded node with enough contiguous free devices. A failure explains *each* node:
@@ -131,7 +131,7 @@ logs when the container is up and falls back to the excerpt when it is not.
 
 ---
 
-## Endpoint abstraction (§12, §13)
+## Endpoint abstraction
 
 ```
 model → deployment → endpoint → alias
@@ -147,19 +147,19 @@ would invite callers to depend on it, and repointing would then break them.
   would make the model unreachable by its own name. Refused with 409.
 * The response echoes the **alias**, not the underlying model. A caller asking for
   `enterprise-chat` must never learn which model answered; that is the entire value of
-  §13.
+  the alias layer.
 * Repointing an alias swaps the model behind every developer application without any of
   them changing a line.
 
 ### When several deployments serve one model
 
-V1 is deterministic: **first healthy deployment by creation order**, and a warning is
-logged when there is more than one. Round-robin and failover are V2 and slot in behind
-the same resolver.
+Resolution is deterministic: **first healthy deployment by creation order**, and a warning
+is logged when there is more than one. Round-robin and failover are not implemented; they
+would slot in behind the same resolver.
 
 ---
 
-## Gateway (M09)
+## Gateway
 
 Two API roots, on purpose:
 
@@ -183,7 +183,7 @@ client.chat.completions.create(model="enterprise-chat", messages=[...], stream=T
 
 ### Streaming
 
-Chunks are forwarded as they arrive, never accumulated (§25). Three layers have to agree
+Chunks are forwarded as they arrive, never accumulated. Three layers have to agree
 or the stream silently buffers and looks like a hung request:
 
 1. The provider iterates the upstream response.
@@ -246,7 +246,7 @@ into a 503.
 
 ---
 
-## API keys (M20, minimal in Phase 2)
+## API keys
 
 An `ApiClient` is an application; an `ApiKey` is one credential belonging to it, revocable
 independently of any human account.
@@ -271,7 +271,7 @@ show as load moving between models, not as one name's usage silently changing me
 
 ---
 
-# Runtimes (M07)
+# Runtimes
 
 Two kinds, and the difference is *who owns the process*:
 
@@ -279,9 +279,9 @@ Two kinds, and the difference is *who owns the process*:
 |---|---|---|
 | runtimes | `vllm`, `sglang`, `tgi`, `llamacpp`, `mock` | `ollama`, `external` |
 | the platform | starts a container on a node, reserves GPUs, health-checks, can stop/restart | **points at it** |
-| deployment | 202, worker drives §M08 to RUNNING | attaches immediately, already RUNNING |
+| deployment | 202, worker drives the lifecycle to RUNNING | attaches immediately, already RUNNING |
 | `node_id` | the node it landed on | **null** — it runs somewhere the platform has no node for |
-| GPUs | reserved (§9) | none — the weights are already resident |
+| GPUs | reserved | none — the weights are already resident |
 
 The point of the distinction is honesty. An external deployment shows `node=None`,
 `gpus=[]` and a state detail saying the platform does not manage its lifecycle, because

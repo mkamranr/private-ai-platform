@@ -37,16 +37,16 @@ also creates the bootstrap admin if that account is missing.)
 
 The migrations apply in this order on top of 0.1.0's head, `5bc179eb07d5`:
 
-| Revision | Phase | What it adds |
-|---|---|---|
-| `2bb97540af22` | E1 | `inference_backends`, `alerts`, `models.backend_id` |
-| `7c2e4f9a1d30` | E2 | `gateway_quotas`, alias fallback, `usage_records.fallback_from` |
-| `9d4b2a6c8e51` | E3 | `teams`, `team_memberships`, nullable `team_id` on scoped resources |
-| `4e1a7b3c9d20` | E4 | model approval and metadata, `deployment_revisions` (existing models backfilled as approved) |
-| `5f2b8c1d4a37` | E5 | knowledge-base retrieval settings, document lineage and versions, `rag_eval_sets`, `rag_eval_cases`, `rag_eval_runs` |
-| `6a3c9e2f7b18` | E6 | `workflows`, `workflow_versions`, `workflow_runs`, `workflow_steps`, `workflow_approvals` |
-| `7b4d0f3a8c29` | E7 | `ops_jobs`, `ops_runners` |
-| `8c5e1a4b9d30` | E9 | `cost_rates` |
+| Revision | What it adds |
+|---|---|
+| `2bb97540af22` | `inference_backends`, `alerts`, `models.backend_id` |
+| `7c2e4f9a1d30` | `gateway_quotas`, alias fallback, `usage_records.fallback_from` |
+| `9d4b2a6c8e51` | `teams`, `team_memberships`, nullable `team_id` on scoped resources |
+| `4e1a7b3c9d20` | model approval and metadata, `deployment_revisions` (existing models backfilled as approved) |
+| `5f2b8c1d4a37` | knowledge-base retrieval settings, document lineage and versions, `rag_eval_sets`, `rag_eval_cases`, `rag_eval_runs` |
+| `6a3c9e2f7b18` | `workflows`, `workflow_versions`, `workflow_runs`, `workflow_steps`, `workflow_approvals` |
+| `7b4d0f3a8c29` | `ops_jobs`, `ops_runners` |
+| `8c5e1a4b9d30` | `cost_rates` |
 
 Every migration was checked from an empty database: upgrade to head, downgrade to
 base, then upgrade to head again. Each downgrade leaves no tables or enum types behind,

@@ -1,4 +1,4 @@
-# Installation (M08)
+# Installation
 
 Connected-machine installation. For the air-gapped target see [airgap.md](airgap.md).
 
@@ -54,7 +54,7 @@ Four steps, and the operator types one name.
 
 1. **Copy the bundle to the GPU host** — physical media, one-way diode, whatever the site
    allows. This is not optional and not a limitation of the installer: the platform never
-   pulls images (Rule 4), so a node needs the bundle for the agent's image and for every
+   pulls images, so a node needs the bundle for the agent's image and for every
    model image it will later run.
 2. **Administration → Nodes → Add node** in the console. Give it a name. Nothing else.
 3. **Copy the command** it shows and run it on the host:
@@ -98,7 +98,7 @@ cannot be reached fails loudly instead of sitting in the list never reporting. S
 **Registering manually** is still available, behind that button, and is the right choice
 for an agent that is already running or a node that cannot reach this control plane.
 
-## TODO (Phase 1+)
+## TODO
 
 - TLS setup via `scripts/gen_certs.sh`, and mTLS between the control plane and node agents
 - Production deployment with `docker-compose.prod.yml`

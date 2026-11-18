@@ -1,4 +1,4 @@
-# Observability (M19)
+# Observability
 
 Four questions, four tools, one identifier tying them together.
 
@@ -12,7 +12,7 @@ Four questions, four tools, one identifier tying them together.
 
 That last row is the important one. **The platform is fully observable with none of these
 deployed**: `/metrics` is always exposed, every agent run is stamped with a trace id and
-its §11 event sequence is in Postgres, and `/traces/{trace_id}` reads it back. The
+its event sequence is in Postgres, and `/traces/{trace_id}` reads it back. The
 collectors add history, search and graphs — they are not where the data lives.
 
 ## Starting it
@@ -97,7 +97,7 @@ permanently wrong after one missed event; a query cannot drift.
 | Loki | 30 days | long enough for an incident reported late, short enough for a local disk |
 | Tempo | 14 days | spans are large per unit of insight; the platform's own run record does not expire |
 
-None of it is in the M25 backup, deliberately. Telemetry is reproducible and enormous;
+None of it is in the platform backup, deliberately. Telemetry is reproducible and enormous;
 the system of record is Postgres, MinIO and Qdrant. Restoring a platform does not
 restore its graphs, and should not try to.
 
@@ -132,7 +132,7 @@ second database in front of an operator who has to back it up offline.
 The platform talks to its ingestion API over httpx rather than through the `langfuse`
 SDK. The SDK would add six packages including `requests` and `urllib3` — a second HTTP
 stack beside the one already shipped — which is the same objection that kept LangGraph
-out in Phase 4. See [`app/services/langfuse.py`](../backend/app/services/langfuse.py).
+out of the agent runtime. See [`app/services/langfuse.py`](../backend/app/services/langfuse.py).
 
 Events are queued in memory and flushed by a background task. If Langfuse is down the
 queue fills and new events are dropped with a warning: an observability backend must
@@ -155,7 +155,7 @@ and `/traces/{id}` all work, and which simply has nowhere to send spans.
 
 Every collector is configured with its telemetry reporting off explicitly, rather than
 relying on the network being unreachable — so the intent survives someone testing on a
-connected machine (Rule 4).
+connected machine.
 
 ## The gate
 
@@ -168,7 +168,7 @@ Prometheus holds a platform metric it scraped, that Loki holds a line the backen
 that Tempo returns the trace named on that line, and that Grafana can reach every
 datasource it was provisioned with.
 
-Two of its checks exist because of bugs found while building this phase, both of which
+Two of its checks exist because of bugs found during development, both of which
 look fine from `curl`:
 
 - Declaring the OpenMetrics content type while writing the Prometheus text format makes

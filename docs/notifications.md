@@ -1,6 +1,6 @@
-# Alert notifications (E13)
+# Alert notifications
 
-In-app alerts (E1) only help if someone is looking at the console. A **notification
+In-app alerts only help if someone is looking at the console. A **notification
 channel** sends alerts somewhere people already look:
 
 - a **webhook**, for example Mattermost, Slack, Microsoft Teams or Rocket.Chat incoming
@@ -29,25 +29,25 @@ Each channel also chooses:
 - **Sources:** which kinds of alert to send. Leave them all unticked to send every source.
   Today's sources are `backend_health`, `deployment`, `quota_budget`, `cost_budget`,
   `backup_schedule`, `notifications`, `auth`, `ops_runner` and `approvals` (reminders
-  before an approval expires, E22).
-- **Team (E46):** *Every team* (the default) or one team. A team's channel announces only
-  alerts about that team. See [Team channels](#team-channels-e46).
+  before an approval expires).
+- **Team:** *Every team* (the default) or one team. A team's channel announces only
+  alerts about that team. See [Team channels](#team-channels).
 
-## Team channels (E46)
+## Team channels
 
 Point a team at its own chat or mailing list. Pick the team under *Alerts about* on the
 channel form, or set `team_id` in the API. These alerts carry a team:
 
 | Alert | Its team |
 |---|---|
-| `approvals`: a reminder about a waiting approval (E22, E43) | the agent's or workflow's team |
+| `approvals`: a reminder about a waiting approval | the agent's or workflow's team |
 | `quota_budget`, `cost_budget`: a team-scoped budget (by `team`) | that team |
 | `deployment`: *Model deployment failed* | the model's team |
 
 The rest are platform-wide (`team_id` null): backend health, backups, sign-in, the runner,
 blocked models still running, a failing channel, and budgets for an API key, an end user or
 the whole platform. A team's channel never announces these. A channel with no team
-announces every alert, including each team's, as before. The Alerts page shows a team chip
+announces every alert, including each team's. The Alerts page shows a team chip
 on alerts that have a team.
 
 - An alert that is raised again takes the resource's current team. If an agent moves to
@@ -93,7 +93,7 @@ deliveries that are due.
   days.
 - **Test.** *Send test* sends a message straight away and shows the receiver's answer. It
   is recorded as a delivery and in the audit log.
-- **Quiet hours (E42).** A channel can name a daily window, for example 22:00 to 07:00,
+- **Quiet hours.** A channel can name a daily window, for example 22:00 to 07:00,
   when only **CRITICAL** alerts are sent. Anything else that comes due in the window is
   held, not dropped: it waits until the window ends and is then sent as its first attempt
   (held messages are not retries). A window whose end is before its start runs past
@@ -104,7 +104,7 @@ deliveries that are due.
     channel is saved; use an offset instead. An offset does not follow daylight saving.
   - API: `quiet_start` and `quiet_end` (`HH:MM`, both or neither) and `quiet_timezone` on
     create and update; empty strings for both remove the window. Audited as `quiet_hours`.
-  - **Digest (E47).** When the window ends, a chat webhook or an email channel gets
+  - **Digest.** When the window ends, a chat webhook or an email channel gets
     what it held as **one message** if there are two or more. The message is titled
     *[DIGEST] 5 notifications held during quiet hours for ops-chat* and has one line per
     alert, oldest first, for example `- [WARNING] Backend gpu-01 is not answering (raised
@@ -200,7 +200,7 @@ Redirects are never followed, so a receiver can't bounce a request elsewhere.
 followed. Anything else is retried, with the status and the start of the body shown as
 the error.
 
-## PagerDuty (E50)
+## PagerDuty
 
 A webhook channel with the format **PagerDuty (Events API v2)** pages through PagerDuty
 directly, without a relay:
@@ -231,8 +231,8 @@ directly, without a relay:
   letters and digits is refused when you save.
 - **No signing secret.** PagerDuty ignores signatures and authorises by routing key, so a
   signing secret is refused on a PagerDuty channel.
-- **Quiet hours** (E42) still hold non-critical alerts, but a PagerDuty channel never gets a
-  digest (E47). Each alert is its own event, because PagerDuty deduplicates by key.
+- **Quiet hours** still hold non-critical alerts, but a PagerDuty channel never gets a
+  digest. Each alert is its own event, because PagerDuty deduplicates by key.
 - **Network.** PagerDuty is on the internet, so the platform needs outbound access to
   `events.pagerduty.com`, or a relay. The outbound URL policy allows it, because it is not
   an AI service. A site with no outbound access can point the URL at an internal
@@ -252,21 +252,27 @@ and never goes in the database:
 | `NOTIFICATIONS__SMTP_FROM` | `ai-platform@localhost` | the sender address |
 | `NOTIFICATIONS__SMTP_VERIFY_TLS` | true | turn off only for an internal relay with a self-signed certificate |
 | `NOTIFICATIONS__SMTP_TIMEOUT_SECONDS` | 10 | |
-| `NOTIFICATIONS__EMAIL_HTML` | true | send an HTML version as well as the plain text (E48) |
-| `NOTIFICATIONS__EMAIL_LOGO_PATH` | unset | a logo embedded in each email (E49, see [Branding](#branding-e49)) |
+| `NOTIFICATIONS__EMAIL_HTML` | true | send an HTML version as well as the plain text |
+| `NOTIFICATIONS__EMAIL_LOGO_PATH` | unset | a logo embedded in each email (see [Branding](#branding)) |
 
-- The subject is `[AI Platform] [CRITICAL] <title>`.
-- **HTML (E48).** Each message is `multipart/alternative`: the plain text, plus an HTML
+- The subject is `[AI Platform] [CRITICAL] <title>`. The prefix can be changed under
+  [Branding](#branding).
+- **HTML.** Each message is `multipart/alternative`: the plain text, plus an HTML
   version with the same content. The HTML has a colour bar for the severity (green for
   resolved), the facts in a small table, and an *Open the Alerts page* button when
   `NOTIFICATIONS__CONSOLE_URL` is set. A digest is a list. The HTML is self-contained:
-  inline styles only, with no images, fonts, scripts or remote resources. Nothing loads
+  inline styles only, with no fonts, scripts or remote resources (a logo, if set, is
+  attached to the email). Nothing loads
   when it is opened, and it renders the same on an air-gapped network. Every alert value
-  is escaped, so an alert's text cannot add markup. The approver reminder emails (E39) use
+  is escaped, so an alert's text cannot add markup. The approver reminder emails use
   the same format. If a mail gateway strips or quarantines HTML, set
   `NOTIFICATIONS__EMAIL_HTML=false` to send plain text only.
 
-### Branding (E49)
+- A channel has up to 20 recipients; use a distribution list for more.
+- If the server refuses some recipients but not all, the message counts as sent and the
+  result says how many were refused.
+
+### Branding
 
 Every notification email uses one branded layout. The header shows your logo, or a
 monogram of the brand's initials on the accent colour, next to the brand name and tagline.
@@ -280,7 +286,7 @@ Below it is a card with:
 - a button in the accent colour to the console.
 
 The footer holds your own text and says why the person received the email. A digest
-lists its alerts with a count for each severity. An approver reminder (E39) links to the
+lists its alerts with a count for each severity. An approver reminder links to the
 **Approvals** page instead of Alerts, and says how to turn these emails off.
 
 Set the branding on the **Settings** page under *Email branding*. These are runtime
@@ -311,9 +317,6 @@ The layout works in common mail clients: it uses tables for Outlook, adapts to n
 screens, has dark-mode colours where the client supports them, and includes preview
 text. It stays self-contained, with no web fonts, scripts or remote images, and every
 value, including your branding text, is escaped.
-- A channel has up to 20 recipients; use a distribution list for more.
-- If the server refuses some recipients but not all, the message counts as sent and the
-  result says how many were refused.
 
 ## Other settings
 
@@ -335,11 +338,11 @@ Under `/api/v1/notifications`. Every route needs `notification.manage`.
 |---|---|
 | `GET /channels` | channels with health and queued count, plus `smtp_configured`, `console_url_configured` and the known `sources` |
 | `POST /channels` | 201. A webhook needs `url`; an email channel needs `recipients`. 409 for a duplicate name, 422 for a refused URL, an unknown source, a bad address or a short signing secret |
-| `PATCH /channels/{id}` | Omitted fields are unchanged. An empty string removes `signing_secret` or `authorization`. `team_id: null` makes it a platform channel (E46). The kind can't change |
+| `PATCH /channels/{id}` | Omitted fields are unchanged. An empty string removes `signing_secret` or `authorization`. `team_id: null` makes it a platform channel. The kind can't change |
 | `DELETE /channels/{id}` | 204. The channel's delivery history is removed with it |
 | `POST /channels/{id}/test` | sends now; `{ok, detail, code}`. A failure is still a 200 |
 | `GET /deliveries` | `?channel_id=&status=&limit=&offset=` |
-| `GET /email-preview` | `?kind=raised`, `resolved`, `digest`, `approval` or `test`: `{kind, subject, text, html}`, branded as currently set; nothing is sent (E49) |
+| `GET /email-preview` | `?kind=raised`, `resolved`, `digest`, `approval` or `test`: `{kind, subject, text, html}`, branded as currently set; nothing is sent |
 
 Audit actions:
 
@@ -350,14 +353,14 @@ Audit actions:
 
 ## Not built
 
-- **Digests outside quiet hours.** Since E47, what quiet hours held goes out as one
+- **Digests outside quiet hours.** What quiet hours held goes out as one
   digest. Otherwise each event is its own message, so during an incident with many
   alerts a chat channel receives one message per alert. A minimum severity or a source
   filter keeps busy channels quiet. There is no daily or hourly summary.
-- **Team owners managing their own channels.** Team channels (E46) are set up by holders
+- **Team owners managing their own channels.** Team channels are set up by holders
   of `notification.manage`. An API key's budget alerts are not routed to the key's team.
-- **Other paging services' native APIs** (Opsgenie, VictorOps). PagerDuty is built in
-  since E50. For the others, use a JSON webhook to an internal relay.
-- **SMS.** (HTML email since E48.)
+- **Other paging services' native APIs** (Opsgenie, VictorOps). PagerDuty is built in.
+  For the others, use a JSON webhook to an internal relay.
+- **SMS.**
 - **Prometheus rules.** These go through Grafana and are not routed through channels. See
   [observability.md](observability.md#alerts).

@@ -1,6 +1,6 @@
-# Air-gapped installation (M23, M27)
+# Air-gapped installation
 
-The platform must have **no runtime dependency on the Internet** (§M23, Rule 4).
+The platform must have **no runtime dependency on the Internet**.
 
 ## The two machines
 
@@ -20,7 +20,7 @@ wheelhouse is built inside a `linux/amd64` container for exactly this reason.
 network.** Everything else — every script, image and runtime path — is forbidden to, and
 `scripts/check_airgap.py` enforces it on every `make lint`.
 
-## What is enforced continuously (from Phase 0)
+## What is enforced continuously
 
 `make airgap` runs `scripts/check_airgap.py`, part of `make lint`:
 
@@ -31,8 +31,9 @@ network.** Everything else — every script, image and runtime path — is forbi
 5. No OS package installs at image build
 6. No runtime code path shells out to a network fetcher
 
-This runs from Phase 0 rather than Phase 8 on purpose — eight phases of unrestricted
-pulling produce a dependency graph that cannot be bundled without rework.
+This runs on every change rather than only at packaging time, on purpose — unrestricted
+pulling during development produces a dependency graph that cannot be bundled without
+rework.
 
 ### The one way to opt out, deliberately
 
@@ -147,7 +148,7 @@ tar xf node-bundle.tar
 sudo ./install-node.sh --server https://ai-platform.local --name gpu-node-01 --token aine_...
 ```
 
-**This is not a hole in the air gap.** Rule 4 forbids pulling from the *Internet*, which is
+**This is not a hole in the air gap.** The air-gap rule forbids pulling from the *Internet*, which is
 what makes the platform installable on a host with no route out. These bytes arrived on the
 bundle you carried in; the download moves them one hop across the site's own network.
 `install-node.sh` itself still fetches nothing, exactly as its header says — the `curl` is
@@ -172,7 +173,7 @@ keep the manifest, because it is what proves the archive survived the copy.
 **The control plane deliberately does not serve images over HTTP.** It would be easy to add
 and it is the wrong shape: `node-agent/app/runtime/docker.py` refuses to start a container
 whose image is absent, with *"Load it from the offline bundle with `docker load`; the
-platform never pulls (Rule 4)"*. A host that could fetch the agent that way but still could
+platform never pulls"*. A host that could fetch the agent that way but still could
 not fetch a vLLM image the same way would teach an operator something untrue about how this
 platform gets its images. One mechanism, and the bundle is it.
 

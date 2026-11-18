@@ -1,6 +1,6 @@
 # Threat model
 
-Status: E7 (plan §5.17). This document records, for each threat the plan names, what the
+This document records, for each threat, what the
 platform does about it today, what risk remains, and which test proves the mitigation.
 Every claim cites the code that implements it. Where no test exists, the document says
 so. A mitigation without a test is a claim, not a control.
@@ -40,11 +40,11 @@ drifted, search for the named function.
 | 6 | API key theft | Hash-only storage, scopes, revocation, budgets | Rate limit fails open without Redis. Keys have no default expiry |
 | 7 | Agent loops / resource exhaustion | `max_iterations`, `MAX_STEPS`, per-node timeouts | No wall-clock limit on agent runs |
 | 8 | Malicious uploads | 64 MiB limit, format allowlist, no disk writes | No zip-bomb limit. ElementTree rather than defusedxml |
-| 9 | Compromised images | Digest pins, bundle checksums, **bundle signature (E7)** | Platform-built images are tag-referenced. Signing is opt-in per site |
+| 9 | Compromised images | Digest pins, bundle checksums, **bundle signature** | Platform-built images are tag-referenced. Signing is opt-in per site |
 | 10 | Unauthorized deployment actions | Permission per route, socket only on the node agent | The node-agent token is effectively root on the host |
 | 11 | Prompt/response exposure through logs | Access log without bodies, audit redaction | No redaction processor in application logs |
-| 12 | Ops actions: backup, restore, upgrade (E7) | Split permissions, typed confirmation, audited host runner, wrong runner tokens throttled per address and audited (E14) | Runner token in `.env`. The runner runs as a host user with Docker access |
-| 13 | Password guessing, stolen session tokens (E14) | Account lockout, per-address sign-in throttle, `jti` revocation, session versions, refresh rotation with reuse detection, optional or enforced TOTP second factor (E15) | Throttle fails open without Valkey. Directory accounts are not locked by the platform. MFA is opt-in unless `auth.mfa_required` is set. An administrator's MFA reset is a social-engineering target |
+| 12 | Ops actions: backup, restore, upgrade | Split permissions, typed confirmation, audited host runner, wrong runner tokens throttled per address and audited | Runner token in `.env`. The runner runs as a host user with Docker access |
+| 13 | Password guessing, stolen session tokens | Account lockout, per-address sign-in throttle, `jti` revocation, session versions, refresh rotation with reuse detection, optional or enforced TOTP second factor | Throttle fails open without Valkey. Directory accounts are not locked by the platform. MFA is opt-in unless `auth.mfa_required` is set. An administrator's MFA reset is a social-engineering target |
 
 ---
 
@@ -59,7 +59,7 @@ drifted, search for the named function.
   - weights are mounted into the engine container read-only (`:100`);
   - `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` are set, so nothing is fetched from the hub (`:78`).
 - `offline/lib.sh` `verify_bundle`: checks bundled model files against the checksums that
-  `scripts/build_bundle.py` writes. Since E7 those checksums sit inside a signed manifest.
+  `scripts/build_bundle.py` writes. Those checksums sit inside a signed manifest.
 - `backend/app/services/deployment.py:226` `_check_governance`: BLOCKED and DEPRECATED
   models are never deployed.
 
@@ -265,7 +265,7 @@ drifted, search for the named function.
   - per-node timeout capped at 600 s and attempts at 5.
 - Each tool has its own timeout (`tool_pipeline.py:235`).
 - Gateway budgets and concurrency limits (threat 6).
-- Ops jobs (E7) run one at a time (`repositories/ops.py` `claim_next`).
+- Ops jobs run one at a time (`repositories/ops.py` `claim_next`).
 
 **Tests**
 - `tests/api/test_workflows.py::TestDefinition::test_cycles_and_missing_start_are_refused`
@@ -309,15 +309,15 @@ drifted, search for the named function.
 
 **Mitigations**
 - `docker-compose.yml` pins third-party images by `@sha256`. `scripts/check_airgap.py`
-  enforces this in every phase gate.
+  enforces this in every gate.
 - `scripts/build_bundle.py` saves images by digest and records each archive's SHA-256.
 - `offline/lib.sh` `verify_bundle` checks every archive before anything is loaded.
-- **E7: signed manifests.**
+- **Signed manifests.**
   - `scripts/build_bundle.py --sign-key` signs `manifest.json` with ECDSA P-256 (`manifest.sig`).
   - The manifest carries the SHA-256 of every archive and of the SBOM, so one signature covers the whole bundle.
   - `offline/lib.sh` `verify_signature` checks it with the **host's** `openssl` against a public key installed under `<target>/.trust/`. No code from inside the bundle runs before the signature verifies.
   - Once a site has a trust key, an unsigned or wrongly signed bundle is refused.
-- **E7: SBOM.** Each bundle carries `sbom.cdx.json` (CycloneDX 1.5) and `licenses.txt`,
+- **SBOM.** Each bundle carries `sbom.cdx.json` (CycloneDX 1.5) and `licenses.txt`,
   listing every image digest, every pinned Python wheel with its hash and the vendored
   JavaScript.
 - `deployment.py:217,742`: an allowlist restricts runtime images on revisions.
@@ -356,8 +356,8 @@ drifted, search for the named function.
   - bearer token compared in constant time (`node-agent/app/security.py:29`);
   - refuses to control containers it did not create (`node-agent/app/runtime/docker.py:238` `_require_managed`).
 - The Docker socket is mounted only into the node agent (and read-only into alloy). The
-  control plane never gets it. E7 keeps that true: backups and upgrades go through a host
-  runner, not a socket mount.
+  control plane never gets it. Backups and upgrades keep that true: they go through a
+  host runner, not a socket mount.
 
 **Tests**
 - `tests/api/test_route_authorization.py::TestEveryRoute`: every non-public route is 401
@@ -387,7 +387,7 @@ drifted, search for the named function.
   step traces (`workflow_definition.py:460`).
 - Gateway usage rows hold token counts, not content.
 - Langfuse is off by default.
-- **E7:** `app/core/redact.py` scrubs the diagnostics support bundle:
+- `app/core/redact.py` scrubs the diagnostics support bundle:
   - keys containing secret words;
   - `SecretStr` values;
   - credentials in URLs;
@@ -412,7 +412,7 @@ drifted, search for the named function.
 - Audit key matching is exact-name, so variants such as `x_api_token` slip through. The
   support bundle uses the broader matcher.
 
-## 12. Operations actions: backup, restore, upgrade (E7)
+## 12. Operations actions: backup, restore, upgrade
 
 Restoring yesterday's database or installing a bundle is the most destructive thing the
 platform can do. Without care, the API that triggers it becomes a path to the host.
@@ -463,7 +463,8 @@ platform can do. Without care, the API that triggers it becomes a path to the ho
 - The runner token sits in `.env` next to the other platform secrets. Anyone who can read
   `.env` already holds the database password and the encryption key.
 - The runner endpoints are reachable on the published port. The token is the only
-  barrier, and failed attempts are not rate-limited.
+  barrier. Failed attempts are audited and throttled per address
+  (`ops.runner_max_failures`).
 - The runner's host user needs Docker access, which is root-equivalent. Run it under a
   dedicated account, as `deploy/systemd/ai-platform-ops-runner.service` shows.
 - A restore is all-or-nothing, and Qdrant vectors are not restored automatically

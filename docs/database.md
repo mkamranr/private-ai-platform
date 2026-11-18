@@ -1,10 +1,10 @@
 # Database design
 
-PostgreSQL is the system of record (§6). This is the **full target schema** across
+PostgreSQL is the system of record. This is the **full target schema** across
 all 28 modules, written whole now so each module implements against a settled shape
 rather than inventing one. Tables are migrated per module as they land.
 
-Referenced by the module prompt in §26 — read before implementing any module.
+Read it before implementing any module.
 
 ---
 
@@ -51,7 +51,7 @@ side still uses `StrEnum` for type safety.
 
 ---
 
-## Phase 0 — implemented
+## Identity, access control and audit
 
 Migration `20260807_1705_phase0_identity_rbac_audit_and_system_settings`.
 
@@ -62,34 +62,34 @@ Migration `20260807_1705_phase0_identity_rbac_audit_and_system_settings`.
 | `username` | varchar(150) | unique, indexed; matched case-insensitively |
 | `email` | varchar(320) | unique, indexed |
 | `full_name` | varchar(255) | nullable |
-| `hashed_password` | varchar(255) | **nullable** — an OIDC-provisioned user (P6) has no local password |
+| `hashed_password` | varchar(255) | **nullable** — an OIDC-provisioned user has no local password |
 | `is_active` | bool | disabling is preferred to deletion; it preserves the audit trail |
 | `is_superuser` | bool | bypasses permission checks entirely |
 | `last_login_at` | timestamptz | nullable |
-| `failed_login_count` | int | wrong passwords in a row; reset by a sign-in or a lock (E14) |
-| `locked_until` | timestamptz | nullable; set when the count reaches `auth.lockout_threshold` (E14) |
-| `session_version` | int | copied into tokens as `sv`; raising it signs the user out everywhere (E14) |
-| `mfa_secret_encrypted` | text | nullable; TOTP secret, Fernet-encrypted (E15) |
+| `failed_login_count` | int | wrong passwords in a row; reset by a sign-in or a lock |
+| `locked_until` | timestamptz | nullable; set when the count reaches `auth.lockout_threshold` |
+| `session_version` | int | copied into tokens as `sv`; raising it signs the user out everywhere |
+| `mfa_secret_encrypted` | text | nullable; TOTP secret, Fernet-encrypted |
 | `mfa_enabled_at` | timestamptz | nullable; set when the first code confirmed the app; sign-in then asks for a code |
 | `mfa_last_step` | bigint | nullable; last accepted TOTP step, so a code works once |
 | `mfa_recovery_hashes` | jsonb | SHA-256 hashes of unused recovery codes, default `[]` |
 | `created_at`, `updated_at` | timestamptz | |
 
-### `user_passkeys` (E20)
+### `user_passkeys`
 `id` (PK), `user_id` (FK, cascade, indexed), `credential_id` (bytea, unique), `public_key`
 (bytea, COSE), `sign_count` (bigint; a lower value at sign-in is refused), `transports`
 (jsonb), `name` (varchar 64), `backed_up` (synced passkey), `created_at`, `last_used_at`.
 Deleted when two-factor authentication is turned off or reset.
 
-### `trusted_devices` (E20)
+### `trusted_devices`
 `id` (PK), `user_id` (FK, cascade, indexed), `token_hash` (varchar 64, unique; SHA-256 of
 the browser's token, never the token), `session_version` (the account's at issue; a
 different value means the token no longer works), `label` ("Firefox on Windows"),
 `created_at`, `expires_at`, `last_used_at`.
 
-### `revoked_tokens` (E14)
+### `revoked_tokens`
 `jti` (PK), `user_id` (FK, cascade), `token_type`, `reason` (`logout`, `rotated`, `mfa`
-for a spent sign-in step token (E15), or `used` for a spent passkey challenge (E20)),
+for a spent sign-in step token, or `used` for a spent passkey challenge),
 `expires_at` (indexed; rows are pruned hourly once past it), `revoked_at`.
 
 ### `roles`
@@ -106,7 +106,7 @@ admin UI can group permissions without parsing strings.
 ### `user_roles`, `role_permissions`
 Composite-PK join tables, both sides `ON DELETE CASCADE`.
 
-### `audit_logs` (M24)
+### `audit_logs`
 | column | type | notes |
 |---|---|---|
 | `id` | uuid PK | |
@@ -146,7 +146,7 @@ attacker with UI access can edit.
 
 ---
 
-## Phase 1 — infrastructure (M04, M05, M06)
+## Infrastructure
 
 ### `nodes`
 `id`, `name` (unique), `hostname`, `ip_address`, `agent_url`, `agent_token_hash`,
@@ -216,7 +216,7 @@ transaction** that creates the deployment row.
 
 ---
 
-## Phase 2 — models (M07, M08, M09)
+## Models
 
 ### `models`
 `id`, `name` (unique), `display_name`, `type`
@@ -232,7 +232,7 @@ otherwise surfaces as an inscrutable vLLM crash minutes into loading.
 
 ### `model_deployments`
 `id`, `model_id` FK (`RESTRICT`), `node_id` FK, `gpu_indices` jsonb, `runtime`,
-`container_id`, `internal_port`, `internal_url`, `state` (the §M08 lifecycle),
+`container_id`, `internal_port`, `internal_url`, `state` (the deployment lifecycle),
 `command` jsonb, `environment` jsonb, `tensor_parallel_size`, `max_model_len`,
 `gpu_memory_utilization`, `reservation_id`, `error_message`, `logs_excerpt`,
 `requested_by` FK → users, `started_at`, `healthy_at`, `stopped_at`, timestamps.
@@ -240,9 +240,9 @@ otherwise surfaces as an inscrutable vLLM crash minutes into loading.
 `state` transitions are driven by a **worker**, not a request: loading a 30B model
 takes minutes, so `POST /models/{id}/deploy` returns `202` and the client polls.
 
-`internal_url` never leaves the control plane (§12).
+`internal_url` never leaves the control plane.
 
-### `model_endpoints` / aliases (§13)
+### `model_endpoints` / aliases
 `id`, `alias` (unique, e.g. `enterprise-chat`), `model_id` FK, `type`, `enabled`,
 `description`, timestamps.
 
@@ -252,10 +252,10 @@ behind the same resolver.
 
 ---
 
-## Phase 4 — agents, skills, tools, MCP (M10–M14)
+## Agents, skills, tools and MCP
 
 ### `agents`, `agent_versions`
-Agents are versioned (§M10). `agents` holds identity and the pointer to the current
+Agents are versioned. `agents` holds identity and the pointer to the current
 version; `agent_versions` holds the immutable definition — `model`, `system_prompt`,
 `temperature`, `max_iterations`, `memory_enabled`, `approval_required` jsonb.
 
@@ -264,7 +264,7 @@ incident makes the trace unreproducible.
 
 ### `agent_skills`, `agent_tools`, `agent_knowledge`, `agent_permissions`
 Join tables. `agent_tools` carries `mode` (`ALLOW|DENY`) — agents get no tool by
-default (§10).
+default.
 
 ### `skills`, `skill_versions`
 `name`, `description`, `instructions`, `required_tools` jsonb, `required_knowledge`
@@ -278,11 +278,11 @@ jsonb, `parameters` jsonb, `required_permission`, `version`.
 **`credentials_encrypted` text**, `mcp_server_id` FK nullable, timestamps.
 
 `credentials_encrypted` is Fernet ciphertext under a key mounted outside the
-database (see `architecture.md` §13).
+database (see [architecture.md](architecture.md#13-secrets-at-rest)).
 
 `PYTHON` and `COMMAND` are registerable but **disabled** by default
-(`AGENTS__DISABLED_TOOL_TYPES`) — §M12 lists them, §25 forbids unrestricted shell
-execution by agents. See `security.md`.
+(`AGENTS__DISABLED_TOOL_TYPES`): the tool model lists them, but unrestricted shell
+execution by agents is forbidden. See `security.md`.
 
 ### `mcp_servers`, `mcp_tools`
 `name`, `transport`, `endpoint`, `enabled`, `status`, `last_health_check_at`,
@@ -290,17 +290,17 @@ execution by agents. See `security.md`.
 
 ### `agent_runs`
 `id` (the `run_id`), `agent_id` FK, `agent_version_id` FK, `user_id` FK,
-`conversation_id` FK nullable, `state` (§M14), `input`, `output`, `error`,
+`conversation_id` FK nullable, `state`, `input`, `output`, `error`,
 `iterations`, `prompt_tokens`, `completion_tokens`, `duration_ms`,
 `pending_approval` jsonb, `started_at`, `finished_at`.
 
 ### `agent_run_events`
-`id`, `run_id` FK (`CASCADE`), `sequence`, `event_type` (the §11 set), `payload`
+`id`, `run_id` FK (`CASCADE`), `sequence`, `event_type` (the agent event set), `payload`
 jsonb, `duration_ms`, `created_at`. `UNIQUE(run_id, sequence)` — ordering must be
 total, and a gap or duplicate makes a trace unreadable.
 
 ### `tool_executions`, `llm_executions`
-Per-call records for M19 tracing: latency, tokens, model/tool, arguments (redacted),
+Per-call records for tracing: latency, tokens, model/tool, arguments (redacted),
 result size, success, error.
 
 > LangGraph's PostgreSQL checkpointer manages its own `checkpoint*` tables in this
@@ -310,7 +310,7 @@ result size, success, error.
 
 ---
 
-## Phase 5 — knowledge and memory (M15, M16)
+## Knowledge and memory
 
 `knowledge_bases` — `name`, `description`, `embedding_model_id`, `qdrant_collection`,
 `chunk_size`, `chunk_overlap`, `document_count`, timestamps.
@@ -325,7 +325,7 @@ result size, success, error.
 
 `embedding_models` — `name`, `dimensions`, `max_input_tokens`, `deployment_id` FK.
 
-`conversations`, `messages` — long-term memory (§M16).
+`conversations`, `messages` — long-term memory.
 
 `memories` — `id`, `scope` (`USER|AGENT|TENANT`), `user_id`, `agent_id`, `key`,
 `content`, `qdrant_point_id`, `expires_at`. **Always** scoped; an unfiltered memory
@@ -333,7 +333,7 @@ search would leak one tenant's context into another's answers.
 
 ---
 
-## Phase 6 — developer and enterprise (M20, M25)
+## Developer and enterprise
 
 `api_clients` — `name`, `description`, `owner_id` FK, `enabled`.
 
@@ -349,17 +349,17 @@ cost per request.
 
 `usage_records` — `api_key_id` FK, `user_id` FK, `endpoint`, `model`, `agent_id`,
 `prompt_tokens`, `completion_tokens`, `latency_ms`, `status_code`, `recorded_at`.
-E16 adds `ttft_ms` and `generation_ms`: nullable floats, set on streamed calls only, with
+`ttft_ms` and `generation_ms` are nullable floats, set on streamed calls only, with
 no backfill. NULL means not measured. Output throughput is derived from them at query
 time and not stored (migration `f7b2d4a6c9e3`, see
-[gateway-policy.md](gateway-policy.md#timings-e16)).
+[gateway-policy.md](gateway-policy.md#timings)).
 
 `backups` — `id`, `filename`, `size_bytes`, `sha256`, `components` jsonb,
 `status`, `created_by` FK, `verified_at`.
 
 ---
 
-### `api_clients.trusted_identity_headers` / `identity_jwt_secret_encrypted` (M17)
+### `api_clients.trusted_identity_headers` / `identity_jwt_secret_encrypted`
 
 A shared chat frontend holds one API key for every user, so without a way to say *who* a
 request is for, all usage accounts to a single identity. Both columns exist because the
@@ -372,7 +372,7 @@ to anyone.
   validly signed assertion is accepted and plaintext headers from that client are ignored
   entirely (falling back would let an attacker bypass the signature by omitting it).
 
-### `usage_records.end_user` / `end_user_trusted` (M17)
+### `usage_records.end_user` / `end_user_trusted`
 
 `end_user` is who the call was *for*; `user_id` remains the platform account, which a
 chat user need not have. `end_user_trusted` separates a verified assertion from the
@@ -392,8 +392,8 @@ is in the contract before the module that needs it is built.
    the deployment. Cheap now, corrupting later.
 2. **Secrets at rest** — tool credentials must live somewhere and there is no Vault.
    Fernet-encrypted columns, key mounted outside the database.
-3. **`COMMAND`/`PYTHON` tool types** — §M12 lists them, §25 forbids unrestricted
-   shell execution. Reconciled: registerable but disabled pending a hardened executor.
+3. **`COMMAND`/`PYTHON` tool types** — the tool model lists them, but unrestricted
+   shell execution is forbidden. Reconciled: registerable but disabled pending a hardened executor.
 4. **Streaming vs usage accounting** — you cannot count tokens in a response you
    never buffer. Request `stream_options.include_usage`; handle mid-stream disconnect.
 5. **Alias → deployment when several serve one model** — failover is V2, so V1 is
