@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Audit log export and request IDs
+- **Download the audit log.** *Export CSV* and *Export JSONL* on the Audit Log page download every record your filters match, newest first, up to 100,000. CSV opens safely in a spreadsheet; JSON Lines suits a log pipeline or SIEM. Each export is itself recorded in the audit log.
+- **Follow one request.** Each record now shows the ID of the request that wrote it. Click it, or paste an ID from a log line, to see everything that request did.
+- **Upgrade.** Nothing to do: no migration.
+
 ### Quota warnings
 - **A warning share per quota.** Each quota can now warn at its own percentage of its daily or monthly budget (*Warn at* on the Usage & Quotas page). Leave it empty to keep the platform default of 80%.
 - **Applications are told too.** A gateway response from a caller past the warning share carries an `X-Quota-Warning` header, for example `api_key; period=monthly; used=85%`, so an application can react before it is refused.

@@ -2732,16 +2732,26 @@ function roleRow(role) {
 /* -------------------------------------------------------------------------- */
 /* Audit log (M24)                                                            */
 /* -------------------------------------------------------------------------- */
-async function renderAudit() {
-  const query = new URLSearchParams({ limit: '100' });
+/** The Audit page's filters as query parameters, shared by the list and the export. */
+function auditQuery() {
+  const query = new URLSearchParams();
   const action = document.getElementById('aud-action').value;
   const result = document.getElementById('aud-result').value;
   const resource = document.getElementById('aud-resource').value.trim();
+  const requestId = document.getElementById('aud-request').value.trim();
   const since = document.getElementById('aud-since').value;
   if (action) query.set('action', action);
   if (result) query.set('result', result);
   if (resource) query.set('resource_type', resource);
+  if (requestId) query.set('request_id', requestId);
   if (since) query.set('since', `${since}T00:00:00Z`);
+  return query;
+}
+
+async function renderAudit() {
+  const query = auditQuery();
+  query.set('limit', '100');
+  const action = document.getElementById('aud-action').value;
 
   const [page, actions] = await Promise.all([
     api(`/audit?${query}`),
@@ -2767,7 +2777,7 @@ async function renderAudit() {
       <table class="table table-sm align-middle">
         <thead><tr>
           <th>When</th><th>Who</th><th>Action</th><th>Resource</th>
-          <th>Result</th><th>From</th><th>Detail</th>
+          <th>Result</th><th title="Source address and request ID">From</th><th>Detail</th>
         </tr></thead>
         <tbody>${page.items.map(auditRow).join('')}</tbody>
       </table>
@@ -2795,7 +2805,11 @@ function auditRow(row) {
       ${row.resource_id ? `<div class="mono" style="font-size:.75rem">${esc(String(row.resource_id).slice(0, 18))}</div>` : ''}
     </td>
     <td><span class="badge ${tone}">${esc(row.result)}</span></td>
-    <td class="small text-secondary mono">${esc(row.source_ip || '—')}</td>
+    <td class="small text-secondary mono">${esc(row.source_ip || '—')}
+      ${row.request_id ? `<div><button type="button" class="btn btn-link btn-sm p-0 mono"
+          style="font-size:.75rem" data-aud-request="${esc(row.request_id)}"
+          title="Request ${esc(row.request_id)}: show every record it wrote"
+          >${esc(row.request_id.slice(0, 12))}</button></div>` : ''}</td>
     <td class="small text-secondary" style="max-width:22rem">
       <div class="text-truncate" title="${esc(row.message || '')} ${esc(meta)}"
         >${esc(row.message || '')}${meta ? ` ${esc(meta)}` : ''}</div>
@@ -5209,9 +5223,49 @@ document.getElementById('aud-clear').onclick = (event) => guard(event.target, ()
   document.getElementById('aud-action').value = '';
   document.getElementById('aud-result').value = '';
   document.getElementById('aud-resource').value = '';
+  document.getElementById('aud-request').value = '';
   document.getElementById('aud-since').value = '';
   return refresh({ force: true });
 });
+document.getElementById('aud-request').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') guard(event.target, () => refresh({ force: true }));
+});
+document.getElementById('audit-body').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-aud-request]');
+  if (!button) return;
+  document.getElementById('aud-request').value = button.dataset.audRequest;
+  guard(button, () => refresh({ force: true }));
+});
+
+async function exportAudit(format) {
+  const query = auditQuery();
+  query.set('format', format);
+  const response = await fetch(`${API}/audit/export?${query}`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token.get()}` },
+  });
+  if (!response.ok) {
+    let message = `Export failed (${response.status})`;
+    try { message = (await response.json())?.error?.message || message; } catch { /* not JSON */ }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const name = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1] || `audit.${format}`;
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const rows = response.headers.get('X-Export-Rows');
+  if (response.headers.get('X-Export-Truncated') === 'true') {
+    alert(`Downloaded ${name} with the newest ${rows} records only: more matched. ` +
+          'Narrow the filters (a later "Since" date) to export the rest.', 'warning');
+  } else {
+    alert(`Downloaded ${name} (${rows} records). The export is recorded in the audit log.`, 'success');
+  }
+}
+for (const [id, format] of [['aud-export-csv', 'csv'], ['aud-export-jsonl', 'jsonl']]) {
+  const button = document.getElementById(id);
+  button.addEventListener('click', () => guard(button, () => exportAudit(format)));
+}
 
 document.querySelectorAll('.nav-item[data-page]').forEach((link) => {
   link.onclick = (event) => { event.preventDefault(); navigate(link.dataset.page); };

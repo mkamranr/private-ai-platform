@@ -123,6 +123,19 @@ Metadata passes through `redact()`, which recursively strips password/token/key 
 including nested tool arguments. An audit log is one of the most widely readable tables
 in the platform.
 
+**Request IDs.** Every record carries the id of the request that wrote it, the same id
+that is on the request's log lines and its `X-Request-ID` response header. On the Audit
+Log page, click a request ID (under the source address) or paste one into *Request ID* to
+see everything that one request did.
+
+**Export.** *Export CSV* and *Export JSONL* on the Audit Log page download every record
+the current filters match, newest first, up to 100,000. More than that and the console
+says the file holds only the newest records; narrow the dates for the rest. CSV cells that
+would start a spreadsheet formula (`=`, `+`, `-`, `@`) get a leading apostrophe, because
+usernames tried at sign-in, user agents and messages are text anyone can choose. JSON
+Lines keeps `metadata` as an object, for a log pipeline or SIEM. Each export is itself
+recorded as `AUDIT_EXPORTED`, with its filters and row count. Both need `audit.view`.
+
 ---
 
 ## Agent security model

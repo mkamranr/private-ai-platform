@@ -448,7 +448,7 @@ retrievable — the platform stores a hash, so it genuinely cannot show the key 
 
 | method | path | permission |
 |---|---|---|
-| GET | `/audit-logs` | `audit.view` |
+| GET | `/audit` | `audit.view` |
 | GET | `/settings` | `settings.view`. Runtime and deployment settings |
 | PUT | `/settings/{key}` | `settings.manage`. `value`, `reason`; runtime settings only, 404 otherwise, 422 when invalid |
 | DELETE | `/settings/{key}` | `settings.manage`. Back to the deployment value |
@@ -456,9 +456,9 @@ retrievable — the platform stores a hash, so it genuinely cannot show the key 
 `/settings` is described in [settings.md](settings.md). Changes are audited as
 `SETTING_UPDATED` and `SETTING_RESET`.
 
-`/audit-logs` filters on `user_id, action, resource_type, resource_id, result,
-since, until`. There is no write, update or delete endpoint — the audit log is
-append-only.
+`/audit` filters on `user_id, action, resource_type, resource_id, result, since,
+until, request_id`. There is no update or delete endpoint: the audit log is
+append-only. See [Audit](#audit) below for the export.
 
 Backups are under `/ops/backups`: see
 [Operations and diagnostics](#operations-and-diagnostics) below.
@@ -552,8 +552,14 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 |---|---|---|
 | GET | `/audit` | `audit.view` — filters + a real total |
 | GET | `/audit/actions` | `audit.view` — actions present in the log |
+| POST | `/audit/export` | `audit.view` — the same filters plus `format` (`csv` or `jsonl`); a file of up to 100,000 records, newest first. `X-Export-Rows` gives the count and `X-Export-Truncated: true` says more matched. Audited as `AUDIT_EXPORTED` |
 
-No write verbs exist on `/audit`; all four return 405 from routing.
+`request_id` (up to 64 characters) matches the correlation id the request middleware puts
+on every log line and on the `X-Request-ID` response header, so one request's records can
+be read next to its logs.
+
+The export is the only POST, and it writes nothing but its own audit record. No update or
+delete verb exists on `/audit`.
 
 ### Models
 

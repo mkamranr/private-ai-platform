@@ -873,18 +873,30 @@
                 <option value="DENIED">DENIED</option>
               </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label small text-secondary mb-1" for="aud-resource">Resource type</label>
               <input class="form-control form-control-sm mono" id="aud-resource"
                      placeholder="user, model, tool…">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary mb-1" for="aud-request">Request ID</label>
+              <input class="form-control form-control-sm mono" id="aud-request" maxlength="64"
+                     placeholder="from a log line or X-Request-ID"
+                     title="Every record one request wrote. Click a request ID in the list to fill this in.">
             </div>
             <div class="col-md-2">
               <label class="form-label small text-secondary mb-1" for="aud-since">Since</label>
               <input class="form-control form-control-sm" id="aud-since" type="date">
             </div>
-            <div class="col-md-2">
-              <button id="aud-apply" class="btn btn-sm btn-outline-secondary">Apply</button>
-              <button id="aud-clear" class="btn btn-sm btn-link">Clear</button>
+          </div>
+          <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+            <button id="aud-apply" class="btn btn-sm btn-outline-secondary">Apply</button>
+            <button id="aud-clear" class="btn btn-sm btn-link">Clear</button>
+            <div class="ms-auto d-flex gap-2">
+              <button id="aud-export-csv" class="btn btn-sm btn-outline-secondary"
+                      title="Every record these filters match, up to 100,000. The export is itself audited.">Export CSV</button>
+              <button id="aud-export-jsonl" class="btn btn-sm btn-outline-secondary"
+                      title="One JSON record per line, for a log pipeline or SIEM. Up to 100,000 records.">Export JSONL</button>
             </div>
           </div>
         </div>

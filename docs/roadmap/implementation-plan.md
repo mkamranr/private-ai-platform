@@ -482,6 +482,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_quota_warnings.py`. Docs: [gateway-policy.md](../gateway-policy.md#warning-share-per-quota), api.md.
 - [ ] No per-minute warning (it refills each minute). The header is not sent on the platform's own calls (they have no caller to tell). Not exposed through CORS `Access-Control-Expose-Headers`.
 
+## E54: Audit export and correlation-ID filter (closes the feature-matrix audit gap)
+
+- [x] `request_id` filter on `GET /audit` (the column was already indexed). `AuditRepository.search` and `count` share one `_filtered` chain; results are ordered by time then id, so paging is stable.
+- [x] `POST /audit/export?format=csv|jsonl` with the same filters (`audit.view`): `services/audit_export.py`, newest first, capped at 100,000 rows (`X-Export-Rows`, `X-Export-Truncated`). Audited `AUDIT_EXPORTED` with format, rows, truncation and filters, committed before the file is sent. CSV formula guard moved to `core/csv_safe.py` (`safe_cell`) and shared with chargeback.
+- [x] Audit Log page: *Request ID* filter, a clickable request ID under each source address, *Export CSV* and *Export JSONL* using the page's filters. No migration.
+- [x] Tests: `tests/api/test_audit_api.py` (the first tests of the audit API). Docs: [security.md](../security.md#audit), api.md (stale `/audit-logs` path fixed).
+- [ ] Built in memory, not streamed; the cap stands in for paging. No scheduled or push export to a SIEM. No `until` field on the page (the API has it).
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

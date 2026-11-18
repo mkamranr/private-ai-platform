@@ -13,7 +13,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 5 | API key management | P0 | Existing | `services/api_keys.py`, `frontend/developer` | Expiry and allowed-alias scopes: verify against `test_api_key_scopes.py` |
 | 6 | vLLM / Ollama adapters | P0 | Existing | `services/llm_provider.py`; `ollama` is an external runtime | Declared-capability contract per adapter |
 | 7 | Basic RBAC | P0 | Existing (E3) | `core/permissions.py`, `models/auth.py`, `services/seed.py` | Mapped to the plan's 8 roles in E3 (`KNOWLEDGE_ADMIN` added); see `docs/teams.md` |
-| 8 | Audit trail | P0 | Existing | `models/audit.py`, `services/audit.py` | Export, correlation-ID filter in UI |
+| 8 | Audit trail | P0 | Existing | `models/audit.py`, `services/audit.py`, `services/audit_export.py` | ~~Export, correlation-ID filter in UI~~ (E54) |
 | 9 | Offline installation | P0 | Existing (E7) | `offline/`, `scripts/build_bundle.py`, `scripts/bundle_signing.py`, `scripts/sbom.py`, Offline Updates page | Key rotation and revocation |
 | 10 | Deployment lifecycle | P1 | Existing (E4) | `services/deployment.py`, `workers/deployments.py`, `services/scheduler.py` | Zero-downtime (blue/green) revisions need replicas |
 | 11 | GPU monitoring | P1 | Existing | `node-agent/`, `models/infrastructure.py`, `services/gpu_alerts.py` | ~~Thresholds feeding alerts~~ (E52) |
