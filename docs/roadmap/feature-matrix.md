@@ -16,7 +16,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 8 | Audit trail | P0 | Existing | `models/audit.py`, `services/audit.py` | Export, correlation-ID filter in UI |
 | 9 | Offline installation | P0 | Existing (E7) | `offline/`, `scripts/build_bundle.py`, `scripts/bundle_signing.py`, `scripts/sbom.py`, Offline Updates page | Key rotation and revocation |
 | 10 | Deployment lifecycle | P1 | Existing (E4) | `services/deployment.py`, `workers/deployments.py`, `services/scheduler.py` | Zero-downtime (blue/green) revisions need replicas |
-| 11 | GPU monitoring | P1 | Existing | `node-agent/`, `models/infrastructure.py` | Thresholds feeding alerts |
+| 11 | GPU monitoring | P1 | Existing | `node-agent/`, `models/infrastructure.py`, `services/gpu_alerts.py` | ~~Thresholds feeding alerts~~ (E52) |
 | 12 | RAG knowledge bases | P1 | Existing (E5) | `services/knowledge.py`, `retrieval.py`, `workers/ingestion.py` | Per-document ACL, whole-base re-embed |
 | 13 | Reranking / retrieval trace | P1 | Existing (E5) | `services/knowledge.py` (`retrieve`), `services/rag_eval.py`, `api/v1/retrieval.py` | Answer faithfulness scoring (judge model), query history |
 | 14 | MCP registry / policies | P1 | Existing | `models/agents.py`, `services/tool_pipeline.py`, `services/agent_registry.py`, `mcp/` | ~~Shared SSRF policy~~ (E51); managed on the Tools & MCP page rather than a page of its own |
@@ -30,7 +30,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 22 | Advanced chargeback | P2 | Existing (E9) | `services/chargeback.py`, `api/v1/chargeback.py`, Chargeback page | Currency budgets and cost alerts; non-gateway costs (ingestion, tools, voice) |
 | 23 | Large connector catalogue | P2 | Existing (E10) | `mcp/manifests/` (7), `services/connector_catalogue.py`, `services/connector_manifest.py`, Connector Catalogue page | First-party connectors (read-only SQL, HTTP/OpenAPI with a destination allow-list) |
 | 24 | Teams / tenant isolation | (5.12) | Existing (E3) | `models/teams.py`, `core/scope.py`, `services/teams.py`, Teams page | Agents and workflows checked against their own team at save, move and run time; memory, traces, voice and dashboard follow scope (E18) |
-| 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | GPU-threshold alerts, notification channels |
+| 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | ~~GPU-threshold alerts~~ (E52), ~~notification channels~~ (E13) |
 | 26 | Settings page | (§6) | Existing (E8) | `services/runtime_settings.py`, `api/v1/settings.py`, Settings page | More runtime settings as consumers move to per-request reads |
 | 27 | Diagnostics bundle | (5.16) | Existing (E7) | `services/diagnostics.py`, `core/redact.py`, Diagnostics page | none |
 | 28 | Speech, OCR, voice | (beyond plan) | Existing | `services/voice.py`, `media_provider.py` | none |

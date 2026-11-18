@@ -67,6 +67,34 @@ ECC must not be recorded as a device reporting no ECC errors.
 Recorded on **change** only (`gpu_health_events`). An alert stream repeating "GPU 3 is
 hot" every 15 seconds is one an operator learns to ignore.
 
+## Threshold alerts
+
+Health events are history; alerts are what someone gets told about. The worker job
+`gpu_alerts` runs every `WORKERS__GPU_ALERT_INTERVAL_SECONDS` (default 60, range
+15–3600). It compares each GPU's newest sample with the thresholds below and keeps one
+alert per GPU (source `gpu_threshold`) at the worst level any of them gives:
+
+| condition | alert |
+|---|---|
+| any uncorrectable ECC error | `CRITICAL` |
+| temperature at or above `gpu.alert_temperature_critical_celsius` (default 90 °C) | `CRITICAL` |
+| temperature at or above `gpu.alert_temperature_warning_celsius` (default 83 °C) | `WARNING` |
+| memory use at or above `gpu.alert_memory_warning_percent` (default 98%) | `WARNING` |
+
+The title names the node, the GPU index and what crossed the line, for example
+*GPU 2 on gpu-node-01: 92 °C, memory 99% used*. A GPU that gets worse moves its alert from
+WARNING to CRITICAL, which channels announce again. The alert clears itself when the GPU is
+back within every threshold, when it has sent no sample for five minutes (an unreachable
+node shows in its own status), or when `gpu.alerts_enabled` is turned off.
+
+The thresholds are on the Settings page under *GPU monitoring* and apply from the next
+check. The warning temperature must be below the critical one. Model servers usually
+reserve 90–95% of GPU memory when they start, so keep the memory threshold above that.
+
+The ECC counter only goes back to zero when the driver resets it (usually a reboot or a
+GPU reset), so an ECC alert stays open until then. GPUs belong to no team, so their alerts
+go to channels set to *Every team*.
+
 ## Retention
 
 Four GPUs at the default 15-second interval is roughly 700k rows per month per node.
