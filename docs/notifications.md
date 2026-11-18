@@ -214,8 +214,18 @@ and never goes in the database:
 | `NOTIFICATIONS__SMTP_FROM` | `ai-platform@localhost` | the sender address |
 | `NOTIFICATIONS__SMTP_VERIFY_TLS` | true | turn off only for an internal relay with a self-signed certificate |
 | `NOTIFICATIONS__SMTP_TIMEOUT_SECONDS` | 10 | |
+| `NOTIFICATIONS__EMAIL_HTML` | true | send an HTML version as well as the plain text (E48) |
 
-- Messages are plain text, with the subject `[AI Platform] [CRITICAL] <title>`.
+- The subject is `[AI Platform] [CRITICAL] <title>`.
+- **HTML (E48).** Each message is `multipart/alternative`: the plain text, plus an HTML
+  version with the same content. The HTML has a colour bar for the severity (green for
+  resolved), the facts in a small table, and an *Open the Alerts page* button when
+  `NOTIFICATIONS__CONSOLE_URL` is set. A digest is a list. The HTML is self-contained:
+  inline styles only, with no images, fonts, scripts or remote resources. Nothing loads
+  when it is opened, and it renders the same on an air-gapped network. Every alert value
+  is escaped, so an alert's text cannot add markup. The approver reminder emails (E39) use
+  the same format. If a mail gateway strips or quarantines HTML, set
+  `NOTIFICATIONS__EMAIL_HTML=false` to send plain text only.
 - A channel has up to 20 recipients; use a distribution list for more.
 - If the server refuses some recipients but not all, the message counts as sent and the
   result says how many were refused.
@@ -262,6 +272,6 @@ Audit actions:
   of `notification.manage`. An API key's budget alerts are not routed to the key's team.
 - **Paging services' native APIs**, such as PagerDuty's Events API. Use a JSON webhook to
   an internal relay instead.
-- **HTML email** and **SMS**.
+- **SMS.** (HTML email since E48.)
 - **Prometheus rules.** These go through Grafana and are not routed through channels. See
   [observability.md](observability.md#alerts).

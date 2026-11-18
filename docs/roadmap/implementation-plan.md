@@ -154,7 +154,7 @@ dashboard real signals.
 - [x] Outbox (`notification_deliveries`) with a dispatcher job (`notification_dispatch`, 30 s): retries with back-off up to `max_attempts`, a failing channel deferred for the rest of a run, a `notification_channel_failing` alert after three failures, 30-day history.
 - [x] API under `/notifications` with permission `notification.manage` (ADMIN, SUPER_ADMIN); test send; audited create, update, delete and test. Alerts page: channels, recent notifications, add/edit form. Metric `ai_platform_notifications_total`.
 - [x] Migration `c4e8a1f2d6b9` upgrades and downgrades cleanly. Doc: [docs/notifications.md](../notifications.md).
-- [ ] No digests (~~of what quiet hours held~~ since E47; no scheduled summary) ~~or quiet hours~~ (quiet hours since E42), ~~per-team routing~~ (since E46), PagerDuty native API, HTML email or SMS.
+- [ ] No digests (~~of what quiet hours held~~ since E47; no scheduled summary) ~~or quiet hours~~ (quiet hours since E42), ~~per-team routing~~ (since E46), PagerDuty native API, ~~HTML email~~ (since E48) or SMS.
 
 ## E14: Auth hardening
 
@@ -433,6 +433,13 @@ dashboard real signals.
 - [x] Dispatcher: once a channel's window has ended, two or more held deliveries due for a chat webhook or an email channel go out as one message (`digest_message`, event `digest`, the highest severity; one line per delivery, oldest first, 30 listed and the rest counted). Every delivery in it gets the outcome, an attempt and the `digest_id`; a failed digest is retried as a whole. A generic JSON webhook, and a single held delivery, are sent one by one as before. `DispatchResult.digests`, logged by the scheduler.
 - [x] `DeliveryRead.held_at`, `digest_id`. Tests: `TestDigest` and the long-digest test in `tests/api/test_quiet_hours.py`. Doc: [notifications.md](../notifications.md).
 - [ ] No scheduled (hourly or daily) summary; no digest for generic JSON webhooks; a raised-and-resolved alert is two lines, not one.
+
+## E48: HTML notification emails (closes the E13 HTML item)
+
+- [x] `html_body(msg)`: the same content as the plain text, as a self-contained page (inline styles; no images, fonts, scripts or remote resources; every value escaped; the only link is the console's Alerts page). Severity colour bar, facts table, digest list (E47).
+- [x] `EmailSender` sends `multipart/alternative` (text, then HTML), for channel emails and the approver reminders (E39). `NOTIFICATIONS__EMAIL_HTML` (default true) turns the HTML part off. No migration.
+- [x] Tests: `tests/unit/test_html_email.py`; `test_email` reads the plain part. Doc: [notifications.md](../notifications.md#email).
+- [ ] One built-in layout (no templates or branding); the subject and plain text are unchanged.
 
 ## Phase acceptance (applies to each)
 

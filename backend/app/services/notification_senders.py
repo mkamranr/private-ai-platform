@@ -20,6 +20,7 @@ import asyncio
 import datetime as dt
 import hashlib
 import hmac
+import html
 import json
 import smtplib
 import ssl
@@ -216,6 +217,89 @@ def plain_text(msg: Message) -> str:
     return "\n".join(lines)
 
 
+#: E48: the colour bar of an HTML email, by what it reports.
+_TONE = {
+    "CRITICAL": "#b42318",
+    "WARNING": "#b54708",
+    "INFO": "#175cd3",
+    DeliveryEvent.RESOLVED: "#067647",
+    DeliveryEvent.TEST: "#475467",
+}
+_FOOTER = (
+    "Sent by the Private AI Platform. Change where alerts go on the Alerts page, under "
+    "Notification channels."
+)
+
+
+def _tone(msg: Message) -> str:
+    if msg.event in (DeliveryEvent.RESOLVED, DeliveryEvent.TEST):
+        return _TONE[msg.event]
+    return _TONE.get(msg.severity, "#475467")
+
+
+def html_body(msg: Message) -> str:
+    """E48: the HTML part of a notification email, with the same content as
+    :func:`plain_text`.
+
+    Self-contained: inline styles only, no images, fonts, scripts or remote resources, so it
+    renders on an air-gapped mail client and loads nothing when it is opened. Every value is
+    HTML-escaped, so an alert title or message cannot inject markup. The only link is the
+    console's Alerts page, when ``NOTIFICATIONS__CONSOLE_URL`` is set."""
+    e = html.escape
+    tone = _tone(msg)
+    if msg.event == DIGEST_EVENT:
+        rows = "".join(
+            f'<li style="margin:0 0 6px">{e(_digest_line(i)[2:])}</li>'
+            for i in msg.items[:DIGEST_MAX_LINES]
+        )
+        more = (
+            f'<p style="margin:8px 0 0;color:#475467">... and '
+            f"{len(msg.items) - DIGEST_MAX_LINES} more on the Alerts page.</p>"
+            if len(msg.items) > DIGEST_MAX_LINES
+            else ""
+        )
+        content = f'<ul style="margin:0;padding-left:20px">{rows}</ul>{more}'
+    else:
+        when = msg.resolved_at if msg.event == DeliveryEvent.RESOLVED else msg.raised_at
+        facts = [
+            ("Source", msg.source),
+            (_EVENT_LABEL.get(msg.event, msg.event), _when(when)),
+        ]
+        if msg.occurrences > 1:
+            facts.append(("Seen", f"{msg.occurrences} times"))
+        table = "".join(
+            f'<tr><td style="padding:2px 12px 2px 0;color:#475467">{e(k)}</td>'
+            f'<td style="padding:2px 0">{e(v)}</td></tr>'
+            for k, v in facts
+        )
+        text = (
+            f'<p style="margin:0 0 12px;white-space:pre-wrap">{e(msg.message)}</p>'
+            if msg.message
+            else ""
+        )
+        table_html = f'<table role="presentation" style="border-collapse:collapse">{table}</table>'
+        content = f"{text}{table_html}"
+    button = (
+        f'<p style="margin:16px 0 0"><a href="{e(msg.link, quote=True)}" '
+        f'style="display:inline-block;padding:8px 14px;border-radius:6px;background:{tone};'
+        'color:#ffffff;text-decoration:none">Open the Alerts page</a></p>'
+        if msg.link
+        else ""
+    )
+    return (
+        '<!doctype html><html><head><meta charset="utf-8">'
+        f"<title>{e(msg.heading)}</title></head>"
+        '<body style="margin:0;padding:16px;background:#f2f4f7;'
+        'font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;color:#101828">'
+        '<div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:8px;'
+        f'border-top:4px solid {tone};padding:20px">'
+        f'<h1 style="margin:0 0 12px;font-size:18px;color:{tone}">{e(msg.heading)}</h1>'
+        f"{content}{button}</div>"
+        '<p style="max-width:640px;margin:12px auto 0;font-size:12px;color:#667085">'
+        f"{e(_FOOTER)}</p></body></html>"
+    )
+
+
 def chat_payload(msg: Message) -> dict[str, Any]:
     return {"text": plain_text(msg)}
 
@@ -326,11 +410,10 @@ class EmailSender:
         email["Message-ID"] = make_msgid(domain="ai-platform.local")
         email["X-AIP-Event"] = msg.event
         email["X-AIP-Delivery"] = msg.delivery_id
-        email.set_content(
-            plain_text(msg)
-            + "\n\n--\nSent by the Private AI Platform. Change where alerts go on the "
-            "Alerts page, under Notification channels.\n"
-        )
+        email.set_content(plain_text(msg) + f"\n\n--\n{_FOOTER}\n")
+        if self._settings.email_html:
+            # E48: multipart/alternative. A client that cannot show HTML shows the text.
+            email.add_alternative(html_body(msg), subtype="html")
         return email
 
     def _context(self) -> ssl.SSLContext:

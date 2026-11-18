@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### HTML notification emails (E48)
+- **Easier to read in a mail client.** Alert, digest and approver reminder emails now include an HTML version alongside the plain text. It has a colour bar for the severity, the details in a small table, and a button to the Alerts page when `NOTIFICATIONS__CONSOLE_URL` is set. It loads nothing from the network: no images, fonts or scripts.
+- If your mail gateway strips or quarantines HTML, set `NOTIFICATIONS__EMAIL_HTML=false` to send plain text only.
+- **Upgrade.** Nothing to do: no migration.
+
 ### One digest when quiet hours end (E47)
 - **No burst of messages in the morning.** When a channel's quiet hours end, chat webhooks and email channels now get what was held as one *[DIGEST]* message, with one line per alert, instead of one message per alert. Generic JSON webhooks still get one document per alert.
 - The delivery list shows when each notification was held and which digest it went out in (`held_at`, `digest_id`).
