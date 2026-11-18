@@ -400,6 +400,7 @@ class InfrastructureWorker:
                     failed=result.failed,
                     deferred=result.deferred,
                     held=result.held,
+                    digests=result.digests,
                 )
         except Exception:
             log.exception("notification_dispatch_failed")

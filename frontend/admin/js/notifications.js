@@ -83,12 +83,16 @@ function notifyDeliveriesCard(page) {
     const [tone, label] = DELIVERY_PILL[d.status] || ['IDLE', d.status];
     const retry = d.status === 'pending' && d.attempts
       ? `<div class="small text-secondary">retry ${esc(ago(d.next_attempt_at))}</div>` : '';
+    // E42/E47: held by quiet hours, then sent alone or as part of one digest message.
+    const held = d.digest_id
+      ? ' <span class="chip" title="Held by quiet hours, then sent in one digest message">in digest</span>'
+      : (d.held_at ? ' <span class="chip" title="Held by quiet hours">held</span>' : '');
     return `<tr>
       <td class="small text-secondary text-nowrap" title="${esc(d.created_at)}">${esc(ago(d.created_at))}</td>
       <td class="small">${esc(d.channel_name)}</td>
       <td class="small">${esc(DELIVERY_EVENT_LABEL[d.event] || d.event)} ${d.event === 'test' ? '' : pill(d.severity)}</td>
       <td class="small">${esc(d.title)}</td>
-      <td>${pill(tone, d.status === 'pending' && d.attempts ? 'Retrying' : label)}${retry}</td>
+      <td>${pill(tone, d.status === 'pending' && d.attempts ? 'Retrying' : label)}${held}${retry}</td>
       <td class="text-end small">${d.attempts}</td>
       <td class="small text-danger" style="max-width:20rem">${esc(d.last_error || '')}</td>
     </tr>`;

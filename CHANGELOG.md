@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### One digest when quiet hours end (E47)
+- **No burst of messages in the morning.** When a channel's quiet hours end, chat webhooks and email channels now get what was held as one *[DIGEST]* message, with one line per alert, instead of one message per alert. Generic JSON webhooks still get one document per alert.
+- The delivery list shows when each notification was held and which digest it went out in (`held_at`, `digest_id`).
+- **Upgrade.** Migration `e7a9c1d3f5b6` adds two nullable columns to `notification_deliveries`.
+
 ### Team notification channels (E46)
 - **Each team's alerts in its own chat.** A notification channel can now belong to a team. It then announces only that team's alerts: reminders about approvals for its agents and workflows, its token and cost budgets, and failed deployments of its models. Channels without a team still announce everything.
 - On the Alerts page, choose the team under *Alerts about* on the channel form, or set `team_id` in the API. Alerts that concern a team show a team chip.
