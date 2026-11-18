@@ -1519,6 +1519,13 @@
             </div>
             <div class="col-12 form-text small mt-0">Set at least one limit. A call that crosses a
               budget is allowed to finish; the next one is refused with 429.</div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary" for="q-warn">Warn at (%)</label>
+              <input class="form-control" id="q-warn" type="number" min="1" max="99" placeholder="default">
+            </div>
+            <div class="col-md-9 form-text small align-self-end">Share of the daily or monthly budget at
+              which an alert is raised and responses carry <code>X-Quota-Warning</code>. Empty uses
+              the platform default (Settings, Gateway).</div>
             <div class="col-12">
               <label class="form-label small text-secondary" for="q-desc">Description</label>
               <input class="form-control" id="q-desc" maxlength="2000">

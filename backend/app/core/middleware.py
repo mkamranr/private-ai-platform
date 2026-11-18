@@ -18,6 +18,7 @@ from app.core.request_context import (
     new_request_id,
     set_client_ip,
     set_request_id,
+    start_response_headers,
 )
 
 log = get_logger("app.access")
@@ -129,6 +130,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         set_client_ip(client_ip)
         structlog.contextvars.bind_contextvars(request_id=request_id, client_ip=client_ip)
 
+        extra_headers = start_response_headers()
         started = time.perf_counter()
         try:
             response = await call_next(request)
@@ -152,6 +154,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         self._record(request, status_code=response.status_code, elapsed=elapsed)
         duration_ms = round(elapsed * 1000, 2)
         response.headers[REQUEST_ID_HEADER] = request_id
+        for header, value in extra_headers.items():
+            response.headers[header] = value
         for header, value in _SECURITY_HEADERS.items():
             response.headers.setdefault(header, value)
 

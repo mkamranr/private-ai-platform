@@ -25,6 +25,32 @@ log = get_logger(__name__)
 _LIMITS = ("tokens_per_minute", "daily_tokens", "monthly_tokens", "max_concurrency")
 
 
+def quota_status(
+    quota: GatewayQuota, usage: dict[str, int | None], warn_percent: int
+) -> tuple[str, int | None]:
+    """``(status, highest used percent)`` of a quota's daily and monthly budgets (E53).
+
+    The per-minute rate is left out: it refills every minute, so "near" says nothing an
+    operator can act on.
+    """
+    if quota.subject == QUOTA_WILDCARD:
+        return "unknown", None
+    shares = [
+        used * 100 // limit
+        for used, limit in (
+            (usage.get("day"), quota.daily_tokens),
+            (usage.get("month"), quota.monthly_tokens),
+        )
+        if used is not None and limit
+    ]
+    if not shares:
+        return "ok", None
+    highest = max(shares)
+    if highest >= 100:
+        return "exhausted", highest
+    return ("near_limit" if highest >= warn_percent else "ok"), highest
+
+
 class QuotaService:
     def __init__(
         self,
@@ -53,7 +79,10 @@ class QuotaService:
         return [await self.describe(q) for q in await self._quotas.list_quotas(scope=scope)]
 
     async def describe(self, quota: GatewayQuota) -> dict[str, Any]:
-        """A quota with its subject named and its current usage."""
+        """A quota with its subject named, its current usage and how near its limits it is."""
+        usage = await self._policy.usage_for(quota)
+        warn = self._policy.warn_percent_for(quota)
+        status, used_percent = quota_status(quota, usage, warn)
         return {
             "id": quota.id,
             "scope": quota.scope,
@@ -64,8 +93,12 @@ class QuotaService:
             "daily_tokens": quota.daily_tokens,
             "monthly_tokens": quota.monthly_tokens,
             "max_concurrency": quota.max_concurrency,
+            "warn_percent": quota.warn_percent,
+            "effective_warn_percent": warn,
+            "status": status,
+            "used_percent": used_percent,
             "enabled": quota.enabled,
-            "usage": await self._policy.usage_for(quota),
+            "usage": usage,
             "created_at": quota.created_at,
             "updated_at": quota.updated_at,
         }
@@ -107,6 +140,7 @@ class QuotaService:
             scope=scope,
             subject=subject,
             description=fields.get("description"),
+            warn_percent=fields.get("warn_percent"),
             enabled=fields.get("enabled", True),
             created_by=actor.id,
             **{name: fields.get(name) for name in _LIMITS},
@@ -138,6 +172,8 @@ class QuotaService:
                 setattr(quota, name, changes[name])
         if "description" in changes:
             quota.description = changes["description"]
+        if "warn_percent" in changes:
+            quota.warn_percent = changes["warn_percent"]
         if changes.get("enabled") is not None:
             quota.enabled = changes["enabled"]
 
@@ -236,5 +272,6 @@ class QuotaService:
             "scope": quota.scope,
             "subject": quota.subject,
             "enabled": quota.enabled,
+            "warn_percent": quota.warn_percent,
             **{name: getattr(quota, name) for name in _LIMITS},
         }

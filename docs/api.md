@@ -589,9 +589,9 @@ Under `/api/v1`, authenticated with the platform JWT. See [gateway-policy.md](ga
 
 | method | path | permission |
 |---|---|---|
-| GET | `/quotas` | `quota.view` — each with today's and this month's usage |
+| GET | `/quotas` | `quota.view` — each with today's and this month's usage, `effective_warn_percent`, `status` (`ok`, `near_limit`, `exhausted`, `unknown` for `*`) and `used_percent` |
 | POST | `/quotas` | `quota.manage` — `scope` is `api_key`, `end_user` or `model`; subject `*` means each one |
-| PATCH | `/quotas/{id}` | `quota.manage` — send `null` to remove a limit; at least one must remain |
+| PATCH | `/quotas/{id}` | `quota.manage` — send `null` to remove a limit; at least one must remain. `warn_percent` (1–99, `null` for the platform default) sets the warning share |
 | DELETE | `/quotas/{id}` | `quota.manage` |
 | GET | `/usage/by-key` | `usage.view` — requests, tokens and errors per API key |
 | GET | `/gateway/circuits` | `monitoring.view` — circuit breakers on the replica that answered |

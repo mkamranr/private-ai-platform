@@ -71,8 +71,8 @@ release its leases, so each one lapses after `GATEWAY__CONCURRENCY_LEASE_SECONDS
 The budget check (every `workers.budget_check_interval_seconds`, default 300) raises
 an in-app alert before a daily or monthly token quota runs out:
 
-- **WARNING** at `gateway.budget_warning_percent` of the limit (default 80, a runtime
-  setting);
+- **WARNING** at the quota's warning share: its own *Warn at* percentage if set,
+  otherwise `gateway.budget_warning_percent` (default 80, a runtime setting);
 - **CRITICAL** at 100%. At that point the gateway is already refusing requests.
 
 There is one alert per quota, period and subject. A `*` quota is checked for every subject
@@ -80,6 +80,34 @@ that used tokens, except subjects with an enabled quota of their own, which are 
 against that quota instead. Disabled quotas raise nothing. The alert clears itself when
 usage drops below the warning share, which happens when the day or month resets or the
 limit is raised. Per-minute limits and concurrency change too fast to be worth an alert.
+
+### Warning share per quota
+
+Each quota can set *Warn at* (1–99%, `warn_percent` in the API). Leave it empty to follow
+the platform default. A team that wants notice well before a hard monthly limit can warn
+at 50% while every other quota keeps 80%.
+
+### Telling the caller
+
+A gateway response whose daily or monthly budget is at or past its warning share carries
+an `X-Quota-Warning` header, so an application can slow down or tell its user before it
+starts getting 429s:
+
+```
+X-Quota-Warning: api_key; period=monthly; used=85%
+```
+
+When several budgets apply (for example the key's and its team's), all of them are listed,
+the most used first, separated by commas. Below the warning share there is no header.
+Streamed responses carry it too, because it is decided before the stream starts. The
+share is the one the call was admitted against, so it does not include the call's own
+tokens.
+
+### On the Usage & Quotas page
+
+Each quota shows its warning share and a status: *On*, *Near limit* with the share used,
+or *Used up*. The progress bars turn amber at the quota's own warning share. *Warn at…*
+changes the share of an existing quota.
 
 Cost budgets in currency are separate and are described in
 [chargeback.md](chargeback.md#budgets).

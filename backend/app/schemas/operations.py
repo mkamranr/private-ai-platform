@@ -156,6 +156,12 @@ QuotaScopeLiteral = Literal["api_key", "end_user", "model", "team"]
 _TPM = Field(default=None, ge=1, le=100_000_000)
 _BUDGET = Field(default=None, ge=1, le=10**15)
 _CONCURRENCY = Field(default=None, ge=1, le=100_000)
+_WARN = Field(
+    default=None,
+    ge=1,
+    le=99,
+    description="Warn at this share of a daily or monthly budget; null for the platform default.",
+)
 
 
 class QuotaCreateRequest(BaseModel):
@@ -173,6 +179,7 @@ class QuotaCreateRequest(BaseModel):
     daily_tokens: int | None = _BUDGET
     monthly_tokens: int | None = _BUDGET
     max_concurrency: int | None = _CONCURRENCY
+    warn_percent: int | None = _WARN
     enabled: bool = True
 
 
@@ -184,6 +191,7 @@ class QuotaUpdateRequest(BaseModel):
     daily_tokens: int | None = _BUDGET
     monthly_tokens: int | None = _BUDGET
     max_concurrency: int | None = _CONCURRENCY
+    warn_percent: int | None = _WARN
     enabled: bool | None = None
 
 
@@ -207,6 +215,14 @@ class QuotaRead(ORMModel):
     daily_tokens: int | None = None
     monthly_tokens: int | None = None
     max_concurrency: int | None = None
+    warn_percent: int | None = None
+    #: The share that applies: ``warn_percent``, or the platform default when it is null.
+    effective_warn_percent: int
+    #: ``ok``, ``near_limit`` (a daily or monthly budget past the warning share) or
+    #: ``exhausted`` (one used up). ``unknown`` for ``*`` rows, which have no single subject.
+    status: Literal["ok", "near_limit", "exhausted", "unknown"] = "ok"
+    #: The highest share of a daily or monthly budget used, or null when there is none.
+    used_percent: int | None = None
     enabled: bool
     usage: QuotaUsage = Field(default_factory=QuotaUsage)
     created_at: dt.datetime
