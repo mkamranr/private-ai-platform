@@ -1750,6 +1750,7 @@
                 <select class="form-select" id="notify-format">
                   <option value="chat">Chat text (Mattermost, Slack, Teams, Rocket.Chat)</option>
                   <option value="generic">JSON document (ticketing, SOC, automation)</option>
+                  <option value="pagerduty">PagerDuty (Events API v2)</option>
                 </select>
               </div>
               <div class="col-sm-6 d-flex align-items-end">
@@ -1759,7 +1760,15 @@
                 </div>
               </div>
             </div>
-            <div class="row g-2 mb-3">
+            <div class="mb-3 d-none" id="notify-pd-row">
+              <label class="form-label small text-secondary" for="notify-routing-key">Routing key</label>
+              <input class="form-control font-monospace" id="notify-routing-key" type="password"
+                     maxlength="64" autocomplete="new-password">
+              <div class="form-text">The <em>Integration Key</em> of an Events API v2 integration on the
+                PagerDuty service (32 characters). Raised alerts open an incident, escalations update it
+                and resolutions close it. A test opens one and closes it straight away.</div>
+            </div>
+            <div class="row g-2 mb-3" id="notify-signing-row">
               <div class="col-sm-6">
                 <label class="form-label small text-secondary" for="notify-signing">Signing secret <span class="text-secondary">(optional)</span></label>
                 <input class="form-control" id="notify-signing" type="password" maxlength="256" autocomplete="new-password">

@@ -350,6 +350,52 @@ def html_body(msg: Message, brand: Brand | None = None) -> str:
     return email_templates.render(msg, brand)
 
 
+#: E50: PagerDuty's severities, by the platform's.
+_PD_SEVERITY = {"CRITICAL": "critical", "WARNING": "warning", "INFO": "info"}
+PAGERDUTY_SOURCE = "private-ai-platform"
+
+
+def pagerduty_payload(
+    msg: Message, routing_key: str, *, action: str | None = None
+) -> dict[str, Any]:
+    """E50: an Events API v2 event. ``action`` overrides the one implied by the message
+    (a test send triggers, then resolves). The dedup key is the alert's fingerprint, so
+    PagerDuty groups a repeat, an escalation and the resolution into one incident."""
+    resolve = (action or "") == "resolve" or (
+        action is None and msg.event == DeliveryEvent.RESOLVED
+    )
+    dedup = f"aip:{msg.fingerprint}" if msg.fingerprint else f"aip:{msg.delivery_id}"
+    if resolve:
+        return {"routing_key": routing_key, "event_action": "resolve", "dedup_key": dedup}
+    details: dict[str, Any] = {
+        "message": msg.message,
+        "occurrences": msg.occurrences,
+        "alert_id": msg.alert_id,
+        "resource_id": msg.resource_id,
+        "raised_at": _iso(msg.raised_at),
+    }
+    event: dict[str, Any] = {
+        "routing_key": routing_key,
+        "event_action": "trigger",
+        "dedup_key": dedup,
+        "payload": {
+            "summary": _short(msg.title, 1024) or "Alert",
+            "source": PAGERDUTY_SOURCE,
+            "severity": _PD_SEVERITY.get(msg.severity, "warning"),
+            "timestamp": _iso(msg.raised_at),
+            "component": msg.resource_type,
+            "group": msg.source,
+            "class": msg.source,
+            "custom_details": {k: v for k, v in details.items() if v is not None},
+        },
+        "client": "Private AI Platform",
+    }
+    if msg.link:
+        event["client_url"] = msg.link
+        event["links"] = [{"href": msg.link, "text": "Open the Alerts page"}]
+    return event
+
+
 def chat_payload(msg: Message) -> dict[str, Any]:
     return {"text": plain_text(msg)}
 
@@ -378,15 +424,58 @@ class WebhookSender:
         authorization: str | None,
         verify_tls: bool,
         timeout_seconds: float,
+        routing_key: str | None = None,
+    ) -> SendResult:
+        if payload_format == PayloadFormat.PAGERDUTY:
+            if not routing_key:
+                return SendResult(False, "This PagerDuty channel has no routing key.")
+            if msg.event == DeliveryEvent.TEST:
+                # A test opens an incident and resolves it at once, so nobody is left
+                # with an open page; the first answer is the one reported.
+                first = await self._post(
+                    pagerduty_payload(msg, routing_key, action="trigger"),
+                    msg,
+                    url,
+                    None,
+                    authorization,
+                    verify_tls,
+                    timeout_seconds,
+                )
+                if first.ok:
+                    await self._post(
+                        pagerduty_payload(msg, routing_key, action="resolve"),
+                        msg,
+                        url,
+                        None,
+                        authorization,
+                        verify_tls,
+                        timeout_seconds,
+                    )
+                return first
+            payload: dict[str, Any] = pagerduty_payload(msg, routing_key)
+        elif payload_format == PayloadFormat.CHAT:
+            payload = chat_payload(msg)
+        else:
+            payload = generic_payload(msg)
+        return await self._post(
+            payload, msg, url, signing_secret, authorization, verify_tls, timeout_seconds
+        )
+
+    async def _post(
+        self,
+        payload: dict[str, Any],
+        msg: Message,
+        url: str,
+        signing_secret: str | None,
+        authorization: str | None,
+        verify_tls: bool,
+        timeout_seconds: float,
     ) -> SendResult:
         try:
             # Again at send time: the policy may have tightened since the channel was saved.
             url = check_outbound_url(url, field="url")
         except ValidationError as exc:
             return SendResult(False, f"Refused by the outbound URL policy: {exc.message}")
-        payload = (
-            chat_payload(msg) if payload_format == PayloadFormat.CHAT else generic_payload(msg)
-        )
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         headers = {
             "Content-Type": "application/json",

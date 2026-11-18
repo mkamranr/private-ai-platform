@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ChannelKindName = Literal["webhook", "email"]
 SeverityName = Literal["INFO", "WARNING", "CRITICAL"]
-PayloadFormatName = Literal["generic", "chat"]
+PayloadFormatName = Literal["generic", "chat", "pagerduty"]
 
 
 class ChannelCreate(BaseModel):
@@ -32,6 +32,8 @@ class ChannelCreate(BaseModel):
     )
     verify_tls: bool = True
     timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    #: E50: the PagerDuty integration key, for ``payload_format`` ``pagerduty``. Write-only.
+    routing_key: str | None = Field(default=None, max_length=64, description="Write-only.")
     # email
     recipients: list[str] = Field(default_factory=list, max_length=50)
     # quiet hours (E42): only CRITICAL alerts are sent between these times
@@ -62,6 +64,7 @@ class ChannelUpdate(BaseModel):
     authorization: str | None = Field(default=None, max_length=2048)
     verify_tls: bool | None = None
     timeout_seconds: float | None = Field(default=None, gt=0, le=60)
+    routing_key: str | None = Field(default=None, max_length=64)
     recipients: list[str] | None = Field(default=None, max_length=50)
     #: E42. An empty string for both start and end removes quiet hours.
     quiet_start: str | None = Field(default=None, max_length=5)
@@ -88,6 +91,7 @@ class ChannelRead(BaseModel):
     payload_format: PayloadFormatName
     has_signing_secret: bool
     has_authorization: bool
+    has_routing_key: bool = False
     verify_tls: bool
     timeout_seconds: float
     recipients: list[str]

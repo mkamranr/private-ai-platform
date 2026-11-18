@@ -6,7 +6,9 @@
  */
 const notifyState = { data: null };
 
-const NOTIFY_FORMAT_LABEL = { generic: 'JSON', chat: 'Chat text' };
+const NOTIFY_FORMAT_LABEL = { generic: 'JSON', chat: 'Chat text', pagerduty: 'PagerDuty' };
+/* E50: PagerDuty's public Events API v2 address, offered when the format is chosen. */
+const PAGERDUTY_EVENTS_URL = 'https://events.pagerduty.com/v2/enqueue';
 const DELIVERY_PILL = {
   sent: ['HEALTHY', 'Sent'],
   failed: ['FAILED', 'Failed'],
@@ -125,6 +127,15 @@ async function renderNotifySection(body) {
     b.addEventListener('click', () => guard(b, () => deleteChannel(b.dataset.notifyDelete))));
 }
 
+/* E50: a PagerDuty channel takes a routing key instead of a signing secret or header. */
+function notifyFormatFields() {
+  const pd = document.getElementById('notify-format').value === 'pagerduty';
+  document.getElementById('notify-pd-row').classList.toggle('d-none', !pd);
+  document.getElementById('notify-signing-row').classList.toggle('d-none', pd);
+  const url = document.getElementById('notify-url');
+  if (pd && !url.value && !document.getElementById('notify-id').value) url.value = PAGERDUTY_EVENTS_URL;
+}
+
 function notifyKindFields(kind) {
   document.getElementById('notify-webhook-fields').classList.toggle('d-none', kind !== 'webhook');
   document.getElementById('notify-email-fields').classList.toggle('d-none', kind !== 'email');
@@ -181,11 +192,15 @@ function openNotifyModal(channel = null) {
     document.getElementById('notify-quiet-zone').value = channel.quiet_timezone || 'UTC';
     document.getElementById('notify-recipients').value = channel.recipients.join('\n');
   }
+  document.getElementById('notify-routing-key').placeholder = channel?.has_routing_key
+    ? 'Set. Leave blank to keep it.' : '';
   notifyKindFields(kind.value);
+  notifyFormatFields();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('notify-modal')).show();
 }
 
 document.getElementById('notify-kind').addEventListener('change', (e) => notifyKindFields(e.target.value));
+document.getElementById('notify-format').addEventListener('change', notifyFormatFields);
 
 onModalSubmit('notify-form', 'notify-error', async () => {
   const value = (id) => document.getElementById(id).value.trim();
@@ -208,6 +223,7 @@ onModalSubmit('notify-form', 'notify-error', async () => {
     body.payload_format = value('notify-format');
     body.verify_tls = document.getElementById('notify-verify-tls').checked;
     if (value('notify-url')) body.url = value('notify-url');
+    if (value('notify-routing-key')) body.routing_key = value('notify-routing-key');
     for (const [name, field, clear] of [['signing_secret', 'notify-signing', 'notify-signing-clear'],
       ['authorization', 'notify-auth', 'notify-auth-clear']]) {
       if (document.getElementById(clear).checked) body[name] = '';

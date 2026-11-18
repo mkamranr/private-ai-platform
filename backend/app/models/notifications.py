@@ -53,6 +53,9 @@ class PayloadFormat(enum.StrEnum):
     #: ``{"text": ...}``, which Mattermost, Slack, Rocket.Chat and Teams incoming
     #: webhooks all accept.
     CHAT = "chat"
+    #: E50: PagerDuty's Events API v2. Raised and escalated alerts trigger an incident,
+    #: resolved ones resolve it; the alert's fingerprint is the dedup key.
+    PAGERDUTY = "pagerduty"
 
 
 class DeliveryEvent(enum.StrEnum):
@@ -82,7 +85,8 @@ class NotificationChannel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="notification_channel_min_severity",
         ),
         CheckConstraint(
-            "payload_format IN ('generic','chat')", name="notification_channel_payload_format"
+            "payload_format IN ('generic','chat','pagerduty')",
+            name="notification_channel_payload_format",
         ),
         CheckConstraint(
             "timeout_seconds > 0 AND timeout_seconds <= 60",
@@ -154,6 +158,13 @@ class NotificationChannel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+
+    #: E50: the PagerDuty integration's routing key, Fernet-encrypted. Write-only.
+    routing_key_encrypted: Mapped[str | None] = mapped_column(Text)
+
+    @property
+    def has_routing_key(self) -> bool:
+        return self.routing_key_encrypted is not None
 
     @property
     def has_signing_secret(self) -> bool:

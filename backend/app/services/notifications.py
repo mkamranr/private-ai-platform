@@ -103,7 +103,7 @@ DELIVERY_RETENTION = dt.timedelta(days=30)
 FAILING_AFTER = 3
 MAX_RECIPIENTS = 20
 _EMAIL = re.compile(r"^[^@\s<>,;\"']+@[^@\s<>,;\"']+$")
-_SECRET_FIELDS = ("url", "signing_secret", "authorization")
+_SECRET_FIELDS = ("url", "signing_secret", "authorization", "routing_key")
 
 
 def channel_failing_fingerprint(channel_id: uuid.UUID | str) -> str:
@@ -168,6 +168,7 @@ class ChannelSender:
                     authorization=self._plain(channel.authorization_encrypted),
                     verify_tls=channel.verify_tls,
                     timeout_seconds=channel.timeout_seconds,
+                    routing_key=self._plain(channel.routing_key_encrypted),
                 )
         except ValueError as exc:  # a secret that no longer decrypts
             result = SendResult(False, str(exc))
@@ -293,6 +294,16 @@ class NotificationService:
             url = check_outbound_url(value, field="url")
             channel.url_encrypted = self._sender.cipher.encrypt(url)
             channel.url_display = mask_url(url)
+        elif field_name == "routing_key":
+            # E50: PagerDuty integration keys are 32 characters; anything else is a paste
+            # error that would only show up when the first incident fails to open.
+            if value and (len(value) != 32 or not value.isalnum()):
+                raise ValidationError(
+                    "A PagerDuty routing key is 32 letters and digits (the integration key "
+                    "of an Events API v2 integration).",
+                    details={"field": "routing_key"},
+                )
+            channel.routing_key_encrypted = self._sender.cipher.encrypt(value) if value else None
         elif field_name == "signing_secret":
             if value and len(value) < 16:
                 raise ValidationError(
@@ -302,6 +313,24 @@ class NotificationService:
             channel.signing_secret_encrypted = self._sender.cipher.encrypt(value) if value else None
         else:
             channel.authorization_encrypted = self._sender.cipher.encrypt(value) if value else None
+
+    @staticmethod
+    def _check_pagerduty(channel: NotificationChannel) -> None:
+        """E50: a PagerDuty channel needs its routing key, and does not sign requests
+        (PagerDuty would ignore the signature; the routing key is the credential)."""
+        if channel.payload_format != PayloadFormat.PAGERDUTY:
+            return
+        if not channel.routing_key_encrypted:
+            raise ValidationError(
+                "A PagerDuty channel needs the routing key of an Events API v2 integration.",
+                details={"field": "routing_key"},
+            )
+        if channel.signing_secret_encrypted:
+            raise ValidationError(
+                "PagerDuty does not check signatures. Remove the signing secret; the routing "
+                "key is what authorises events.",
+                details={"field": "signing_secret"},
+            )
 
     @staticmethod
     def snapshot(channel: NotificationChannel) -> dict[str, Any]:
@@ -317,6 +346,7 @@ class NotificationService:
             "payload_format": channel.payload_format,
             "has_signing_secret": channel.has_signing_secret,
             "has_authorization": channel.has_authorization,
+            "has_routing_key": channel.has_routing_key,
             "recipients": list(channel.recipients),
             "team_id": str(channel.team_id) if channel.team_id else None,
             "quiet_hours": (
@@ -375,6 +405,7 @@ class NotificationService:
             for name in _SECRET_FIELDS:
                 if data.get(name):
                     self._set_secret(channel, name, data[name])
+            self._check_pagerduty(channel)
         else:
             if any(data.get(name) for name in _SECRET_FIELDS):
                 raise ValidationError(
@@ -418,9 +449,10 @@ class NotificationService:
                         "A webhook channel needs a URL.", details={"field": "url"}
                     )
                 self._set_secret(channel, "url", changes["url"])
-            for name in ("signing_secret", "authorization"):
+            for name in ("signing_secret", "authorization", "routing_key"):
                 if changes.get(name) is not None:
                     self._set_secret(channel, name, changes[name])
+            self._check_pagerduty(channel)
         else:
             if any(changes.get(name) for name in _SECRET_FIELDS):
                 raise ValidationError(
@@ -446,7 +478,9 @@ class NotificationService:
         await self._channels.session.refresh(channel)
         after = self.snapshot(channel)
         changed = sorted(k for k in after if after[k] != before[k])
-        secret_changed = [n for n in ("signing_secret", "authorization") if n in changes]
+        secret_changed = [
+            n for n in ("signing_secret", "authorization", "routing_key") if n in changes
+        ]
         if changed or secret_changed or "url" in changes:
             await self._audit.record(
                 AuditAction.NOTIFICATION_CHANNEL_UPDATED,
@@ -736,7 +770,7 @@ class NotificationDispatcher:
                 or channel.id in failed_this_run
                 or (
                     channel.kind == ChannelKind.WEBHOOK
-                    and channel.payload_format == PayloadFormat.GENERIC
+                    and channel.payload_format != PayloadFormat.CHAT
                 )
                 or _quiet_until(channel, now) is not None
             ):

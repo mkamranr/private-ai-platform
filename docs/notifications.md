@@ -200,6 +200,44 @@ Redirects are never followed, so a receiver can't bounce a request elsewhere.
 followed. Anything else is retried, with the status and the start of the body shown as
 the error.
 
+## PagerDuty (E50)
+
+A webhook channel with the format **PagerDuty (Events API v2)** pages through PagerDuty
+directly, without a relay:
+
+1. In PagerDuty, add an **Events API v2** integration to the service that should be
+   paged, and copy its *Integration Key* (32 characters).
+2. On the Alerts page, add a webhook channel, choose *PagerDuty (Events API v2)*, and
+   paste the key as the **Routing key**. The URL is filled in with PagerDuty's address,
+   `https://events.pagerduty.com/v2/enqueue`. Change it if events go through a proxy or
+   an on-premises relay.
+3. Press *Send test*. It opens an incident and resolves it straight away, so nobody is
+   left with an open page.
+
+| Alert event | PagerDuty event |
+|---|---|
+| raised | `trigger`, with the severity as `critical`, `warning` or `info` |
+| escalated | `trigger` again with the higher severity, which updates the same incident |
+| resolved | `resolve` (if *Also say when an alert is resolved* is on) |
+
+- **One incident per alert.** The dedup key is `aip:<alert fingerprint>`, so a repeat,
+  an escalation and the resolution all land on the same incident.
+- **What PagerDuty receives:** the summary (the alert title), source
+  `private-ai-platform`, the alert source as group and class, the resource type as
+  component, and the message, occurrences and ids as custom details. When
+  `NOTIFICATIONS__CONSOLE_URL` is set, it also gets a link to the Alerts page.
+- **The routing key is a secret.** It is stored encrypted, never shown again (the channel
+  shows only that one is set), and never written to the audit log. A key that is not 32
+  letters and digits is refused when you save.
+- **No signing secret.** PagerDuty ignores signatures and authorises by routing key, so a
+  signing secret is refused on a PagerDuty channel.
+- **Quiet hours** (E42) still hold non-critical alerts, but a PagerDuty channel never gets a
+  digest (E47). Each alert is its own event, because PagerDuty deduplicates by key.
+- **Network.** PagerDuty is on the internet, so the platform needs outbound access to
+  `events.pagerduty.com`, or a relay. The outbound URL policy allows it, because it is not
+  an AI service. A site with no outbound access can point the URL at an internal
+  PagerDuty-compatible receiver.
+
 ## Email
 
 Email goes through the site's mail server, configured in `.env`. The password is a secret
@@ -318,8 +356,8 @@ Audit actions:
   filter keeps busy channels quiet. There is no daily or hourly summary.
 - **Team owners managing their own channels.** Team channels (E46) are set up by holders
   of `notification.manage`. An API key's budget alerts are not routed to the key's team.
-- **Paging services' native APIs**, such as PagerDuty's Events API. Use a JSON webhook to
-  an internal relay instead.
+- **Other paging services' native APIs** (Opsgenie, VictorOps). PagerDuty is built in
+  since E50. For the others, use a JSON webhook to an internal relay.
 - **SMS.** (HTML email since E48.)
 - **Prometheus rules.** These go through Grafana and are not routed through channels. See
   [observability.md](observability.md#alerts).
