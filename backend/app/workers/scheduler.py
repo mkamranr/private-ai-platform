@@ -58,6 +58,7 @@ from app.repositories.infrastructure import (
     GpuRepository,
     NodeRepository,
 )
+from app.repositories.knowledge import RetrievalQueryRepository
 from app.repositories.models_registry import ApiKeyRepository
 from app.repositories.notifications import (
     NotificationChannelRepository,
@@ -253,6 +254,22 @@ class InfrastructureWorker:
                 log.info("metric_retention_completed", deleted=deleted)
         except Exception:
             log.exception("metric_retention_failed")
+
+    async def purge_query_history(self) -> None:
+        """E62: delete retrieval-playground questions past knowledge.query_history_days
+        (all of them at 0). Read per run, like every retention window. Never raises."""
+        try:
+            async with self._session_factory() as session:
+                settings = await RUNTIME.effective(session, self._settings)
+                days = max(0, settings.knowledge.query_history_days)
+                deleted = await RetrievalQueryRepository(session).prune(
+                    older_than=dt.datetime.now(dt.UTC) - dt.timedelta(days=days)
+                )
+                await session.commit()
+            if deleted:
+                log.info("query_history_pruned", deleted=deleted, days=days)
+        except Exception:
+            log.exception("query_history_prune_failed")
 
     async def mark_stale_nodes(self) -> None:
         """Flag nodes that have stopped reporting.
@@ -452,6 +469,14 @@ class InfrastructureWorker:
             IntervalTrigger(seconds=RETENTION_INTERVAL_SECONDS),
             id="metric_retention",
             name="Delete GPU metrics past the retention window",
+            coalesce=True,
+            max_instances=1,
+        )
+        self._scheduler.add_job(
+            self.purge_query_history,
+            IntervalTrigger(seconds=RETENTION_INTERVAL_SECONDS),
+            id="query_history_retention",
+            name="Delete retrieval playground questions past their retention",
             coalesce=True,
             max_instances=1,
         )

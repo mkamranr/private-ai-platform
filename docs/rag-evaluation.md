@@ -142,7 +142,9 @@ knowledge bases and returns every stage:
   "score_threshold": null,
   "reranker": "default",
   "reranker_model": null,
-  "compare": true
+  "compare": true,
+  "answer_model": "enterprise-chat",
+  "judge_model": "enterprise-judge"
 }
 ```
 
@@ -152,11 +154,57 @@ knowledge bases and returns every stage:
 The response holds `run`, with `candidates` in vector order, the final `results`, the
 reranker used, `timings_ms` per stage (`embed`, `search`, `rerank`; measured wall-clock,
 summed across bases) and `warnings`. With `compare`, and when a reranker ran, it also holds
-`baseline`: the same query in vector order. Nothing is stored.
+`baseline`: the same query in vector order.
 
 In the console, **Knowledge → Retrieval Playground** shows the reranked and vector-order
 results side by side. Each passage shows how far the reranker moved it ("▲ 2 from #3").
 The full candidate table shows which candidates were dropped.
+
+### The answer, and how faithful it is
+
+Retrieval metrics say whether the right documents came back. They can't say whether the
+answer a model then wrote stayed inside them, and that is the failure people report: a
+confident answer citing a policy that says something else.
+
+* **`answer_model`** writes the answer from the final results, with exactly the context
+  block an agent gets (numbered passages, the instruction to cite and to say when the
+  passages don't cover it). The response's `answer` holds the text, model and latency.
+* **`judge_model`** (needs `answer_model`) splits that answer into claims and checks each
+  against the numbered passages. `verdict.faithfulness` is the share of claims the passages
+  support; `verdict.claims` lists each claim, whether it is supported and by which
+  passages. An answer that makes no claims ("the documents don't cover this") has
+  `faithfulness: null`, not 100%, so refusals can't inflate a score.
+* A model that isn't serving, a used-up budget, or a judge reply that isn't the JSON asked
+  for is reported in `answer_error` or `judge_error`. The passages are still returned.
+* Both calls go through the gateway like every platform call: alias resolution, scope
+  (the caller's teams must be able to use the model), the team's and model's budgets, and
+  a usage row (`retrieval.answer`, `retrieval.judge`) charged to the bases' team.
+
+The judge is a model and can be wrong. Its claims are shown so a person can check the
+verdict, not only the number. Use a capable model as the judge, ideally not the one that
+wrote the answer.
+
+### Question history
+
+Every playground question is saved for `knowledge.query_history_days` (default 30; 0
+keeps none), with its settings, the final passages (text shortened to 1,200 characters),
+the answer and the verdict. An hourly job deletes older questions.
+
+| method | path | permission |
+|---|---|---|
+| GET | `/retrieval/history` | `knowledge.view`. Your questions, newest first. `knowledge_base_id` filters; `everyone=true` with a `knowledge_base_id` lists everyone's questions to that base (`knowledge.manage`); `before`, `limit` page |
+| GET | `/retrieval/history/{id}` | `knowledge.view`. One question |
+| POST | `/retrieval/history/{id}/replay` | `knowledge.view`. The same question, settings and models against today's documents; saved as a new question (`replay_of`). `changes` lists documents gained and lost (by lineage) and the faithfulness before and after |
+| DELETE | `/retrieval/history/{id}` | Your own; a `knowledge.manage` holder may delete anyone's |
+| DELETE | `/retrieval/history` | All of your own |
+
+**History is personal.** Others see only their own questions. A `knowledge.manage` holder
+can see what people ask a base they can see, but not the passage text, answer or claims
+of another person's question: those were retrieved under the asker's document access,
+which the manager may not share. A replay always runs under the replayer's own access.
+
+In the console, the **History** tab lists questions with their faithfulness. Click one
+to read it, or press **Replay** to see then and now side by side.
 
 ---
 
@@ -193,6 +241,20 @@ questions the averages are `null`, not zero.
 A question that errors (for example, an embedding timeout) is recorded with its error.
 The rest of the run still counts.
 
+**Answers (optional).** A run with `answer_model` also writes each question's answer, and
+with `judge_model` scores it:
+
+* **faithfulness**: as in the playground, the share of the answer's claims the passages
+  support;
+* **correctness**, only for questions with an `expected_answer`: the judge compares the
+  answer with it, giving agrees (1), partial (0.5) or disagrees (0), with a reason.
+
+The summary adds `faithfulness` and `correctness` (means over the questions judged),
+`answered`, `judged`, `answer_errors`, `with_reference`, and `not_answered`. Only the
+first 50 questions are answered, because each costs two model calls inside a synchronous
+run; the rest are still retrieved and scored. Each question's answer and claims are stored
+with the run.
+
 Runs are **synchronous** and capped at 100 questions per set. A run stores its settings,
 summary and per-question results (retrieved documents, both scores, ranks and warnings).
 So a run stays readable and comparable after the documents or the set change.
@@ -206,7 +268,7 @@ So a run stays readable and comparable after the documents or the set change.
 | GET / PATCH / DELETE | `/eval-sets/{id}` | view / manage / manage |
 | POST | `/eval-sets/{id}/cases` | `knowledge.manage`. `question`, `expected_document_ids`, `expected_answer` |
 | DELETE | `/eval-sets/{id}/cases/{case_id}` | `knowledge.manage` |
-| POST | `/eval-sets/{id}/runs` | `knowledge.manage`. `top_k`, `candidates`, `score_threshold`, `reranker`, `reranker_model` |
+| POST | `/eval-sets/{id}/runs` | `knowledge.manage`. `top_k`, `candidates`, `score_threshold`, `reranker`, `reranker_model`, `answer_model`, `judge_model` |
 | GET | `/eval-sets/{id}/runs` | `knowledge.view` |
 | GET | `/eval-runs/{id}` | `knowledge.view`. Includes per-question results |
 
@@ -219,17 +281,18 @@ and `EVAL_RUN_COMPLETED` (with the summary and settings).
 
 In the console, the **Evaluation sets** tab of the Retrieval Playground creates sets,
 adds labelled questions, runs them, and lists runs with each metric's change from the
-previous run. **View** opens the per-question results.
+previous run, including faithfulness and correctness when the run was judged. **View**
+opens the per-question results; each answer expands to its claims.
 
 ---
 
 ## Known gaps
 
-* **Answers are not scored.** Faithfulness and correctness need a judge model. A score
-  from an unvalidated judge would look more authoritative than it is. `expected_answer`
-  is stored for the reader of a run, not scored.
-* **No query history.** The playground stores nothing. Agent runs keep their retrieval in
-  the run trace (`RAG_SEARCH` events), as before.
+* **The judge is not validated.** Faithfulness is one model's reading of another's
+  answer. Its claims are shown for checking; no agreement with human ratings is measured.
+* **Agent answers are not scored.** Faithfulness is measured in the playground and in
+  evaluation runs, not on live agent runs. Agent runs keep their retrieval in the run trace
+  (`RAG_SEARCH` events), as before.
 * **Runs are synchronous**, hence the 100-question cap. A larger set would need a worker,
   like ingestion.
 * A whole base is re-embedded with **Rebuild index…** (see

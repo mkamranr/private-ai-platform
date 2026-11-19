@@ -19,8 +19,12 @@ Labels name document *lineages*, so a case keeps working after a new version of 
 document is uploaded. Unlabelled cases are run and shown, but left out of the metrics: a
 question with no right answer cannot be got wrong.
 
-What this does not score is the *answer*. Faithfulness and correctness need a judge model,
-and a number from an unvalidated judge would look more authoritative than it is.
+**The answer, when asked for (E62).** With an ``answer_model`` a run also writes each
+question's answer from the passages retrieved, the way an agent would; with a
+``judge_model`` too, each answer is scored for *faithfulness* (the share of its claims the
+passages support) and, where the question has an ``expected_answer``, *correctness*
+(agrees 1, partial 0.5, disagrees 0). The judge's claims are stored with the run, so a
+score can be checked rather than trusted. See `services.answer_quality`.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ from app.repositories.knowledge import (
     RagEvalRunRepository,
     RagEvalSetRepository,
 )
+from app.services.answer_quality import AnswerQualityService, Charge, JudgeError
 from app.services.audit import AuditService
 from app.services.knowledge import RERANK_DEFAULT, KnowledgeService
 
@@ -52,6 +57,9 @@ log = get_logger(__name__)
 MAX_CASES = 100
 #: Expected documents per question.
 MAX_EXPECTED = 20
+#: Questions answered (and judged) per run. Two model calls each: the rest of a larger set
+#: is still retrieved and scored, and the summary says how many were not answered.
+MAX_ANSWERED = 50
 
 
 @dataclass(slots=True, frozen=True)
@@ -118,6 +126,13 @@ class RunSettings:
     score_threshold: float | None = None
     #: ``RERANK_DEFAULT`` (the base's reranker), None (no reranking) or a model name.
     reranker: str | None = RERANK_DEFAULT
+    #: E62: write each answer with this model, and score it with the judge.
+    answer_model: str | None = None
+    judge_model: str | None = None
+
+
+def _mean(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 4) if values else None
 
 
 class RagEvalService:
@@ -129,7 +144,9 @@ class RagEvalService:
         runs: RagEvalRunRepository,
         documents: DocumentRepository,
         audit: AuditService,
+        answers: AnswerQualityService | None = None,
     ) -> None:
+        self._answers = answers
         self._knowledge = knowledge
         self._sets = sets
         self._cases = cases
@@ -294,6 +311,13 @@ class RagEvalService:
         base = await self._knowledge.get_base(eval_set.knowledge_base_id)
         if not base.enabled:
             raise ConflictError(f"The knowledge base {base.name!r} is disabled.")
+        if settings.answer_model and self._answers is None:
+            raise ConflictError("Answers are not available here.")
+        charge = Charge(user_id=actor.id, team_id=base.team_id, label=f"kb:{base.name}")
+        answered = 0
+        faithfulness: list[float] = []
+        correctness: list[float] = []
+        quality = {"answered": 0, "judged": 0, "answer_errors": 0, "not_answered": 0}
 
         reader = await self._knowledge.reader_for(actor)
         started = time.perf_counter()
@@ -365,6 +389,17 @@ class RagEvalService:
                 timings_ms=trace.timings_ms,
                 warnings=trace.warnings,
             )
+            if settings.answer_model:
+                if answered >= MAX_ANSWERED:
+                    quality["not_answered"] += 1
+                else:
+                    answered += 1
+                    await self._answer_case(row, case, trace.results, settings, charge, quality)
+                    verdict = row.get("verdict") or {}
+                    if verdict.get("faithfulness") is not None:
+                        faithfulness.append(verdict["faithfulness"])
+                    if verdict.get("correctness") is not None:
+                        correctness.append(verdict["correctness"])
             rows.append(row)
 
         duration_ms = int((time.perf_counter() - started) * 1000)
@@ -373,6 +408,11 @@ class RagEvalService:
         summary["mean_latency_ms"] = (
             round(sum(latencies) / len(latencies), 1) if latencies else None
         )
+        if settings.answer_model:
+            summary.update(quality)
+            summary["faithfulness"] = _mean(faithfulness)
+            summary["correctness"] = _mean(correctness)
+            summary["with_reference"] = len(correctness)
         run = RagEvalRun(
             eval_set_id=eval_set.id,
             config={
@@ -388,6 +428,8 @@ class RagEvalService:
                     settings.reranker if settings.reranker != RERANK_DEFAULT else None
                 ),
                 "reranked_with": sorted(rerankers),
+                "answer_model": settings.answer_model,
+                "judge_model": settings.judge_model if settings.answer_model else None,
             },
             summary=summary,
             results=rows,
@@ -412,6 +454,49 @@ class RagEvalService:
         )
         return run
 
+    async def _answer_case(
+        self,
+        row: dict[str, Any],
+        case: RagEvalCase,
+        passages: Sequence[Any],
+        settings: RunSettings,
+        charge: Charge,
+        quality: dict[str, int],
+    ) -> None:
+        """Answer one question and judge it, into ``row``. Never raises: a model failing
+        on one question is recorded against that question."""
+        if self._answers is None or settings.answer_model is None:
+            return
+        try:
+            answer = await self._answers.answer(
+                case.question, passages, model=settings.answer_model, charge=charge
+            )
+        except Exception as exc:
+            quality["answer_errors"] += 1
+            row["answer_error"] = _error_text(exc)
+            return
+        quality["answered"] += 1
+        row["answer"] = answer.text
+        if not settings.judge_model:
+            return
+        try:
+            verdict = await self._answers.judge(
+                case.question,
+                answer.text,
+                passages,
+                model=settings.judge_model,
+                charge=charge,
+                reference=case.expected_answer,
+            )
+        except JudgeError as exc:
+            row["verdict"] = {"error": str(exc)}
+            return
+        except Exception as exc:
+            row["verdict"] = {"error": _error_text(exc)}
+            return
+        quality["judged"] += 1
+        row["verdict"] = verdict.as_dict()
+
     async def list_runs(self, set_id: uuid.UUID) -> list[RagEvalRun]:
         await self.get_set(set_id)
         return list(await self._runs.list_for_set(set_id))
@@ -421,3 +506,8 @@ class RagEvalService:
         if run is None:
             raise NotFoundError(f"No evaluation run with id {run_id}.")
         return run
+
+
+def _error_text(exc: Exception) -> str:
+    message = getattr(exc, "message", None)
+    return str(message) if message else f"{type(exc).__name__}: {str(exc)[:300]}"

@@ -138,6 +138,16 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         _bounded(1, 3650),
     ),
     RuntimeSetting(
+        "knowledge.query_history_days",
+        "retention",
+        "Retrieval question history (days)",
+        "How long a question asked in the Retrieval Playground is kept, with its passages, "
+        "answer and faithfulness verdict, so it can be read again and replayed. 0 keeps none "
+        "and deletes what is kept at the next retention run.",
+        "Next question asked; pruning at the next retention run (hourly)",
+        _bounded(0, 3650),
+    ),
+    RuntimeSetting(
         "agents.kill_switch",
         "security",
         "Stop all agents",

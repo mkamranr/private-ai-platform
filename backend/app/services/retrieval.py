@@ -18,6 +18,7 @@ what stops retrieval turning into confident invention.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from app.core.interfaces.agent import AgentSpec, RunContext
@@ -146,6 +147,12 @@ class RetrievalService:
             # tenant, which would hand one person's memories to another.
             return []
         return await self._memory.recall(scope, question, limit=MAX_MEMORIES)
+
+
+def context_block_for(passages: Sequence[SearchResult]) -> str | None:
+    """The retrieved-context message for these passages alone (E62: the playground's
+    answer is written from exactly what an agent would read)."""
+    return _compose(Retrieved(passages=list(passages)))
 
 
 def _compose(found: Retrieved) -> str | None:

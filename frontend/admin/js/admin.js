@@ -3447,12 +3447,26 @@ function searchResultsHtml(response) {
  * page alone: re-rendering would throw away a half-written question or a run's results. */
 const pg = {
   tab: 'try', bases: [], selected: new Set(), last: null,
-  evalBase: null, evalSet: null,
+  evalBase: null, evalSet: null, historyBase: '', historyEntry: null,
 };
+
+/* E62: chat models for the answer and judge boxes, cached like the rerankers. */
+let chatModelCache = { at: 0, names: [] };
+async function loadChatModels() {
+  if (Date.now() - chatModelCache.at < 60_000) return chatModelCache.names;
+  try {
+    const page = await api('/models?type=LLM&limit=100');
+    chatModelCache = { at: Date.now(), names: (page.items || []).map((m) => m.name) };
+  } catch { chatModelCache = { at: Date.now(), names: [] }; }
+  document.getElementById('chat-models').innerHTML =
+    chatModelCache.names.map((n) => `<option value="${esc(n)}">`).join('');
+  return chatModelCache.names;
+}
 
 async function renderPlayground({ force = false } = {}) {
   if (!force) return;
   loadRerankers();
+  loadChatModels();
   pg.bases = await api('/knowledge-bases');
   const ids = new Set(pg.bases.map((b) => b.id));
   pg.selected = new Set([...pg.selected].filter((id) => ids.has(id)));
@@ -3480,8 +3494,11 @@ async function renderPlayground({ force = false } = {}) {
     `<option value="${esc(b.id)}" ${b.id === pg.evalBase ? 'selected' : ''}>${esc(b.display_name)}</option>`
   ).join('');
   document.getElementById('ev-new').classList.toggle('d-none', !can('knowledge.manage'));
+  document.getElementById('hist-base').innerHTML = '<option value="">All knowledge bases</option>' +
+    pg.bases.map((b) => `<option value="${esc(b.id)}" ${b.id === pg.historyBase ? 'selected' : ''}>${esc(b.display_name)}</option>`).join('');
   showPlaygroundTab(pg.tab);
   if (pg.tab === 'eval') await renderEvalSets();
+  if (pg.tab === 'history') await renderHistory();
 }
 
 function showPlaygroundTab(tab) {
@@ -3489,6 +3506,7 @@ function showPlaygroundTab(tab) {
   document.querySelectorAll('[data-pg-tab]').forEach((b) =>
     b.classList.toggle('active', b.dataset.pgTab === tab));
   document.getElementById('pg-tab-try').classList.toggle('d-none', tab !== 'try');
+  document.getElementById('pg-tab-history').classList.toggle('d-none', tab !== 'history');
   document.getElementById('pg-tab-eval').classList.toggle('d-none', tab !== 'eval');
 }
 
@@ -3496,6 +3514,7 @@ document.querySelectorAll('[data-pg-tab]').forEach((button) => {
   button.onclick = () => {
     showPlaygroundTab(button.dataset.pgTab);
     if (button.dataset.pgTab === 'eval') renderEvalSets().catch((e) => alert(e.message));
+    if (button.dataset.pgTab === 'history') renderHistory().catch((e) => alert(e.message));
   };
 });
 
@@ -3527,6 +3546,11 @@ document.getElementById('pg-run').onclick = (event) => guard(event.target, async
     const value = numberField(id);
     if (value != null) body[key] = value;
   }
+  const answerModel = field('pg-answer-model');
+  const judgeModel = field('pg-judge-model');
+  if (judgeModel && !answerModel) { alert('Choose a model to answer with; the judge scores its answer.', 'warning'); return; }
+  if (answerModel) body.answer_model = answerModel;
+  if (judgeModel) body.judge_model = judgeModel;
   pg.last = await api('/retrieval/playground', { method: 'POST', body: JSON.stringify(body) });
   document.getElementById('pg-results').innerHTML = playgroundHtml(pg.last);
 });
@@ -3567,9 +3591,177 @@ function playgroundHtml(response) {
     ? column('Reranked', run.results, 'What an agent is given.') +
       column('Vector order', response.baseline.results, 'The same question without the reranker.')
     : column('Results', run.results, 'What an agent is given, best first.');
-  return `${warnings}${header}<div class="row g-3 mb-3">${columns}</div>
+  return `${warnings}${header}${answerHtml(response)}<div class="row g-3 mb-3">${columns}</div>
     <details class="mb-2"><summary class="small fw-medium">All ${esc(run.candidates.length)}
       vector candidates</summary>${candidatesTable(run)}</details>`;
+}
+
+/* ---- E62: the answer and its faithfulness ------------------------------- */
+function faithBadge(value, { empty = '' } = {}) {
+  if (value == null) return empty;
+  const cls = value >= 0.9 ? 'text-bg-success' : value >= 0.6 ? 'text-bg-warning' : 'text-bg-danger';
+  return `<span class="badge ${cls}" title="Share of the answer's claims the passages support">${pct(value)} faithful</span>`;
+}
+
+function claimsHtml(verdict) {
+  if (!verdict?.claims) return '';
+  if (!verdict.claims.length) {
+    return '<div class="small text-secondary">The answer makes no factual claims (it says the documents do not cover the question, say), so it has no score.</div>';
+  }
+  return `<ul class="list-unstyled small mb-0">${verdict.claims.map((c) => `
+    <li class="mb-1"><span class="${c.supported ? 'text-success' : 'text-danger'} fw-semibold">${c.supported ? '✓' : '✗'}</span>
+      ${esc(c.claim)}${c.passages?.length ? ` <span class="text-secondary">[${c.passages.map(esc).join(', ')}]</span>` : ''}
+      ${c.supported ? '' : '<span class="text-danger"> not in the passages</span>'}</li>`).join('')}</ul>`;
+}
+
+function answerHtml(response) {
+  if (!response.answer && !response.answer_error) return '';
+  if (!response.answer) {
+    return `<div class="alert alert-warning py-2 small">No answer: ${esc(response.answer_error)}</div>`;
+  }
+  const verdict = response.verdict;
+  const judged = verdict
+    ? `<div class="d-flex align-items-center gap-2 mb-2">${faithBadge(verdict.faithfulness, { empty: '<span class="badge text-bg-secondary">no claims</span>' })}
+         <span class="small text-secondary">${esc(verdict.supported)} of ${esc(verdict.supported + verdict.unsupported)} claim(s) supported ·
+           judged by <span class="mono">${esc(verdict.judge_model)}</span> · ${ms(verdict.latency_ms)}</span></div>
+       ${claimsHtml(verdict)}`
+    : response.judge_error
+      ? `<div class="small text-warning">Not judged: ${esc(response.judge_error)}</div>`
+      : '<div class="small text-secondary">Choose a judge model to score its faithfulness.</div>';
+  return `<div class="card card-body mb-3">
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <h6 class="mb-0">Answer</h6>
+      <span class="small text-secondary">by <span class="mono">${esc(response.answer.model)}</span> · ${ms(response.answer.latency_ms)}</span>
+    </div>
+    <div class="pg-answer mb-3">${esc(response.answer.text)}</div>
+    ${judged}
+  </div>`;
+}
+
+/* ---- E62: history --------------------------------------------------------- */
+document.getElementById('hist-base').onchange = (event) => {
+  pg.historyBase = event.target.value;
+  pg.historyEntry = null;
+  renderHistory().catch((e) => alert(e.message));
+};
+document.getElementById('hist-everyone').onchange = () => {
+  pg.historyEntry = null;
+  renderHistory().catch((e) => alert(e.message));
+};
+document.getElementById('hist-clear').onclick = (event) => guard(event.target, async () => {
+  if (!confirm('Delete every question in your history?')) return;
+  const result = await api('/retrieval/history', { method: 'DELETE' });
+  alert(result.message, 'success');
+  pg.historyEntry = null;
+  await renderHistory();
+});
+
+async function renderHistory() {
+  const manage = can('knowledge.manage');
+  document.getElementById('hist-everyone-wrap').classList.toggle('d-none', !manage || !pg.historyBase);
+  const everyone = manage && pg.historyBase && document.getElementById('hist-everyone').checked;
+  const query = new URLSearchParams({ limit: '100' });
+  if (pg.historyBase) query.set('knowledge_base_id', pg.historyBase);
+  if (everyone) query.set('everyone', 'true');
+  const entries = await api(`/retrieval/history?${query}`);
+  const target = document.getElementById('hist-list');
+  target.innerHTML = entries.length ? `
+    <div class="table-responsive"><table class="table table-sm align-middle small">
+      <thead><tr><th>When</th><th>Question</th>${everyone ? '<th>Asked by</th>' : ''}<th>Knowledge bases</th>
+        <th>Passages</th><th>Answer</th><th>Faithfulness</th><th class="text-end">Actions</th></tr></thead>
+      <tbody>${entries.map((e) => `<tr class="${e.id === pg.historyEntry ? 'table-active' : ''}">
+        <td class="text-secondary text-nowrap">${ago(e.created_at)}${e.replay_of ? ' <span class="badge badge-soft-blue">replay</span>' : ''}</td>
+        <td><a href="#playground" class="text-decoration-none" data-hist-open="${esc(e.id)}">${esc(e.query.length > 120 ? `${e.query.slice(0, 120)}…` : e.query)}</a></td>
+        ${everyone ? `<td>${esc(e.mine ? 'you' : (e.username || 'deleted user'))}</td>` : ''}
+        <td>${e.knowledge_base_names.map((n) => `<span class="badge text-bg-light border me-1">${esc(n)}</span>`).join('')}</td>
+        <td>${esc(e.result_count)}</td>
+        <td>${e.answer_model ? `<span class="mono">${esc(e.answer_model)}</span>` : '<span class="text-secondary">—</span>'}</td>
+        <td>${faithBadge(e.faithfulness, { empty: '<span class="text-secondary">—</span>' })}</td>
+        <td class="text-end text-nowrap">
+          <button class="btn btn-sm btn-outline-primary py-0" data-hist-replay="${esc(e.id)}"
+            title="Ask again against today's documents, with the same settings">Replay</button>
+          ${e.mine || manage ? `<button class="btn btn-sm btn-link text-danger p-0 ms-2" data-hist-delete="${esc(e.id)}">Delete</button>` : ''}
+        </td>
+      </tr>`).join('')}</tbody></table></div>`
+    : empty(everyone ? 'Nobody has asked this base anything in the retention window.'
+      : 'No questions yet. Questions asked in the Playground tab are kept here for the retention window.');
+
+  target.querySelectorAll('[data-hist-open]').forEach((a) => {
+    a.onclick = (event) => {
+      event.preventDefault();
+      pg.historyEntry = a.dataset.histOpen;
+      showHistoryEntry(pg.historyEntry).catch((e) => alert(e.message));
+      target.querySelectorAll('tr').forEach((row) => row.classList.toggle('table-active', row.contains(a)));
+    };
+  });
+  target.querySelectorAll('[data-hist-replay]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      const replay = await api(`/retrieval/history/${button.dataset.histReplay}/replay`, { method: 'POST' });
+      pg.historyEntry = replay.current.history_id;
+      await renderHistory();
+      showReplay(replay);
+    });
+  });
+  target.querySelectorAll('[data-hist-delete]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      await api(`/retrieval/history/${button.dataset.histDelete}`, { method: 'DELETE' });
+      if (pg.historyEntry === button.dataset.histDelete) pg.historyEntry = null;
+      await renderHistory();
+    });
+  });
+  if (pg.historyEntry && entries.some((e) => e.id === pg.historyEntry)) await showHistoryEntry(pg.historyEntry);
+  else document.getElementById('hist-detail').innerHTML = '';
+}
+
+function historyEntryHtml(entry) {
+  const settings = entry.settings || {};
+  const meta = [
+    settings.reranker === 'none' ? 'no reranker' : entry.reranker ? `reranked by ${entry.reranker}` : 'no reranker ran',
+    settings.top_k ? `top-k ${settings.top_k}` : null,
+  ].filter(Boolean).join(' · ');
+  const passages = entry.results.map((r, i) => `
+    <div class="card card-body py-2 mb-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="pg-rank">${i + 1}</span><span class="mono small">${esc(r.document_name)}</span>
+        ${r.version > 1 ? `<span class="badge badge-soft-blue">v${esc(r.version)}</span>` : ''}
+        ${r.location ? `<span class="small text-secondary">${esc(r.location)}</span>` : ''}
+        <span class="ms-auto badge text-bg-secondary">vector ${Number(r.score).toFixed(3)}</span>
+      </div>
+      ${r.text != null ? `<div class="small pg-text mt-1">${esc(r.text)}</div>` : ''}
+    </div>`).join('');
+  const verdict = entry.verdict;
+  return `
+    <div class="small text-secondary mb-2">${entry.mine ? '' : `Asked by ${esc(entry.username || 'a deleted user')}. Their passages and answer are not shown: they were retrieved under their document access. Replay it to see what you would get. · `}${esc(meta)}</div>
+    ${entry.answer ? `<div class="card card-body mb-2"><div class="d-flex gap-2 align-items-center mb-2"><h6 class="mb-0">Answer</h6>
+        <span class="small text-secondary">by <span class="mono">${esc(entry.answer_model)}</span></span>
+        ${faithBadge(entry.faithfulness)}</div>
+        <div class="pg-answer mb-2">${esc(entry.answer)}</div>${claimsHtml(verdict)}
+        ${verdict?.error ? `<div class="small text-warning">${esc(verdict.error)}</div>` : ''}</div>`
+      : (verdict?.error ? `<div class="alert alert-warning py-2 small">${esc(verdict.error)}</div>` : '')}
+    ${entry.mine || !entry.answer_model ? '' : `<div class="mb-2">${faithBadge(entry.faithfulness)}</div>`}
+    ${passages || '<div class="small text-secondary">Nothing matched above the score floor.</div>'}`;
+}
+
+async function showHistoryEntry(id) {
+  const entry = await api(`/retrieval/history/${id}`);
+  document.getElementById('hist-detail').innerHTML = `<div class="card card-body">
+    <h6 class="mb-1">${esc(entry.query)}</h6>${historyEntryHtml(entry)}</div>`;
+}
+
+function showReplay(replay) {
+  const c = replay.changes;
+  const list = (names, cls) => names.map((n) => `<span class="badge ${cls} me-1">${esc(n)}</span>`).join('') || '<span class="text-secondary">none</span>';
+  const summary = c ? `<div class="small mb-3">
+      <div><span class="text-secondary">Documents gained:</span> ${list(c.added, 'text-bg-success')}</div>
+      <div><span class="text-secondary">Documents lost:</span> ${list(c.removed, 'text-bg-danger')}</div>
+      <div><span class="text-secondary">Faithfulness:</span> ${pct(c.faithfulness_before)} → ${pct(c.faithfulness_after)}</div>
+    </div>` : '<div class="small text-secondary mb-3">History is off, so this replay was not saved or compared.</div>';
+  document.getElementById('hist-detail').innerHTML = `<div class="card card-body">
+    <h6 class="mb-2">Replay: ${esc(replay.previous.query)}</h6>${summary}
+    <div class="row g-3">
+      <div class="col-lg-6"><div class="text-secondary small fw-semibold mb-2">Then (${ago(replay.previous.created_at)})</div>${historyEntryHtml(replay.previous)}</div>
+      <div class="col-lg-6"><div class="text-secondary small fw-semibold mb-2">Now</div>${playgroundHtml(replay.current)}</div>
+    </div></div>`;
 }
 
 function passageCard(r, rank) {
@@ -3729,7 +3921,7 @@ async function renderEvalDetail() {
             <div class="form-text small mt-0 mb-2">The documents that answer it (Ctrl/Cmd-click
               for several). None: run but not scored.</div>
             <input class="form-control form-control-sm mb-2" id="ev-answer" maxlength="8000"
-                   placeholder="Expected answer (optional, for the reader; not scored)">
+                   placeholder="Expected answer (optional; scored for correctness when a run has a judge)">
             <button class="btn btn-sm btn-outline-primary" id="ev-add">Add question</button>
           </div>` : ''}
         </div>
@@ -3757,6 +3949,16 @@ async function renderEvalDetail() {
             <div class="col-5">
               <input class="form-control form-control-sm mono d-none" id="ev-rerank-model"
                      list="reranker-models" placeholder="reranker alias">
+            </div>
+            <div class="col-6">
+              <label class="form-label small text-secondary mb-1" for="ev-answer-model">Answer with</label>
+              <input class="form-control form-control-sm mono" id="ev-answer-model" list="chat-models"
+                     placeholder="retrieval only">
+            </div>
+            <div class="col-6">
+              <label class="form-label small text-secondary mb-1" for="ev-judge-model">Judge with</label>
+              <input class="form-control form-control-sm mono" id="ev-judge-model" list="chat-models"
+                     placeholder="not judged">
             </div>
             <div class="col-12">
               <button class="btn btn-sm btn-primary" id="ev-run" ${set.case_count ? '' : 'disabled'}
@@ -3797,6 +3999,11 @@ async function renderEvalDetail() {
       const body = { ...rerankChoice('ev-rerank', 'ev-rerank-model') };
       const topk = numberField('ev-topk');
       if (topk != null) body.top_k = topk;
+      const answerModel = field('ev-answer-model');
+      const judgeModel = field('ev-judge-model');
+      if (judgeModel && !answerModel) { alert('Choose a model to answer with; the judge scores its answers.', 'warning'); return; }
+      if (answerModel) body.answer_model = answerModel;
+      if (judgeModel) body.judge_model = judgeModel;
       run.textContent = 'Running…';
       const result = await api(`/eval-sets/${pg.evalSet}/runs`, { method: 'POST', body: JSON.stringify(body) });
       await renderEvalSets();
@@ -3818,6 +4025,8 @@ function runsTable(runs) {
   return `<div class="table-responsive"><table class="table table-sm align-middle small mb-0">
     <thead><tr><th>When</th><th>Settings</th><th class="text-end">Hit rate</th>
       <th class="text-end">Recall</th><th class="text-end">Precision</th><th class="text-end">MRR</th>
+      <th class="text-end" title="Share of the answers' claims the passages support">Faithful</th>
+      <th class="text-end" title="Agreement with the expected answers">Correct</th>
       <th class="text-end">Latency</th><th></th></tr></thead>
     <tbody>${runs.map((r, i) => {
       const s = r.summary, prev = runs[i + 1]?.summary || {};
@@ -3832,6 +4041,8 @@ function runsTable(runs) {
         <td class="text-end">${pct(s.recall)}${delta(s.recall, prev.recall)}</td>
         <td class="text-end">${pct(s.precision)}${delta(s.precision, prev.precision)}</td>
         <td class="text-end">${mrr(s.mrr)}${delta(s.mrr, prev.mrr)}</td>
+        <td class="text-end">${pct(s.faithfulness)}${delta(s.faithfulness, prev.faithfulness)}</td>
+        <td class="text-end">${pct(s.correctness)}${delta(s.correctness, prev.correctness)}</td>
         <td class="text-end">${ms(s.mean_latency_ms)}</td>
         <td class="text-end text-nowrap"><button class="btn btn-sm btn-link p-0" data-ev-run="${esc(r.id)}">View</button></td>
       </tr>`;
@@ -3850,7 +4061,13 @@ function showEvalRun(run) {
       ${tile('Precision', pct(s.precision))}${tile('MRR', mrr(s.mrr))}
       ${tile('Labelled', `${esc(s.labelled)} / ${esc(s.cases)}`)}
       ${tile('Mean latency', ms(s.mean_latency_ms))}${tile('Duration', ms(run.duration_ms))}
+      ${run.config.answer_model ? tile('Faithfulness', pct(s.faithfulness)) + tile('Correctness', pct(s.correctness)) +
+        tile('Answered', `${esc(s.answered)} / ${esc(s.cases)}`) : ''}
     </div>
+    ${run.config.answer_model ? `<div class="small text-secondary mb-2">Answered by <span class="mono">${esc(run.config.answer_model)}</span>${
+      run.config.judge_model ? `, judged by <span class="mono">${esc(run.config.judge_model)}</span>` : ''}.
+      ${s.not_answered ? `${esc(s.not_answered)} question(s) past the first 50 were not answered.` : ''}
+      ${s.answer_errors ? `<span class="text-danger">${esc(s.answer_errors)} answer(s) failed.</span>` : ''}</div>` : ''}
     <div class="small text-secondary mb-3">Reranker: ${run.config.reranked_with?.length
       ? `<span class="mono">${esc(run.config.reranked_with.join(', '))}</span>` : 'none'} ·
       top-k ${esc(run.config.top_k ?? '—')} · candidates ${esc(run.config.candidates ?? '—')}</div>
@@ -3866,7 +4083,15 @@ function showEvalRun(run) {
           || '<span class="text-secondary">nothing above the score floor</span>'}</td>
         <td class="text-end">${row.metrics ? pct(row.metrics.recall) : '<span class="text-secondary">—</span>'}</td>
         <td class="text-end">${row.metrics ? mrr(row.metrics.reciprocal_rank) : '<span class="text-secondary">unlabelled</span>'}</td>
-      </tr>`).join('')}</tbody>
+      </tr>${row.answer || row.answer_error ? `<tr><td colspan="4" class="border-top-0 pt-0">
+        ${row.answer_error ? `<div class="text-danger">No answer: ${esc(row.answer_error)}</div>` : `
+        <details><summary class="text-secondary">Answer ${faithBadge(row.verdict?.faithfulness)}
+          ${row.verdict?.correctness_label ? `<span class="badge text-bg-light border">${esc(row.verdict.correctness_label)}</span>` : ''}
+          ${row.verdict?.error ? `<span class="text-warning">${esc(row.verdict.error)}</span>` : ''}</summary>
+          <div class="pg-answer my-2">${esc(row.answer)}</div>
+          ${claimsHtml(row.verdict)}
+          ${row.verdict?.correctness_reason ? `<div class="text-secondary mt-1">Against the expected answer: ${esc(row.verdict.correctness_reason)}</div>` : ''}
+        </details>`}</td></tr>` : ''}`).join('')}</tbody>
     </table>`;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('eval-run-modal')).show();
 }

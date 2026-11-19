@@ -74,6 +74,7 @@ from app.repositories.knowledge import (
     RagEvalCaseRepository,
     RagEvalRunRepository,
     RagEvalSetRepository,
+    RetrievalQueryRepository,
 )
 from app.repositories.models_registry import (
     ApiClientRepository,
@@ -116,6 +117,7 @@ from app.services.agent_registry import (
 from app.services.agent_runs import AgentRunService
 from app.services.agent_runtime import PlatformAgentRuntime
 from app.services.alerts import AlertService
+from app.services.answer_quality import AnswerQualityService
 from app.services.api_keys import ApiKeyService
 from app.services.audit import AuditService
 from app.services.auth import AuthService
@@ -153,6 +155,7 @@ from app.services.quotas import QuotaService
 from app.services.rag_eval import RagEvalService
 from app.services.rerank_usage import Reranker, rerank_through
 from app.services.retrieval import RetrievalService
+from app.services.retrieval_playground import PlaygroundService
 from app.services.runtime_settings import RUNTIME, RuntimeSettingsService
 from app.services.teams import ScopeGuard, TeamService, scope_for
 from app.services.tool_pipeline import ToolPipeline
@@ -1147,8 +1150,21 @@ def get_knowledge_service(
 KnowledgeServiceDep = Annotated[KnowledgeService, Depends(get_knowledge_service)]
 
 
+def get_answer_quality_service(gateway: GatewayServiceDep) -> AnswerQualityService:
+    """Answers from retrieved passages and their faithfulness (E62), through the gateway
+    like every platform model call: aliases, budgets and a usage row."""
+    return AnswerQualityService(
+        gateway.provider_for_model,
+        usage=gateway.record_internal_usage,
+        budget=gateway.check_internal_budget,
+    )
+
+
+AnswerQualityDep = Annotated[AnswerQualityService, Depends(get_answer_quality_service)]
+
+
 def get_rag_eval_service(
-    session: SessionDep, knowledge: KnowledgeServiceDep, audit: AuditDep
+    session: SessionDep, knowledge: KnowledgeServiceDep, audit: AuditDep, answers: AnswerQualityDep
 ) -> RagEvalService:
     """Retrieval evaluation (E5), over the same knowledge service a search uses."""
     return RagEvalService(
@@ -1158,10 +1174,30 @@ def get_rag_eval_service(
         RagEvalRunRepository(session),
         DocumentRepository(session),
         audit,
+        answers,
     )
 
 
 RagEvalServiceDep = Annotated[RagEvalService, Depends(get_rag_eval_service)]
+
+
+def get_playground_service(
+    session: SessionDep,
+    knowledge: KnowledgeServiceDep,
+    answers: AnswerQualityDep,
+    settings: EffectiveSettingsDep,
+) -> PlaygroundService:
+    """The retrieval playground and its question history (E5, E62)."""
+    return PlaygroundService(
+        knowledge,
+        KnowledgeBaseRepository(session),
+        RetrievalQueryRepository(session),
+        answers,
+        history_days=settings.knowledge.query_history_days,
+    )
+
+
+PlaygroundServiceDep = Annotated[PlaygroundService, Depends(get_playground_service)]
 
 
 def get_memory_service(

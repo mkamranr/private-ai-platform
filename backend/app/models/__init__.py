@@ -56,6 +56,7 @@ from app.models.knowledge import (
     RagEvalRun,
     RagEvalSet,
     ReindexState,
+    RetrievalQuery,
     StagedChunk,
 )
 from app.models.models_registry import (
@@ -202,6 +203,7 @@ __all__ = [
     "RagEvalRun",
     "RagEvalSet",
     "ReindexState",
+    "RetrievalQuery",
     "RevokedToken",
     "Role",
     "RolloutState",
