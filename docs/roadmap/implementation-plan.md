@@ -561,6 +561,16 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_answer_quality.py`. Docs: [rag-evaluation.md](../rag-evaluation.md#the-answer-and-how-faithful-it-is), api.md, settings.md.
 - [ ] The judge isn't validated against human ratings. Live agent answers aren't scored. Evaluation runs stay synchronous.
 
+## E63: Bundle signing key rotation and revocation (closes the feature-matrix offline-signing gap)
+
+- [x] `scripts/bundle_signing.py` trust store (`.trust/trust.json`; the E7 `bundle-signing.pub` still counts): any number of keys, each trusted, retired or revoked; `check_bundle` accepts a signature from an accepted key and names retired and revoked signers.
+- [x] Trust updates (`offline/trust-updates/NNNN.json` and `.sig`, shipped in each bundle's tree; `statement` command): add, retire, revoke. Applied in sequence, once each, only when signed by an accepted key. They can't revive a retired or revoked key or leave no accepted key. Revoking cascades to keys added on the revoked key's authority.
+- [x] `offline/lib.sh`: `install_trust_key` adds to the store; `verify_signature` applies the bundle's trust updates (saved) and then checks, through the target's installed helper on upgrades.
+- [x] Ops runner: the inventory reports every key and each bundle's pending trust updates, judged without saving. New job `trust.change` retires or revokes, refused for the last key. API `POST /ops/trust/keys` (`system.upgrade`, the action typed back), migration `a7c9e1b3d5f6`.
+- [x] Console: keys with their status and origin, *Retire* and *Revoke*, and pending trust updates per bundle. Keys can't be added from the console.
+- [x] Tests: `tests/unit/test_signing_key_rotation.py`, `tests/api/test_ops.py::TestTrustChange`. Docs: [operations.md](../operations.md#changing-the-signing-key), threat model #9.
+- [ ] No offline root key or key expiry. A compromised key is accepted until its revocation reaches a site. A first install still runs the bundle's own checks.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

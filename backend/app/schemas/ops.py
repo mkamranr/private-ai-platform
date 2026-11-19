@@ -63,10 +63,13 @@ class InventoryBundle(BaseModel):
     platform_version: str | None = None
     format_version: int | None = None
     size_bytes: int | None = None
-    #: valid, invalid, unsigned, untrusted (signed, but no trust key configured), error
+    #: valid, invalid, unsigned, untrusted (signed, but no trust key configured), error;
+    #: E63: retired or revoked (signed by a key this site no longer accepts). Judged after
+    #: the trust updates the bundle carries, which ``trust_updates`` lists.
     signature: str = "unsigned"
     signature_detail: str | None = None
     signer_fingerprint: str | None = None
+    trust_updates: list[dict[str, Any]] = Field(default_factory=list)
     has_sbom: bool = False
 
 
@@ -203,6 +206,20 @@ class RestoreRequest(ConfirmedJobRequest):
     """E60: ``parts`` restores only some of a backup; omitted, everything it holds."""
 
     parts: list[RestorePart] | None = Field(default=None, min_length=1)
+
+
+FINGERPRINT_PATTERN = r"^sha256:[0-9a-f]{64}$"
+TrustAction = Literal["retire", "revoke"]
+
+
+class TrustChangeRequest(ConfirmedJobRequest):
+    """E63: retire (a planned end) or revoke (compromised) a bundle signing key.
+
+    ``confirm`` is the action typed back: ``retire`` or ``revoke``.
+    """
+
+    fingerprint: str = Field(pattern=FINGERPRINT_PATTERN)
+    action: TrustAction
 
 
 class UpgradeRequest(ConfirmedJobRequest):

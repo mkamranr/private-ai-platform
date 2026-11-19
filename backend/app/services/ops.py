@@ -420,6 +420,45 @@ class OpsService:
             params["parts"] = chosen
         return await self._request(JobKind.BACKUP_RESTORE, params, actor=actor, reason=reason)
 
+    # -- bundle signing keys (E63) ----------------------------------------------------
+    async def request_trust_change(
+        self, fingerprint: str, action: str, *, confirm: str, reason: str, actor: User
+    ) -> OpsJob:
+        """Queue retiring or revoking a signing key on the runner's host.
+
+        Checked here against the runner's last report, and again by the runner against
+        the trust store itself. Adding a key is not offered: it stays a by-hand step on the
+        host, so a console account can make the site trust less, never more.
+        """
+        if action not in ("retire", "revoke"):
+            raise ValidationError("The action is retire or revoke.")
+        self._check_confirm(confirm, action)
+        inventory, _online = await self.inventory()
+        trust = inventory.trust_key or {}
+        keys = {k.get("fingerprint"): k for k in trust.get("keys") or []}
+        key = keys.get(fingerprint)
+        if key is None:
+            raise NotFoundError(f"The runner has not reported a signing key {fingerprint}.")
+        status = key.get("status")
+        if status == "revoked" or (action == "retire" and status != "trusted"):
+            raise ConflictError(f"That key is already {status}.")
+        others = [fp for fp in trust.get("accepted") or [] if fp != fingerprint]
+        if action == "revoke":
+            # Revoking cascades to keys a trust update added on this key's authority.
+            others = [fp for fp in others if (keys.get(fp) or {}).get("added_by") != fingerprint]
+        if not others:
+            raise ValidationError(
+                "That would leave this site with no trusted key, so every bundle would be "
+                "refused. Add the replacement key on the host first, or issue a trust update "
+                "that adds it."
+            )
+        return await self._request(
+            JobKind.TRUST_CHANGE,
+            {"fingerprint": fingerprint, "action": action, "reason": reason},
+            actor=actor,
+            reason=reason,
+        )
+
     # -- bundles, upgrades and rollbacks ----------------------------------------------
     async def bundles(self) -> tuple[list[InventoryBundle], RunnerInventory, bool]:
         inventory, online = await self.inventory()
@@ -476,9 +515,11 @@ class OpsService:
 
         signature = bundle.signature
         sig_status, sig_detail = {
-            "valid": ("pass", "Signed by the trusted key."),
-            "invalid": ("fail", "The signature does not match the manifest or the trusted key."),
+            "valid": ("pass", "Signed by a trusted key."),
+            "invalid": ("fail", "The signature does not match the manifest or any trusted key."),
             "error": ("fail", "The signature could not be checked."),
+            "retired": ("fail", "Signed by a key this site has retired."),
+            "revoked": ("fail", "Signed by a key this site has revoked."),
             "untrusted": (
                 "warn",
                 "Signed, but no trust key is installed on this host, so the signer is unknown.",

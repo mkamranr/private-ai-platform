@@ -62,7 +62,7 @@ fi
 # ---------------------------------------------------------------------------
 say "1/6  Verifying the new bundle"
 if [[ -n "$TRUST_KEY" ]]; then
-  install_trust_key "$TRUST_KEY" "$TARGET"
+  install_trust_key "$TRUST_KEY" "$TARGET" "$BUNDLE"
 fi
 verify_signature "$BUNDLE" "$TARGET"
 verify_bundle "$BUNDLE"

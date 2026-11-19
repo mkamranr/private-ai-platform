@@ -42,6 +42,8 @@ class JobKind(enum.StrEnum):
     BACKUP_PRUNE = "backup.prune"
     #: E23: copy a backup to the runner's off-host directory. Queued by the schedule only.
     BACKUP_COPY = "backup.copy"
+    #: E63: retire or revoke a bundle signing key in the host's trust store. Never adds one.
+    TRUST_CHANGE = "trust.change"
 
 
 class JobStatus(enum.StrEnum):
@@ -60,7 +62,7 @@ class OpsJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint(
             "kind IN ('backup.create','backup.verify','backup.restore','bundle.verify',"
-            "'upgrade','rollback','backup.prune','backup.copy')",
+            "'upgrade','rollback','backup.prune','backup.copy','trust.change')",
             name="ops_job_kind",
         ),
         CheckConstraint(

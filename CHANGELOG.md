@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Change or withdraw the key that signs offline bundles
+- **Several signing keys.** A site can trust more than one key, so the build site can move to a new key without breaking any site.
+- **Rotation without visiting sites.** The build site issues a small *trust update*, signed by the current key, that adds the new one. It ships inside the next bundle, and each site picks it up when it upgrades. See "Changing the signing key" in docs/operations.md.
+- **Retire or revoke a key** from the Offline Updates page, or on the host. Bundles signed by it are refused from then on. Revoking a key that may be compromised also withdraws any key it vouched for. The console can only remove trust, never add a key.
+- **Upgrade.** Migration `a7c9e1b3d5f6`. Existing trust keys keep working. Update the ops runner on the host as well.
+
 ### Check answers, not just passages
 - **See the answer.** In the Retrieval Playground, choose a model to answer with. You get the answer an agent using those knowledge bases would give, written from the passages shown.
 - **Faithfulness.** Choose a judge model too. It splits the answer into claims and checks each one against the passages, giving a score and a list of what's supported and what isn't. An answer that only says "the documents don't cover this" gets no score rather than a perfect one.

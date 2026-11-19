@@ -17,6 +17,7 @@ claims it and runs **the same scripts an operator runs by hand**:
     backup.verify   scripts/backup.py verify <backups/NAME>
     backup.restore  scripts/backup.py restore <backups/NAME> --yes
     bundle.verify   signature check + offline/lib.sh verify_bundle <updates/NAME>
+    trust.change    retire or revoke a bundle signing key in .trust/ (E63; never adds one)
     upgrade         offline/upgrade.sh <updates/NAME> <root>  [+ alembic upgrade head]
     rollback        offline/rollback.sh <root> <NAME> --yes
 
@@ -77,6 +78,7 @@ import s3_copy  # noqa: E402 - sibling stdlib module (E31)
 
 VERSION = "1.0"
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$")
+FINGERPRINT = re.compile(r"^sha256:[0-9a-f]{64}$")
 TERMINAL = {"SUCCEEDED", "FAILED"}
 REPORT_EVERY = 2.0
 
@@ -143,7 +145,7 @@ class Inventory:
         self.backups_dir = root / "backups"
         self.import_dir = import_dir
         self.rollback_dir = root / ".rollback"
-        self.trust_key = root / ".trust" / bundle_signing.PUBLIC_NAME
+        self.trust_dir = root / ".trust"
         self.env = env
         copy_dir = (env.get("OPS__BACKUP_COPY_DIR") or "").strip()
         self.copy_dir = Path(copy_dir) if copy_dir else None
@@ -269,14 +271,16 @@ class Inventory:
         out = []
         if not self.import_dir.is_dir():
             return out
-        trust = self.trust_key if self.trust_key.exists() else None
         for path in sorted(self.import_dir.iterdir(), reverse=True):
             if not path.is_dir() or not NAME.match(path.name):
                 continue
             manifest = _json(path / "manifest.json")
             if manifest is None:
                 continue
-            state, detail, signer = bundle_signing.bundle_signature_state(path, trust)
+            # E63: judged as an upgrade would judge it, after its trust updates, without
+            # saving them: listing a bundle must not change what this site trusts.
+            check = bundle_signing.check_bundle(path, self.trust_dir, apply=False)
+            state, detail, signer = check["state"], check["detail"], check["signer"]
             out.append(
                 {
                     "name": path.name,
@@ -287,6 +291,11 @@ class Inventory:
                     "signature": state,
                     "signature_detail": detail,
                     "signer_fingerprint": signer,
+                    "trust_updates": [
+                        {k: u.get(k) for k in ("sequence", "applied", "reason", "signed_by",
+                                               "added", "retired", "revoked")}
+                        for u in check["updates"]
+                    ],
                     "has_sbom": bool((manifest.get("sbom") or {}).get("path")),
                     "images": len(manifest.get("images") or {}),
                 }
@@ -312,12 +321,13 @@ class Inventory:
     def report(self) -> dict:
         installed = _json(self.root / ".bundle-manifest.json")
         usage = shutil.disk_usage(self.root)
-        trust: dict[str, Any] = {"configured": self.trust_key.exists(), "fingerprint": None}
-        if trust["configured"]:
-            try:
-                trust["fingerprint"] = bundle_signing.fingerprint(self.trust_key)
-            except bundle_signing.SigningError as exc:
-                trust["error"] = str(exc)
+        trust: dict[str, Any] = {"configured": False, "fingerprint": None}
+        try:
+            trust = bundle_signing.TrustStore.load(self.trust_dir).summary()
+            # E7 consumers read one fingerprint: the first accepted key.
+            trust["fingerprint"] = (trust["accepted"] or [None])[0]
+        except bundle_signing.SigningError as exc:
+            trust["error"] = str(exc)
         return {
             "root": str(self.root),
             "import_dir": str(self.import_dir),
@@ -663,11 +673,17 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
 
     if kind == "bundle.verify":
         path = inventory.bundle_path(params.get("bundle", ""))
-        trust = inventory.trust_key if inventory.trust_key.exists() else None
-        state, detail, signer = bundle_signing.bundle_signature_state(path, trust)
+        check = bundle_signing.check_bundle(path, inventory.trust_dir, apply=False)
+        state, detail, signer = check["state"], check["detail"], check["signer"]
+        for update in check["updates"]:
+            reporter.line(
+                f"trust update {update['sequence']}: "
+                + ("would be applied" if update["applied"] else f"ignored ({update['reason']})")
+            )
         reporter.line(f"signature: {state}{' (' + detail + ')' if detail else ''}")
         reporter.result = {"signature": state, "signer_fingerprint": signer}
-        if state in ("invalid", "error") or (state == "unsigned" and trust is not None):
+        configured = bundle_signing.TrustStore.load(inventory.trust_dir).configured
+        if state in bundle_signing.REFUSED or (state == "unsigned" and configured):
             return "FAILED", f"Signature check failed: {state}."
         script = 'source "$1/offline/lib.sh" && bundle_preflight "$2" && verify_bundle "$2"'
         ok = run_command(["bash", "-c", script, "verify", root.as_posix(), path.as_posix()], reporter, cwd=root) == 0
@@ -729,6 +745,39 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
             reporter.line(f"deleted {name}")
         copies = prune_copies(inventory, params.get("delete") or [], newest, reporter)
         reporter.result = {"deleted": deleted, "deleted_copies": copies, "kept_newest": newest}
+        return "SUCCEEDED", None
+
+    if kind == "trust.change":
+        # E63: retire or revoke only. Adding a key stays a by-hand step on this host, so a
+        # console account can make the site trust less, never more.
+        fingerprint = str(params.get("fingerprint") or "")
+        action = params.get("action")
+        if not FINGERPRINT.match(fingerprint) or action not in ("retire", "revoke"):
+            return "FAILED", "A trust change needs a sha256 fingerprint and retire or revoke."
+        reason = str(params.get("reason") or "")[:500] or None
+        store = bundle_signing.TrustStore.load(inventory.trust_dir)
+        status = store.status(fingerprint)
+        if status == "unknown":
+            return "FAILED", f"{fingerprint} is not a key this site knows."
+        trial = store.copy()
+        if action == "retire":
+            if status != "trusted":
+                return "FAILED", f"{fingerprint} is already {status}."
+            trial.retire(fingerprint, reason=reason, by="local")
+            changed = [fingerprint]
+        else:
+            if status == "revoked":
+                return "FAILED", f"{fingerprint} is already revoked."
+            changed = trial.revoke(fingerprint, reason=reason, by="local")
+        if not trial.accepted():
+            return "FAILED", (
+                "That would leave this site with no trusted key, so every bundle would be "
+                "refused. Add the replacement key on the host first (bundle_signing.py trust add)."
+            )
+        trial.save()
+        for fp in changed:
+            reporter.line(f"{action}d: {fp}")
+        reporter.result = {"action": action, "changed": changed, "accepted": trial.accepted()}
         return "SUCCEEDED", None
 
     if kind == "rollback":

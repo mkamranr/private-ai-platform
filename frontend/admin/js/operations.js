@@ -15,6 +15,7 @@ Object.assign(PILL_TONE, { QUEUED: 'idle', CANCELLED: 'idle' });
 const OPS_KIND_LABEL = {
   'backup.create': 'Backup', 'backup.verify': 'Verify backup', 'backup.restore': 'Restore',
   'bundle.verify': 'Verify bundle', upgrade: 'Upgrade', rollback: 'Rollback',
+  'trust.change': 'Signing key',
   'backup.prune': 'Retention', 'backup.copy': 'Off-host copy',
 };
 const OPS_ACTIVE = new Set(['QUEUED', 'RUNNING']);
@@ -401,7 +402,40 @@ async function renderBackups() {
 const SIGNATURE_PILL = {
   valid: ['SUCCEEDED', 'Signed · trusted'], untrusted: ['WARNING', 'Signed · no trust key'],
   unsigned: ['WARNING', 'Unsigned'], invalid: ['FAILED', 'Bad signature'], error: ['FAILED', 'Unreadable'],
+  retired: ['FAILED', 'Retired key'], revoked: ['FAILED', 'Revoked key'],
 };
+const KEY_PILL = { trusted: ['SUCCEEDED', 'Trusted'], retired: ['UNKNOWN', 'Retired'], revoked: ['FAILED', 'Revoked'] };
+const short = (fp) => (fp ? `${fp.slice(0, 19)}…` : '');
+
+/* E63: every key in the host's trust store, with Retire and Revoke for trusted ones. */
+function trustKeysHtml(trust) {
+  const keys = trust.keys || [];
+  if (!keys.length) return `<code class="small d-block text-break">${esc(trust.fingerprint || '?')}</code>`;
+  return `<table class="table table-sm small align-middle mb-1"><tbody>${keys.map((k) => {
+    const [tone, label] = KEY_PILL[k.status] || ['UNKNOWN', k.status];
+    const origin = k.source === 'update' ? `added by trust update from ${short(k.added_by)}` : 'installed on the host';
+    const ended = k.status !== 'trusted' && k.reason ? `<div class="text-secondary">${esc(k.reason)}</div>` : '';
+    return `<tr>
+      <td><span class="fw-medium">${esc(k.label || 'key')}</span>
+        <div class="font-monospace text-secondary text-truncate" style="max-width:16rem" title="${esc(k.fingerprint)}">${esc(k.fingerprint)}</div>
+        <div class="text-secondary">${esc(origin)}</div>${ended}</td>
+      <td>${pill(tone, label)}</td>
+      <td class="text-end text-nowrap">${k.status === 'trusted' ? `
+        <button class="btn btn-sm btn-outline-secondary py-0" data-trust-action="retire" data-trust-fp="${esc(k.fingerprint)}" data-trust-label="${esc(k.label || '')}">Retire</button>
+        <button class="btn btn-sm btn-outline-danger py-0" data-trust-action="revoke" data-trust-fp="${esc(k.fingerprint)}" data-trust-label="${esc(k.label || '')}">Revoke</button>`
+        : k.status === 'retired' ? `<button class="btn btn-sm btn-outline-danger py-0" data-trust-action="revoke" data-trust-fp="${esc(k.fingerprint)}" data-trust-label="${esc(k.label || '')}">Revoke</button>` : ''}</td>
+    </tr>`;
+  }).join('')}</tbody></table>
+  <div class="small text-secondary">${esc(trust.applied_updates || 0)} trust update(s) applied. Keys are added on the host or by a signed trust update in a bundle, never from here.</div>`;
+}
+
+function trustUpdatesNote(updates) {
+  if (!updates?.length) return '';
+  const applied = updates.filter((u) => u.applied).length;
+  const ignored = updates.length - applied;
+  return `<div class="small text-secondary">${applied ? `${applied} trust update(s) to apply` : ''}${applied && ignored ? ' · ' : ''}${
+    ignored ? `<span class="text-warning" title="${esc(updates.filter((u) => !u.applied).map((u) => `#${u.sequence}: ${u.reason}`).join('\n'))}">${ignored} ignored</span>` : ''}</div>`;
+}
 const CHECK_ICON = { pass: 'i-check', warn: 'i-alerts', fail: 'i-x' };
 
 async function renderUpdates() {
@@ -416,7 +450,7 @@ async function renderUpdates() {
     api('/ops/rollbacks'),
     api('/ops/jobs?limit=100').catch(() => ({ items: [] })),
   ]);
-  const updateJobs = jobs.items.filter((j) => ['bundle.verify', 'upgrade', 'rollback'].includes(j.kind)).slice(0, 15);
+  const updateJobs = jobs.items.filter((j) => ['bundle.verify', 'upgrade', 'rollback', 'trust.change'].includes(j.kind)).slice(0, 15);
   if (ops.preflight && list.items.some((b) => b.name === ops.preflight.bundle)) {
     ops.preflight = await api(`/ops/bundles/${encodeURIComponent(ops.preflight.bundle)}/preflight`).catch(() => null);
   } else {
@@ -437,8 +471,8 @@ async function renderUpdates() {
     </div></div></div>
     <div class="col-lg-6"><div class="card h-100"><div class="card-body">
       <div class="ops-card-head">${icon('i-shield')}<h6 class="mb-0">Bundle trust</h6></div>
-      ${trust?.configured ? `<p class="small mb-1">${pill('SUCCEEDED', 'Signatures required')} Bundles must be signed by:</p>
-        <code class="small d-block text-break">${esc(trust.fingerprint || '?')}</code>`
+      ${trust?.configured ? `<p class="small mb-1">${pill('SUCCEEDED', 'Signatures required')} Bundles must be signed by a trusted key:</p>
+        ${trustKeysHtml(trust)}`
         : `<p class="small mb-1">${pill('WARNING', 'No trust key')} Bundles are accepted without a signature check.</p>
         <p class="small text-secondary mb-0">Install the build site's public key to require signed bundles:
         <code>offline/upgrade.sh &lt;bundle&gt; &lt;root&gt; --trust-key bundle-signing.pub</code>. Get the key
@@ -456,7 +490,7 @@ async function renderUpdates() {
         <div class="small text-secondary">built ${esc(stampText(b.created_at))}</div></td>
       <td class="fw-semibold">${esc(b.platform_version || '—')}</td>
       <td class="small text-end">${esc(bytes(b.size_bytes))}</td>
-      <td>${pill(tone, label)}${b.signer_fingerprint ? `<div class="small text-secondary font-monospace text-truncate" style="max-width:12rem" title="${esc(b.signer_fingerprint)}">${esc(b.signer_fingerprint)}</div>` : ''}</td>
+      <td>${pill(tone, label)}${b.signer_fingerprint ? `<div class="small text-secondary font-monospace text-truncate" style="max-width:12rem" title="${esc(b.signer_fingerprint)}">${esc(b.signer_fingerprint)}</div>` : ''}${trustUpdatesNote(b.trust_updates)}</td>
       <td>${b.has_sbom ? pill('SUCCEEDED', 'SBOM') : pill('UNKNOWN', 'None')}</td>
       <td>${verifyPill}</td>
       <td class="text-end text-nowrap">
@@ -533,6 +567,22 @@ async function renderUpdates() {
       });
     };
   }
+  body.querySelectorAll('[data-trust-action]').forEach((b) => {
+    const action = b.dataset.trustAction;
+    b.onclick = () => confirmOps({
+      title: action === 'revoke' ? 'Revoke a signing key' : 'Retire a signing key',
+      expected: action,
+      action: action === 'revoke' ? 'Revoke' : 'Retire',
+      summary: `<dl class="ops-facts mb-0"><dt>Key</dt><dd>${esc(b.dataset.trustLabel || 'key')}</dd>
+        <dt>Fingerprint</dt><dd class="font-monospace small text-break">${esc(b.dataset.trustFp)}</dd></dl>`,
+      warning: action === 'revoke'
+        ? `${icon('i-alerts')} For a key that may be <b>compromised</b>. Bundles and trust updates signed by it are refused
+           from now on, and so is every key a trust update added on its authority. Only undone by hand on the host.`
+        : `${icon('i-alerts')} For a planned end. Bundles signed by this key are refused from now on; keys it added stay trusted.`,
+      submit: (reason, confirm) => api('/ops/trust/keys',
+        { method: 'POST', body: JSON.stringify({ fingerprint: b.dataset.trustFp, action, confirm, reason }) }),
+    });
+  });
   body.querySelectorAll('[data-rollback]').forEach((b) => {
     b.onclick = () => confirmOps({
       title: 'Roll back',

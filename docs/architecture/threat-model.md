@@ -317,6 +317,12 @@ drifted, search for the named function.
   - The manifest carries the SHA-256 of every archive and of the SBOM, so one signature covers the whole bundle.
   - `offline/lib.sh` `verify_signature` checks it with the **host's** `openssl` against a public key installed under `<target>/.trust/`. No code from inside the bundle runs before the signature verifies.
   - Once a site has a trust key, an unsigned or wrongly signed bundle is refused.
+- **Key rotation and revocation (E63).**
+  - A site trusts several keys (`.trust/trust.json`). Retired and revoked keys are refused.
+  - Keys change through trust updates shipped in bundles. Each must be signed by a key the site accepts.
+  - A trust update can't revive a retired or revoked key, and can't leave the site with no accepted key.
+  - Revoking a key cascades to the keys added on its authority.
+  - The console can only retire or revoke (an audited `trust.change` job). Adding a key needs the host.
 - **SBOM.** Each bundle carries `sbom.cdx.json` (CycloneDX 1.5) and `licenses.txt`,
   listing every image digest, every pinned Python wheel with its hash and the vendored
   JavaScript.
@@ -332,6 +338,13 @@ drifted, search for the named function.
   - a tampered manifest is refused;
   - the wrong key is refused;
   - the SBOM lists pinned packages and images.
+- `tests/unit/test_signing_key_rotation.py`:
+  - rotation through a shipped trust update;
+  - statements from strangers, tampered or revoked keys are ignored;
+  - revocation cascades;
+  - the last key can't be revoked;
+  - the runner's `trust.change` job.
+- `tests/api/test_ops.py::TestTrustChange`
 
 **Residual risk**
 - Platform-built images (`ai-platform/*`) are exempt from digest pinning in
@@ -341,6 +354,12 @@ drifted, search for the named function.
 - Signing is opt-in. A site that never installs a trust key accepts unsigned bundles with
   a warning, and the Offline Updates preflight reports it.
 - The signing key's protection is the build site's responsibility.
+- **Until a revocation reaches a site, a compromised key still signs bundles that site
+  accepts.** It can also add keys of its own there. Revoking it later revokes those keys too.
+- There's no offline root key and no expiry on signing keys. Rotation relies on the old
+  key, and recovery from losing every key relies on someone at the host.
+- `install.sh` on a first install runs the bundle's own copy of the checks, as before. Only
+  upgrades use code the site already trusts.
 - The node agent does not enforce an image allowlist itself.
 
 ## 10. Unauthorized deployment actions
