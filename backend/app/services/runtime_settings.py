@@ -200,6 +200,24 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next gateway request",
     ),
     RuntimeSetting(
+        "gateway.load_balancing",
+        "gateway",
+        "Load balancing across copies",
+        "How a call picks among a model's running copies: least_busy (fewest calls in "
+        "flight), round_robin, or first (always the oldest; the others only on failure).",
+        "Next gateway request",
+        _one_of("least_busy", "round_robin", "first"),
+    ),
+    RuntimeSetting(
+        "gateway.replica_retries",
+        "gateway",
+        "Retries on another copy",
+        "How many other copies of the same model a failed call is tried on before the "
+        "alias's fallback. A stream is retried only if it failed before sending anything.",
+        "Next gateway request",
+        _bounded(0, 5),
+    ),
+    RuntimeSetting(
         "gateway.concurrency_lease_seconds",
         "gateway",
         "Concurrency lease (seconds)",

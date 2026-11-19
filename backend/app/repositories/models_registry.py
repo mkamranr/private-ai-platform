@@ -173,10 +173,8 @@ class ModelDeploymentRepository(BaseRepository[ModelDeployment]):
     async def serving_for_model(self, model_id: uuid.UUID) -> Sequence[ModelDeployment]:
         """RUNNING deployments for a model, oldest first.
 
-        Order matters: V1 alias resolution is deterministic — the first healthy
-        deployment by creation order answers — so that repeated calls hit the same
-        instance and a debugging session is reproducible. Round-robin and failover are
-        V2 and slot in behind the same query.
+        Oldest first is what ``gateway.load_balancing = first`` uses. The default
+        spreads calls across these (E58, ``services/replica_balancer.py``).
         """
         stmt = (
             select(ModelDeployment)

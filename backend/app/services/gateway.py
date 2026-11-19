@@ -5,7 +5,7 @@ run?" a question no caller ever has to answer.
 
     caller asks for   "enterprise-chat"          (an alias)
     resolves to        model Qwen3-30B           (§13)
-    resolves to        deployment abc123         (first healthy, by creation order)
+    resolves to        deployment abc123         (least busy healthy copy, E58)
     resolves to        http://ai-model-abc123:8000   (never leaves the control plane, §12)
 
 Four things this module gets deliberately right, each because getting them wrong is
@@ -77,6 +77,7 @@ from app.services.identity import self_reported_identity
 from app.services.inference_backends import backend_api_key
 from app.services.llm_provider import ProviderError, VLLMProvider
 from app.services.media_provider import HttpOcrEngine, HttpSpeechToText, HttpTextToSpeech
+from app.services.replica_balancer import ReplicaBalancer, ReplicaLease
 
 log = get_logger(__name__)
 
@@ -103,6 +104,13 @@ class ResolvedTarget:
     fallback_alias_id: uuid.UUID | None = None
     #: Which circuit breaker this call reports to — see CircuitBreakers.
     breaker_key: str = ""
+    #: E58: the model's other healthy copies, in the order a failed call tries them.
+    alternates: list[ModelDeployment] = field(default_factory=list)
+    #: E58: copies tried after the first so far, against `gateway.replica_retries`.
+    replica_retries: int = 0
+    #: E58: this call counted against its copy's in-flight load (streams only; buffered
+    #: calls hold one for the length of each attempt).
+    lease: ReplicaLease | None = None
 
 
 class ModelBlockedError(PermissionDeniedError):
@@ -239,6 +247,9 @@ class GatewayService:
         self._cipher = SecretCipher(settings.security)
         self._policy = GatewayPolicy(
             settings.gateway, redis, GatewayQuotaRepository(models.session)
+        )
+        self._balancer = ReplicaBalancer(
+            redis, settings.gateway.concurrency_lease_seconds, settings.gateway.load_balancing
         )
 
     # -- authentication ----------------------------------------------------
@@ -427,17 +438,9 @@ class GatewayService:
                 details={"model": model.name, "retry_after_seconds": retry},
             )
 
-        if len(usable) > 1:
-            # Deterministic: first by creation order, so repeated calls hit the same
-            # instance and a debugging session is reproducible.
-            log.warning(
-                "multiple_deployments_for_model",
-                model=model.name,
-                count=len(usable),
-                chosen=str(usable[0].id),
-            )
-
-        deployment = usable[0]
+        # E58: spread across copies. The rest are kept, in order, for a failed call.
+        ordered = await self._balancer.order(model.id, usable)
+        deployment = ordered[0]
         return ResolvedTarget(
             requested_model=requested,
             model=model,
@@ -452,7 +455,55 @@ class GatewayService:
             ),
             fallback_alias_id=alias.fallback_alias_id if alias is not None else None,
             breaker_key=self._breaker_key(model, deployment),
+            alternates=list(ordered[1:]),
         )
+
+    async def _switch_replica(self, target: ResolvedTarget, kind: str) -> bool:
+        """Point ``target`` at the model's next healthy copy after a failure (E58).
+
+        In place, so whoever holds the target (the stream's accounting task) records the
+        copy that actually served. False when none is left or the retry budget is spent;
+        the caller then tries the alias's fallback, or reports the failure.
+        """
+        while target.alternates and target.replica_retries < self._settings.gateway.replica_retries:
+            deployment = target.alternates.pop(0)
+            breaker_key = self._breaker_key(target.model, deployment)
+            if BREAKERS.open_for(breaker_key) is not None or not deployment.internal_url:
+                continue
+            target.replica_retries += 1
+            failed = target.deployment
+            target.deployment = deployment
+            target.internal_url = deployment.internal_url
+            target.breaker_key = breaker_key
+            target.api_key = await backend_api_key(
+                self._backends,
+                self._cipher,
+                backend_id=target.model.backend_id,
+                endpoint=deployment.internal_url,
+            )
+            if target.lease is not None:
+                await self._balancer.release(target.lease)
+                target.lease = await self._balancer.acquire(deployment.id)
+            metrics.GATEWAY_REPLICA_FAILOVERS.labels(target.model.name, kind).inc()
+            log.info(
+                "replica_failover",
+                model=target.model.name,
+                failed=str(failed.id),
+                next=str(deployment.id),
+                kind=kind,
+            )
+            return True
+        return False
+
+    async def _on_replica(
+        self, target: ResolvedTarget, call: Callable[[ResolvedTarget], Awaitable[_T]]
+    ) -> _T:
+        """One buffered call, counted against its copy's load while it runs (E58)."""
+        lease = await self._balancer.acquire(target.deployment.id)
+        try:
+            return await call(target)
+        finally:
+            await self._balancer.release(lease)
 
     # -- policy (E2) -------------------------------------------------------
     async def _admit(self, context: GatewayContext, target: ResolvedTarget) -> None:
@@ -673,20 +724,31 @@ class GatewayService:
         context: GatewayContext,
         call: Callable[[ResolvedTarget], Awaitable[_T]],
     ) -> tuple[_T, ResolvedTarget]:
-        """Run one upstream call, feeding the breaker; retry once on the fallback.
+        """Run one upstream call, feeding the breaker. On failure, retry on the model's
+        other copies (E58, up to `gateway.replica_retries`), then once on the alias's
+        fallback.
 
         Only for buffered calls: once a stream has sent bytes there is no retrying it.
         Raises `_UpstreamFailedError` naming the last target tried.
         """
         try:
-            result = await call(target)
+            result = await self._on_replica(target, call)
         except ProviderError as exc:
             self._upstream_failed(target, exc)
+            while await self._switch_replica(target, "buffered"):
+                try:
+                    result = await self._on_replica(target, call)
+                except ProviderError as retry_exc:
+                    self._upstream_failed(target, retry_exc)
+                    exc = retry_exc
+                    continue
+                BREAKERS.record_success(target.breaker_key)
+                return result, target
             fallback = await self._runtime_fallback(target, context)
             if fallback is None:
                 raise _UpstreamFailedError(target, exc) from exc
             try:
-                result = await call(fallback)
+                result = await self._on_replica(fallback, call)
             except ProviderError as exc2:
                 self._upstream_failed(fallback, exc2)
                 raise _UpstreamFailedError(fallback, exc2) from exc2
@@ -1027,6 +1089,8 @@ class GatewayService:
         )
         if context is not None:
             await self._admit(context, target)
+            # E58: counted against the copy's load until `finalise_stream`.
+            target.lease = await self._balancer.acquire(target.deployment.id)
         return target
 
     async def stream_chunks(
@@ -1040,83 +1104,96 @@ class GatewayService:
         stream_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         client_wants_usage = bool((body.get("stream_options") or {}).get("include_usage"))
 
-        try:
-            async for chunk in self._provider(target).chat_stream(
-                messages=self._messages(body.get("messages") or []),
-                model=target.served_model_name,
-                temperature=body.get("temperature"),
-                max_tokens=body.get("max_tokens"),
-                tools=body.get("tools"),
-            ):
-                if chunk.usage is not None:
-                    accounting.prompt_tokens = chunk.usage.prompt_tokens
-                    accounting.completion_tokens = chunk.usage.completion_tokens
-                    if not client_wants_usage:
-                        # Swallowed: the caller did not ask for it, and OpenAI clients
-                        # that do not expect a usage chunk mishandle its empty choices.
+        # E58: set once anything has been sent; only before that can a failed stream
+        # move to another copy.
+        sent = False
+        while True:
+            try:
+                async for chunk in self._provider(target).chat_stream(
+                    messages=self._messages(body.get("messages") or []),
+                    model=target.served_model_name,
+                    temperature=body.get("temperature"),
+                    max_tokens=body.get("max_tokens"),
+                    tools=body.get("tools"),
+                ):
+                    if chunk.usage is not None:
+                        accounting.prompt_tokens = chunk.usage.prompt_tokens
+                        accounting.completion_tokens = chunk.usage.completion_tokens
+                        if not client_wants_usage:
+                            # Swallowed: the caller did not ask for it, and OpenAI clients
+                            # that do not expect a usage chunk mishandle its empty choices.
+                            continue
+                        sent = True
+                        yield _sse(
+                            {
+                                "id": stream_id,
+                                "object": "chat.completion.chunk",
+                                "created": int(time.time()),
+                                "model": target.requested_model,
+                                "choices": [],
+                                "usage": {
+                                    "prompt_tokens": accounting.prompt_tokens,
+                                    "completion_tokens": accounting.completion_tokens,
+                                    "total_tokens": accounting.prompt_tokens
+                                    + accounting.completion_tokens,
+                                },
+                            }
+                        )
                         continue
+
+                    delta: dict[str, Any] = {}
+                    if chunk.delta:
+                        delta["content"] = chunk.delta
+                    if chunk.tool_calls:
+                        delta["tool_calls"] = list(chunk.tool_calls)
+
+                    # Time to first token (M19). Stamped on the first chunk carrying
+                    # content, because that is the moment a chat user stops waiting —
+                    # total duration is dominated by how long the answer runs. A role-only
+                    # or empty chunk does not count (E16): runtimes send one before any
+                    # token exists. Only timestamps are taken here; `finalise_stream` turns
+                    # them into observations, for the same reason usage is recorded there.
+                    if delta:
+                        now = time.perf_counter()
+                        if accounting.first_token_at is None:
+                            accounting.first_token_at = now
+                        accounting.last_token_at = now
+
+                    sent = True
                     yield _sse(
                         {
                             "id": stream_id,
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
                             "model": target.requested_model,
-                            "choices": [],
-                            "usage": {
-                                "prompt_tokens": accounting.prompt_tokens,
-                                "completion_tokens": accounting.completion_tokens,
-                                "total_tokens": accounting.prompt_tokens
-                                + accounting.completion_tokens,
-                            },
+                            "choices": [
+                                {"index": 0, "delta": delta, "finish_reason": chunk.finish_reason}
+                            ],
                         }
                     )
+
+                yield SSE_DONE
+                BREAKERS.record_success(target.breaker_key)
+                return
+
+            except ProviderError as exc:
+                self._upstream_failed(target, exc)
+                # E58: nothing has reached the caller yet, so another copy can answer as if
+                # this one had never been asked.
+                if not sent and await self._switch_replica(target, "stream"):
+                    accounting.prompt_tokens = accounting.completion_tokens = 0
                     continue
-
-                delta: dict[str, Any] = {}
-                if chunk.delta:
-                    delta["content"] = chunk.delta
-                if chunk.tool_calls:
-                    delta["tool_calls"] = list(chunk.tool_calls)
-
-                # Time to first token (M19). Stamped on the first chunk carrying
-                # content, because that is the moment a chat user stops waiting —
-                # total duration is dominated by how long the answer runs. A role-only
-                # or empty chunk does not count (E16): runtimes send one before any
-                # token exists. Only timestamps are taken here; `finalise_stream` turns
-                # them into observations, for the same reason usage is recorded there.
-                if delta:
-                    now = time.perf_counter()
-                    if accounting.first_token_at is None:
-                        accounting.first_token_at = now
-                    accounting.last_token_at = now
-
-                yield _sse(
-                    {
-                        "id": stream_id,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": target.requested_model,
-                        "choices": [
-                            {"index": 0, "delta": delta, "finish_reason": chunk.finish_reason}
-                        ],
-                    }
-                )
-
-            yield SSE_DONE
-            BREAKERS.record_success(target.breaker_key)
-
-        except ProviderError as exc:
-            # Headers are already sent, so no status code is available. The OpenAI SDKs
-            # can surface a final error event, which is the best available signal.
-            accounting.status_code = 502
-            self._upstream_failed(target, exc)
-            log.warning("stream_failed", model=target.requested_model, error=str(exc)[:200])
-            yield _sse({"error": {"message": str(exc)[:300], "type": "upstream_error"}})
-            yield SSE_DONE
-        except (GeneratorExit, asyncio.CancelledError):
-            # The client hung up. Only a flag is set — no awaiting is permitted here.
-            accounting.disconnected = True
-            raise
+                # Headers are already sent, so no status code is available. The OpenAI SDKs
+                # can surface a final error event, which is the best available signal.
+                accounting.status_code = 502
+                log.warning("stream_failed", model=target.requested_model, error=str(exc)[:200])
+                yield _sse({"error": {"message": str(exc)[:300], "type": "upstream_error"}})
+                yield SSE_DONE
+                return
+            except (GeneratorExit, asyncio.CancelledError):
+                # The client hung up. Only a flag is set — no awaiting is permitted here.
+                accounting.disconnected = True
+                raise
 
     async def finalise_stream(
         self, target: ResolvedTarget, context: GatewayContext, accounting: StreamAccounting
@@ -1131,6 +1208,8 @@ class GatewayService:
         tokens were generated and the GPU time was spent whether or not anyone read them.
         """
         await self.release(context)
+        await self._balancer.release(target.lease)
+        target.lease = None
         if accounting.first_token_at is not None:
             metrics.GATEWAY_TTFT.labels(target.model.name).observe(
                 accounting.first_token_at - context.started

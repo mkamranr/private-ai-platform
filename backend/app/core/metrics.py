@@ -135,6 +135,13 @@ GATEWAY_FALLBACKS = Counter(
     registry=REGISTRY,
 )
 
+GATEWAY_REPLICA_FAILOVERS = Counter(
+    "ai_platform_gateway_replica_failovers_total",
+    "Calls retried on another running copy of the same model after one failed (E58).",
+    # buffered: a non-streamed call; stream: a stream that failed before sending anything.
+    ["model", "kind"],
+)
+
 # ---------------------------------------------------------------------------
 # Agents (M10-M12) - recorded by the runtime
 # ---------------------------------------------------------------------------

@@ -128,6 +128,35 @@ re-opens it immediately.
   dead backend independently, within a handful of failures.
   `GET /api/v1/gateway/circuits` shows the view of the replica that answered.
 
+## Spreading calls across copies
+
+A model can run as several deployments (copies on different GPUs or nodes). Each call goes
+to one of the copies whose circuit is closed, chosen by `gateway.load_balancing` (Settings
+page, *Gateway resilience*):
+
+| Value | Picks |
+|---|---|
+| `least_busy` (default) | The copy with the fewest calls in flight; equally busy copies take turns. |
+| `round_robin` | Each copy in turn, whatever its load. |
+| `first` | Always the oldest copy; the others only when it fails. The behaviour before E58, useful when debugging one instance. |
+
+- **In-flight counts live in Valkey**, so every control-plane replica sees the same load.
+  A call holds a lease on its copy for as long as it runs; a lease left behind by a crashed
+  process lapses after `gateway.concurrency_lease_seconds`. If Valkey is unreachable,
+  copies still take turns (per control-plane process) and nothing is refused.
+- **A failed call moves to another copy.** A buffered call that fails is retried on up to
+  `gateway.replica_retries` other copies (default 1) before the alias's fallback. A
+  stream is moved only if it failed **before sending anything**: once part of an answer
+  has reached the caller, replaying it elsewhere would send a different answer under the
+  same response, so the stream ends with an `upstream_error` event as before.
+- A retry on another copy is the same call: it is admitted and charged once, and the usage
+  record names the copy that answered.
+- `ai_platform_gateway_replica_failovers_total{model,kind}` counts moves (`kind` is
+  `buffered` or `stream`).
+
+Not built: weights per copy, session affinity (one conversation pinned to one copy for
+prefix caching), and moving a stream that has already sent part of its answer.
+
 ## Fallback aliases
 
 An alias may name a `fallback_alias_id`. It is **explicit, never inferred**: only an
@@ -321,3 +350,5 @@ the Usage & Quotas page report percentiles from them:
 - `ai_platform_gateway_circuit_opens_total`
 - `ai_platform_gateway_fallbacks_total{reason}`, where `reason` is `unavailable` or
   `upstream_error`
+- `ai_platform_gateway_replica_failovers_total{model,kind}`, where `kind` is `buffered`
+  or `stream` (E58)

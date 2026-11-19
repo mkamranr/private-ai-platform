@@ -518,6 +518,14 @@ matrix still listed as missing.
 - [x] Console: *Add SQL tool*, *Import OpenAPI*, *Delete* on non-MCP tools. Tests: `tests/unit/test_connectors.py`, `tests/api/test_connector_tools.py`. Docs: [tools.md](../tools.md#connectors-sql-and-openapi), security.md, api.md, `.env.example`.
 - [ ] PostgreSQL only. No OpenAPI 2, OAuth flows, spec fetching from a URL or multipart bodies. The workflow tool step still runs executors directly (no `tool_executions` row). Full JSON Schema validation of arguments needs a dependency not in the bundle.
 
+## E58: Spread gateway calls across a model's copies (closes the feature-matrix replica gap)
+
+- [x] `services/replica_balancer.py`: `least_busy` (default; in-flight leases per deployment in a Valkey sorted set, lapsing after `concurrency_lease_seconds`; equally busy copies rotate through a per-model `INCR`), `round_robin`, `first` (the old behaviour). Valkey down: rotation per process, no leases, never an error.
+- [x] `GatewayService._target` orders the healthy copies and keeps the rest on the target; `_switch_replica` moves a target in place, skipping open circuits, up to `gateway.replica_retries` (default 1). `_attempt` retries buffered calls on other copies before the alias fallback. `stream_chunks` moves a stream that failed before sending anything; the lease moves with it and is released in `finalise_stream`.
+- [x] Runtime settings `gateway.load_balancing` and `gateway.replica_retries`; metric `ai_platform_gateway_replica_failovers_total{model,kind}`. No migration.
+- [x] Tests: `tests/api/test_replica_balancing.py`. Docs: [gateway-policy.md](../gateway-policy.md#spreading-calls-across-copies), models.md, database.md, settings.md.
+- [ ] A stream that has sent part of its answer is not moved. No weights per copy and no session affinity for prefix caching. Chat, embeddings, transcription and speech all spread and retry on another copy; OCR and the platform's own internal calls spread but do not retry.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and
