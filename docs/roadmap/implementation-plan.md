@@ -542,6 +542,15 @@ matrix still listed as missing.
 - [x] Tests: `tests/unit/test_release_tooling.py` (`TestRestoreParts`, `TestRunnerRestoreParts`), `tests/api/test_ops.py` (`TestPartialRestore`). Docs: [backup.md](../backup.md#restore), operations.md, api.md.
 - [ ] No restore of one team or knowledge base. The previous MinIO directory is kept, not cleaned up. Not exercised against a live Qdrant in CI; the snapshot recovery path is covered by unit tests with the Docker calls replaced.
 
+## E61: Zero-downtime deployment revisions (closes the feature-matrix blue/green gap)
+
+- [x] `strategy` on revisions and rollbacks: `auto` (default; in place when not serving or when another copy runs, else a new copy, else in place with downtime), `in_place`, `blue_green`. The response reports `strategy`, `downtime`, `message`, `successor_id`. Rollback compares the GPU count, not the devices.
+- [x] Blue/green: a successor `model_deployments` row (`replaces_id`, `handover`) placed by the scheduler on free GPUs (beside the original when it needs none). `DeploymentService.complete_handovers`, run by the deployment worker each pass, moves a healthy copy's container, GPUs and settings into the original row (id and history kept), then stops the old container and removes the copy's row; a failed copy is removed and its revision marked *Not applied*. An old container that can't be stopped stays as a FAILED row holding its GPUs. Stopping the original removes its copy. Audit `DEPLOYMENT_HANDOVER`.
+- [x] `deployment_rollouts` and `services/deployment_rollout.py`: every running copy checked up front, then revised in turn with `auto`, each once the previous is healthy at its new revision; a failure stops it. `POST/GET/DELETE /models/{id}/rollout`; audit `DEPLOYMENT_ROLLOUT_STARTED`/`_FINISHED`. Migration `e5a7c9b1d3f4`.
+- [x] Console: strategy choice and *Every copy, one at a time* in the Revisions dialog, rollout progress with Cancel, a *new copy* badge on a copy taking over.
+- [x] Tests: `tests/api/test_zero_downtime_revisions.py` (strategies, handover, failed copy, stuck old container, GPU placement and release, rollouts). Docs: [model-governance.md](../model-governance.md#without-downtime), api.md.
+- [ ] No weighted or gradual traffic shift: the switch happens when the new copy is healthy. Health is the runtime's readiness check, not a canary of real traffic. A rollout runs one copy at a time, never several. External runtimes are not managed, so not revised.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

@@ -326,6 +326,17 @@ class ModelDeployment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     healthy_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     stopped_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
+    #: E61: set on a *new copy* started to take over this deployment's work without
+    #: downtime (blue/green). When it is healthy its container moves into the original
+    #: row, which keeps its id and revision history, and this row is removed.
+    replaces_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("model_deployments.id", ondelete="CASCADE"),
+        index=True,
+    )
+    #: E61: on a new copy, the revision it carries: ``{"revision": n}``.
+    handover: Mapped[dict | None] = mapped_column(JSONB)
+
     model: Mapped[Model] = relationship(back_populates="deployments")
 
     @property
@@ -596,3 +607,48 @@ class UsageRecord(Base):
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+
+class RolloutState(enum.StrEnum):
+    RUNNING = "RUNNING"
+    DONE = "DONE"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class DeploymentRollout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A configuration change applied to every copy of a model, one at a time (E61).
+
+    Each copy is revised only once the one before it is healthy again, so the others keep
+    serving throughout. One that fails stops the rollout; the copies not yet reached keep
+    their old configuration. At most one runs per model.
+    """
+
+    __tablename__ = "deployment_rollouts"
+    __table_args__ = (
+        Index(
+            "uq_deployment_rollout_running",
+            "model_id",
+            unique=True,
+            postgresql_where=text("state = 'RUNNING'"),
+        ),
+    )
+
+    model_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("models.id", ondelete="CASCADE"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(16), default=RolloutState.RUNNING, nullable=False)
+    #: The settings applied to every copy (image, tensor_parallel_size, ...).
+    change: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    change_note: Mapped[str | None] = mapped_column(Text)
+    #: The copies, in the order they are revised.
+    deployment_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    #: ``{deployment_id: revision}`` for each copy revised so far.
+    progress: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    current_deployment_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+    done_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))

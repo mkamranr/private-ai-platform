@@ -2305,8 +2305,8 @@
         <div id="revisions-body"></div>
         <form id="revision-form" class="governance mt-2">
           <div class="fw-semibold small mb-2">New revision
-            <span class="text-secondary fw-normal">— blank fields keep their current value.
-              The container is recreated on the same GPUs.</span></div>
+            <span class="text-secondary fw-normal">— blank fields keep their current value.</span></div>
+          <div id="rollout-status"></div>
           <div class="row g-2">
             <div class="col-md-4">
               <label class="form-label small text-secondary" for="rev-image">Image</label>
@@ -2328,9 +2328,28 @@
             <div class="col-md-2 d-flex align-items-end">
               <button type="submit" class="btn btn-sm btn-primary w-100">Apply</button>
             </div>
-            <div class="col-12">
+            <div class="col-md-6">
               <input class="form-control form-control-sm" id="rev-note" maxlength="2000"
                      placeholder="Change note">
+            </div>
+            <div class="col-md-3">
+              <select class="form-select form-select-sm" id="rev-strategy"
+                      title="How the new configuration replaces the running one">
+                <option value="auto">Automatic (no downtime when possible)</option>
+                <option value="blue_green">New copy, then switch over</option>
+                <option value="in_place">Restart in place</option>
+              </select>
+            </div>
+            <div class="col-md-3 d-flex align-items-center">
+              <div class="form-check mb-0" title="Revise each running copy of this model in turn, waiting for each to be healthy">
+                <input class="form-check-input" type="checkbox" id="rev-all-copies">
+                <label class="form-check-label small" for="rev-all-copies">Every copy, one at a time</label>
+              </div>
+            </div>
+            <div class="col-12 small text-secondary">
+              Automatic: with other copies running, this one restarts while they serve; as the
+              only copy, a new copy starts on free GPUs and takes over once healthy; without
+              free GPUs it restarts in place and the model is down while it loads.
             </div>
           </div>
           <div id="revision-error" class="alert alert-danger py-2 small mt-2 d-none"></div>

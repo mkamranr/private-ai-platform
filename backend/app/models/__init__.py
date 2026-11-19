@@ -64,6 +64,7 @@ from app.models.models_registry import (
     ApiClient,
     ApiKey,
     DeploymentRevision,
+    DeploymentRollout,
     DeploymentState,
     Model,
     ModelAlias,
@@ -72,6 +73,7 @@ from app.models.models_registry import (
     ModelFile,
     ModelStatus,
     ModelType,
+    RolloutState,
     UsageRecord,
 )
 from app.models.notifications import (
@@ -156,6 +158,7 @@ __all__ = [
     "DeliveryEvent",
     "DeliveryStatus",
     "DeploymentRevision",
+    "DeploymentRollout",
     "DeploymentState",
     "Document",
     "DocumentChunk",
@@ -201,6 +204,7 @@ __all__ = [
     "ReindexState",
     "RevokedToken",
     "Role",
+    "RolloutState",
     "RunState",
     "Skill",
     "StagedChunk",

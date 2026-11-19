@@ -75,6 +75,7 @@ class ModelRegisterRequest(BaseModel):
 
 
 ApprovalStatus = Literal["approved", "experimental", "deprecated", "blocked"]
+RevisionStrategy = Literal["auto", "in_place", "blue_green"]
 
 
 class ModelUpdateRequest(BaseModel):
@@ -224,6 +225,8 @@ class DeploymentRead(ORMModel):
     gpu_memory_utilization: float
     #: The configuration revision now applied (E4).
     current_revision: int = 1
+    #: E61: set on a new copy taking over from that deployment once it is healthy.
+    replaces_id: uuid.UUID | None = None
     error_message: str | None = None
     started_at: dt.datetime | None = None
     healthy_at: dt.datetime | None = None
@@ -308,6 +311,13 @@ class DeploymentRevisionRead(ORMModel):
     created_at: dt.datetime
     #: Filled in by the route: whether this revision is the one now applied.
     current: bool = False
+    #: E61, on the response to a new revision: how it is rolled out (``in_place`` or
+    #: ``blue_green``), whether the model is unavailable meanwhile, and why.
+    strategy: str | None = None
+    downtime: bool | None = None
+    message: str | None = None
+    #: E61: the new copy taking over, for ``blue_green``.
+    successor_id: uuid.UUID | None = None
 
 
 class DeploymentRevisionRequest(BaseModel):
@@ -326,11 +336,55 @@ class DeploymentRevisionRequest(BaseModel):
     max_model_len: int | None = Field(default=None, ge=1)
     gpu_memory_utilization: float | None = Field(default=None, gt=0.0, le=1.0)
     change_note: str | None = Field(default=None, max_length=2000)
+    strategy: RevisionStrategy = Field(
+        default="auto",
+        description=(
+            "E61. auto: in place when another copy of the model is running, else a new copy "
+            "takes over once healthy, else in place with downtime. in_place: restart on the "
+            "same GPUs. blue_green: a new copy on free GPUs takes over (409 without capacity)."
+        ),
+    )
 
 
 class DeploymentRollbackRequest(BaseModel):
     revision: int = Field(ge=1)
     change_note: str | None = Field(default=None, max_length=2000)
+    strategy: RevisionStrategy = Field(
+        default="auto",
+        description=(
+            "E61. auto: in place when another copy of the model is running, else a new copy "
+            "takes over once healthy, else in place with downtime. in_place: restart on the "
+            "same GPUs. blue_green: a new copy on free GPUs takes over (409 without capacity)."
+        ),
+    )
+
+
+class RolloutRequest(BaseModel):
+    """E61: apply one change to every running copy of a model, one at a time."""
+
+    image: str | None = Field(default=None, max_length=512)
+    tensor_parallel_size: int | None = Field(default=None, ge=1, le=16)
+    max_model_len: int | None = Field(default=None, ge=1)
+    gpu_memory_utilization: float | None = Field(default=None, gt=0.0, le=1.0)
+    change_note: str | None = Field(default=None, max_length=2000)
+
+
+class RolloutRead(ORMModel):
+    id: uuid.UUID
+    model_id: uuid.UUID
+    state: str
+    change: dict[str, Any]
+    change_note: str | None = None
+    deployment_ids: list[uuid.UUID]
+    #: ``{deployment_id: revision}`` for each copy revised so far; null for a copy that
+    #: was stopped or deleted before its turn.
+    progress: dict[str, int | None]
+    current_deployment_id: uuid.UUID | None = None
+    done_count: int
+    error: str | None = None
+    created_by: uuid.UUID | None = None
+    created_at: dt.datetime
+    finished_at: dt.datetime | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -1880,6 +1880,9 @@ function deploymentRow(deployment) {
     <td>
       <div class="fw-medium">${esc(deployment.model_name)}</div>
       <div class="small text-secondary mono">${esc(deployment.id.slice(0, 8))}</div>
+      ${deployment.replaces_id ? `<div class="small"><span class="badge text-bg-info">new copy</span>
+        takes over from <span class="mono">${esc(deployment.replaces_id.slice(0, 8))}</span>
+        once healthy</div>` : ''}
     </td>
     <td class="small">
       ${esc(deployment.node_name || '—')}
@@ -1899,6 +1902,7 @@ function deploymentRow(deployment) {
               >Logs</button>
       <button class="btn btn-sm btn-outline-secondary me-1"
               data-revisions="${esc(deployment.id)}" data-dep-name="${esc(deployment.model_name)}"
+              data-dep-model="${esc(deployment.model_id)}"
               ${deployment.node_id ? '' : 'disabled title="An external runtime has no configuration here"'}
               >Revisions</button>
       <button class="btn btn-sm btn-outline-secondary me-1"
@@ -1942,7 +1946,7 @@ function wireDeploymentActions() {
 
   document.querySelectorAll('[data-revisions]').forEach((button) => {
     button.onclick = () => guard(button, () =>
-      openRevisions(button.dataset.revisions, button.dataset.depName));
+      openRevisions(button.dataset.revisions, button.dataset.depName, button.dataset.depModel));
   });
 }
 
@@ -2031,9 +2035,10 @@ document.getElementById('logs-reconnect').onclick = () =>
   streamLogs(document.getElementById('logs-modal').dataset.dep);
 
 /* Revisions (E4). Append-only: a rollback is a new revision copying an old one. */
-async function openRevisions(deploymentId, name) {
+async function openRevisions(deploymentId, name, modelId) {
   const modal = document.getElementById('revisions-modal');
   modal.dataset.dep = deploymentId;
+  modal.dataset.model = modelId || '';
   document.getElementById('revisions-title').textContent = name;
   document.getElementById('revision-error').classList.add('d-none');
   document.getElementById('revision-form').reset();
@@ -2051,6 +2056,7 @@ async function renderRevisions() {
   document.getElementById('rev-util').placeholder = current.gpu_memory_utilization ?? '';
   const manage = can('model.deploy');
   document.getElementById('revision-form').classList.toggle('d-none', !manage);
+  await renderRolloutStatus();
 
   document.getElementById('revisions-body').innerHTML = `
     <div class="table-responsive">
@@ -2075,32 +2081,72 @@ async function renderRevisions() {
 
   document.querySelectorAll('[data-rollback]').forEach((button) => {
     button.onclick = () => guard(button, async () => {
-      if (!confirm(`Restore revision ${button.dataset.rollback}? The container is recreated ` +
-        'on the same GPUs; the model is unavailable while it loads.')) return;
+      if (!confirm(`Restore revision ${button.dataset.rollback}? Like any revision, it runs ` +
+        'without downtime when another copy is running or a new copy fits on free GPUs.')) return;
       const revision = await api(`/deployments/${deploymentId}/rollback`, {
         method: 'POST', body: JSON.stringify({ revision: Number(button.dataset.rollback) }),
       });
-      alert(`Revision ${revision.revision} is rolling out.`, 'success');
+      alert(`Revision ${revision.revision}: ${revision.message || 'rolling out.'}`,
+        revision.downtime ? 'warning' : 'success');
       await renderRevisions();
       if (currentPage === 'deployments') await renderDeployments();
     });
   });
 }
 
+// E61: a model-wide rollout's progress, with Cancel, above the new-revision form.
+async function renderRolloutStatus() {
+  const host = document.getElementById('rollout-status');
+  const modelId = document.getElementById('revisions-modal').dataset.model;
+  host.innerHTML = '';
+  if (!modelId) return;
+  const rollout = await api(`/models/${modelId}/rollout`).catch(() => null);
+  if (!rollout) return;
+  const total = rollout.deployment_ids.length;
+  if (rollout.state === 'RUNNING') {
+    host.innerHTML = `<div class="alert alert-info py-2 small d-flex align-items-center gap-2">
+      <span><b>Rolling out</b> to every copy: ${rollout.done_count} of ${total} done.
+        Each copy is changed once the one before it is healthy again.</span>
+      ${can('model.deploy') ? '<button type="button" class="btn btn-sm btn-outline-danger ms-auto py-0" id="rollout-cancel">Cancel</button>' : ''}
+    </div>`;
+    document.getElementById('rollout-cancel')?.addEventListener('click', (event) =>
+      guard(event.target, async () => {
+        await api(`/models/${modelId}/rollout`, { method: 'DELETE' });
+        alert('Rollout cancelled; the copy being changed finishes its own revision.', 'success');
+        await renderRolloutStatus();
+      }));
+  } else if (rollout.state === 'FAILED') {
+    host.innerHTML = `<div class="alert alert-danger py-2 small">The last rollout stopped after
+      ${rollout.done_count} of ${total} copies: ${esc(rollout.error || '')}. Copies it had not
+      reached kept their configuration.</div>`;
+  }
+}
+
 onModalSubmit('revision-form', 'revision-error', async (form) => {
-  const deploymentId = document.getElementById('revisions-modal').dataset.dep;
-  const revision = await api(`/deployments/${deploymentId}/revisions`, {
-    method: 'POST',
-    body: JSON.stringify({
-      image: field('rev-image') || null,
-      max_model_len: numberField('rev-maxlen'),
-      tensor_parallel_size: numberField('rev-tp'),
-      gpu_memory_utilization: numberField('rev-util'),
-      change_note: field('rev-note') || null,
-    }),
-  });
-  form.reset();
-  alert(`Revision ${revision.revision} is rolling out.`, 'success');
+  const modal = document.getElementById('revisions-modal');
+  const deploymentId = modal.dataset.dep;
+  const change = {
+    image: field('rev-image') || null,
+    max_model_len: numberField('rev-maxlen'),
+    tensor_parallel_size: numberField('rev-tp'),
+    gpu_memory_utilization: numberField('rev-util'),
+    change_note: field('rev-note') || null,
+  };
+  if (document.getElementById('rev-all-copies').checked && modal.dataset.model) {
+    const rollout = await api(`/models/${modal.dataset.model}/rollout`, {
+      method: 'POST', body: JSON.stringify(change),
+    });
+    form.reset();
+    alert(`Rolling out to ${rollout.deployment_ids.length} copies, one at a time.`, 'success');
+  } else {
+    const revision = await api(`/deployments/${deploymentId}/revisions`, {
+      method: 'POST',
+      body: JSON.stringify({ ...change, strategy: document.getElementById('rev-strategy').value }),
+    });
+    form.reset();
+    alert(`Revision ${revision.revision}: ${revision.message || 'rolling out.'}`,
+      revision.downtime ? 'warning' : 'success');
+  }
   await renderRevisions();
   if (currentPage === 'deployments') await renderDeployments();
 });
