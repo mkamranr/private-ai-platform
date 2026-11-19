@@ -552,6 +552,9 @@ class WorkflowEngine:
             top_k=rendered.get("top_k"),
             user_id=run.started_by,
             purpose="workflow.retrieve",
+            # E56: the person who started the run; a scheduled or webhook run has nobody,
+            # so it reads open documents only.
+            reader=await self._knowledge.reader_for(run.started_by),
         )
         passages = [
             {

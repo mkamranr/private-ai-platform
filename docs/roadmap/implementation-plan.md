@@ -77,7 +77,7 @@ dashboard real signals.
 - [x] `POST /retrieval/playground`: candidates, reranked results, optional vector-order baseline, timings and warnings.
 - [x] Evaluation sets labelled by document lineage; synchronous runs (≤100 questions) scoring hit rate, recall, precision and MRR over distinct documents, with per-question results stored. Audited.
 - [x] Admin: retrieval settings, version badges, New version / Re-ingest / Versions on the Knowledge Bases page; new Retrieval Playground page with an Evaluation sets tab. Doc: [docs/rag-evaluation.md](../rag-evaluation.md).
-- [ ] Answer faithfulness scoring (needs a judge model), query history, asynchronous runs for large sets, whole-base re-embed and per-document ACLs are not included. See rag-evaluation.md.
+- [ ] Answer faithfulness scoring (needs a judge model), query history, asynchronous runs for large sets, and whole-base re-embed are not included (per-document access arrived in E56). See rag-evaluation.md.
 
 ## E6: Workflows (P2)
 
@@ -497,6 +497,16 @@ matrix still listed as missing.
 - [x] `GET /agents/status` (`agent.view`). Agents page: red banner while stopped, *Stop all agents* / *Resume agents* button for `settings.manage` holders, asking for a reason. No migration.
 - [x] Tests: `tests/api/test_agent_kill_switch.py`. Docs: [agents.md](../agents.md#stopping-every-agent-at-once), settings.md, api.md.
 - [ ] Workflows are not affected (by decision). The model or tool call in progress finishes. No per-team or per-agent switch (disable the agent for that). Not shown in the developer portal or chat beyond the 503 message.
+
+## E56: Per-document access for knowledge bases (closes the feature-matrix ACL gap)
+
+- [x] `documents.restricted` (every version) and `document_access` (lineage, principal type `user`/`team`, principal id); migration `b2d4f6a8c0e1`. A new version copies `restricted` and shares the lineage's list.
+- [x] `services/document_access.py`: `DocumentReader` (user, teams, superuser) and `access_labels`. Chunk payloads carry `access`; searches filter with `AnyOrMissing` (Qdrant `MatchAny` or `IsEmpty`, so unlabelled points stay open, no backfill), then hits are re-checked against PostgreSQL. `VectorStore.set_payload` relabels in place; a failure is logged and audited as `index_updated: false`.
+- [x] Readers: console/API callers as themselves; agent runs as `context.user_id`; workflow runs as `started_by`, so scheduled and webhook runs read open documents only. `retrieve` defaults to open-only when no reader is passed.
+- [x] API: `GET/PUT /documents/{id}/access` (`knowledge.manage`, audited `DOCUMENT_ACCESS_CHANGED` with reason); upload form fields `restricted`, `users`, `teams`; restricted documents hidden from lists and 404 on every document route for non-readers, listed for `knowledge.manage`. `DocumentRead.restricted`.
+- [x] Console: *restricted* badge, *Access* modal (users and teams, reason), *Only me* on upload.
+- [x] Tests: `tests/api/test_document_access.py`. Docs: [rag.md](../rag.md#per-document-access), api.md.
+- [ ] No roles or groups from an identity provider as principals (users and teams only, by decision). No inheritance from a source system (SharePoint and the like). Memory is unaffected. Agents' own allow-lists still choose bases, not documents.
 
 ## Phase acceptance (applies to each)
 

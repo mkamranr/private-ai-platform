@@ -233,6 +233,22 @@ class TestVectorFilterTranslation:
         assert translated is not None
         assert len(translated.must) == 1  # type: ignore[arg-type]
 
+    def test_access_labels_match_any_or_missing(self) -> None:
+        """E56: "one of these labels, or no label at all" (points indexed before E56)."""
+        from qdrant_client.http import models as qmodels
+
+        from app.core.interfaces.vector import AnyOrMissing
+        from app.services.vector_store import _to_filter
+
+        translated = _to_filter({"tenant_id": "acme", "access": AnyOrMissing(("public",))})
+        assert translated is not None and len(translated.must) == 2  # type: ignore[arg-type]
+        nested = translated.must[1]  # type: ignore[index]
+        assert isinstance(nested, qmodels.Filter)
+        kinds = {type(c) for c in nested.should}  # type: ignore[union-attr]
+        assert kinds == {qmodels.FieldCondition, qmodels.IsEmptyCondition}
+        with pytest.raises(TypeError, match="at least one value"):
+            _to_filter({"access": AnyOrMissing(())})
+
     def test_empty_filters_are_none(self) -> None:
         from app.services.vector_store import _to_filter
 

@@ -73,9 +73,10 @@ async function api(path, options = {}) {
 /** Upload a file. Separate from api() because a multipart body must NOT carry an
  *  explicit Content-Type — the browser sets one with the boundary it generated, and
  *  overriding it produces a body the server cannot parse. */
-async function apiUpload(path, file) {
+async function apiUpload(path, file, fields = {}) {
   const body = new FormData();
   body.append('file', file);
+  for (const [key, value] of Object.entries(fields)) body.append(key, value);
   const headers = {};
   const t = token.get();
   if (t) headers.Authorization = `Bearer ${t}`;
@@ -3008,6 +3009,10 @@ async function renderBaseDetail(base) {
         <input type="file" id="kb-upload" class="form-control form-control-sm"
                style="max-width:24rem"
                accept=".pdf,.docx,.pptx,.txt,.md,.csv,.html,.json">
+        <div class="form-check form-check-inline mb-0" title="Only you (and superusers) can retrieve it until you share it with Access">
+          <input class="form-check-input" type="checkbox" id="kb-upload-restricted">
+          <label class="form-check-label small" for="kb-upload-restricted">Only me</label>
+        </div>
         <button id="kb-upload-btn" class="btn btn-sm btn-primary">Upload</button>
         <span class="small text-secondary">
           Parsing and embedding run in a worker, so this returns immediately and the row
@@ -3044,7 +3049,10 @@ async function renderBaseDetail(base) {
       const input = document.getElementById('kb-upload');
       const file = input.files?.[0];
       if (!file) { alert('Choose a file first.', 'warning'); return; }
-      const accepted = await apiUpload(`/knowledge-bases/${base.id}/documents`, file);
+      // Restricted from the start, not afterwards: otherwise it is open while it indexes.
+      const restricted = document.getElementById('kb-upload-restricted').checked;
+      const accepted = await apiUpload(`/knowledge-bases/${base.id}/documents`, file,
+        restricted ? { restricted: 'true', users: currentUser.id } : {});
       input.value = '';
       alert(`${accepted.filename} accepted (${accepted.status}). ${accepted.message}`, 'success');
       await refresh({ force: true });
@@ -3095,6 +3103,11 @@ async function renderBaseDetail(base) {
                                                             button.dataset.docName));
   });
 
+  document.querySelectorAll('[data-doc-access]').forEach((button) => {
+    button.onclick = () => guard(button, () => openDocumentAccess(button.dataset.docAccess,
+                                                                  button.dataset.docName));
+  });
+
   document.querySelectorAll('[data-doc-delete]').forEach((button) => {
     button.onclick = () => guard(button, async () => {
       const lineage = Number(button.dataset.docVersion) > 1
@@ -3127,9 +3140,12 @@ function documentRow(doc) {
     ? ` <span class="badge badge-soft-blue">v${esc(doc.version)}</span>` : '';
   const pending = !doc.is_current && !doc.superseded_at
     ? ' <span class="badge text-bg-light border">not yet current</span>' : '';
+  const restricted = doc.restricted
+    ? ' <span class="badge badge-soft-violet" title="Only listed users and teams retrieve it">restricted</span>'
+    : '';
   return `<tr>
     <td>
-      <div class="fw-medium">${esc(doc.filename)}${version}${pending}</div>
+      <div class="fw-medium">${esc(doc.filename)}${version}${pending}${restricted}</div>
       ${note ? `<div class="small ${doc.retry_at ? 'text-warning-emphasis' : 'text-danger'}">${esc(note)}</div>` : ''}
       ${doc.retry_at && doc.status === 'FAILED'
         ? `<div class="small text-secondary">budget refused: retries automatically ${esc(new Date(doc.retry_at).toLocaleString())}</div>` : ''}
@@ -3144,6 +3160,9 @@ function documentRow(doc) {
     <td class="text-end text-nowrap">
       ${doc.version > 1 ? `<button class="btn btn-sm btn-outline-secondary"
         data-doc-versions="${esc(doc.id)}" data-doc-name="${esc(doc.filename)}">Versions</button>` : ''}
+      ${can('knowledge.manage') && doc.is_current ? `<button class="btn btn-sm btn-outline-secondary"
+        data-doc-access="${esc(doc.id)}" data-doc-name="${esc(doc.filename)}"
+        title="Who may retrieve this document">Access</button>` : ''}
       ${can('document.upload') ? `<button class="btn btn-sm btn-outline-secondary"
         data-doc-version="${esc(doc.id)}" title="Upload a replacement; this one keeps answering until it is indexed"
         >New version</button>` : ''}
@@ -3154,6 +3173,83 @@ function documentRow(doc) {
               data-doc-name="${esc(doc.filename)}">Delete</button>
     </td>
   </tr>`;
+}
+
+/* Per-document access (E56) ---------------------------------------------- */
+async function openDocumentAccess(documentId, name) {
+  const access = await api(`/documents/${documentId}/access`);
+  // Pickers list what the caller may see; anyone already listed stays listed either way.
+  const [users, teams] = await Promise.all([
+    can('user.view') ? api('/users?limit=200').then((p) => p.items).catch(() => []) : [],
+    (can('team.view') ? api('/teams') : api('/teams/mine').then((m) => m.teams))
+      .catch(() => []),
+  ]);
+  const chosen = {
+    users: new Map(access.users.map((u) => [u.id, u.name || u.id])),
+    teams: new Map(access.teams.map((t) => [t.id, t.name || t.id])),
+  };
+  const modal = document.getElementById('doc-access-modal');
+  document.getElementById('da-name').textContent = name;
+  const restrictedBox = document.getElementById('da-restricted');
+  restrictedBox.checked = access.restricted;
+  document.getElementById('da-reason').value = '';
+
+  const option = (id, label) => `<option value="${esc(id)}">${esc(label)}</option>`;
+  const fill = (kind, items, label) => {
+    const select = document.getElementById(`da-${kind}-pick`);
+    select.innerHTML = `<option value="">Add a ${kind === 'users' ? 'user' : 'team'}…</option>` +
+      items.filter((i) => !chosen[kind].has(i.id)).map((i) => option(i.id, label(i))).join('');
+    select.onchange = () => {
+      const picked = items.find((i) => i.id === select.value);
+      if (picked) chosen[kind].set(picked.id, label(picked));
+      draw();
+    };
+  };
+  const chips = (kind) => [...chosen[kind]].map(([id, label]) => `
+      <span class="badge text-bg-light border me-1 mb-1">${esc(label)}
+        <button type="button" class="btn-close btn-close-sm ms-1" style="font-size:.6rem"
+                data-da-remove="${esc(kind)}:${esc(id)}" aria-label="Remove"></button></span>`)
+    .join('') || '<span class="small text-secondary">none</span>';
+  const draw = () => {
+    const on = restrictedBox.checked;
+    document.getElementById('da-readers').classList.toggle('d-none', !on);
+    document.getElementById('da-users').innerHTML = chips('users');
+    document.getElementById('da-teams').innerHTML = chips('teams');
+    fill('users', users, (u) => u.username);
+    fill('teams', teams, (t) => t.name);
+    document.getElementById('da-users-pick').classList.toggle('d-none', !users.length);
+    modal.querySelectorAll('[data-da-remove]').forEach((b) => {
+      b.onclick = () => {
+        const [kind, id] = b.dataset.daRemove.split(':');
+        chosen[kind].delete(id);
+        draw();
+      };
+    });
+  };
+  restrictedBox.onchange = draw;
+  draw();
+
+  document.getElementById('da-save').onclick = (event) => guard(event.target, async () => {
+    const restricted = restrictedBox.checked;
+    if (restricted && !chosen.users.size && !chosen.teams.size &&
+        !confirm('Nobody is listed, so only superusers will retrieve this document. Continue?')) {
+      return;
+    }
+    await api(`/documents/${documentId}/access`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        restricted,
+        users: restricted ? [...chosen.users.keys()] : [],
+        teams: restricted ? [...chosen.teams.keys()] : [],
+        reason: document.getElementById('da-reason').value.trim() || null,
+      }),
+    });
+    bootstrap.Modal.getOrCreateInstance(modal).hide();
+    alert(`${name}: ${restricted ? 'restricted' : 'open to everyone with access to the base'}.`,
+          'success');
+    await refresh({ force: true });
+  });
+  bootstrap.Modal.getOrCreateInstance(modal).show();
 }
 
 async function openVersions(documentId, name) {

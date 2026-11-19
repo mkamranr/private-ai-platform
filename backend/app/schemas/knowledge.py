@@ -163,8 +163,36 @@ class DocumentRead(ORMModel):
     version: int = 1
     is_current: bool = True
     superseded_at: dt.datetime | None = None
+    #: E56: only listed users and teams may retrieve it (see /documents/{id}/access).
+    restricted: bool = False
     # Not `storage_key`: an object key is an internal address, and publishing it invites a
     # caller to reach past the API into MinIO.
+
+
+class DocumentReaderRead(BaseModel):
+    id: uuid.UUID
+    #: Username or team name; null when the user or team has since been deleted.
+    name: str | None = None
+
+
+class DocumentAccessRead(BaseModel):
+    """Who may retrieve a document (E56). The same for every version of it."""
+
+    document_id: uuid.UUID
+    lineage_id: uuid.UUID
+    restricted: bool
+    users: list[DocumentReaderRead] = Field(default_factory=list)
+    teams: list[DocumentReaderRead] = Field(default_factory=list)
+
+
+class DocumentAccessUpdate(BaseModel):
+    """``restricted: false`` opens the document to everyone who can use its knowledge base;
+    ``true`` limits it to ``users`` and ``teams`` (ids). Superusers always read it."""
+
+    restricted: bool
+    users: list[uuid.UUID] = Field(default_factory=list, max_length=500)
+    teams: list[uuid.UUID] = Field(default_factory=list, max_length=500)
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class DocumentAcceptedResponse(BaseModel):

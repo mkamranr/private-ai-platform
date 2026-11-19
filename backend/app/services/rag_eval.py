@@ -295,6 +295,7 @@ class RagEvalService:
         if not base.enabled:
             raise ConflictError(f"The knowledge base {base.name!r} is disabled.")
 
+        reader = await self._knowledge.reader_for(actor)
         started = time.perf_counter()
         scores: list[CaseScore | None] = []
         rows: list[dict[str, Any]] = []
@@ -318,6 +319,7 @@ class RagEvalService:
                     reranker=settings.reranker,
                     user_id=actor.id,
                     purpose="rag.eval",
+                    reader=reader,
                 )
             except Exception as exc:
                 # One question failing (the embedding model timing out) is recorded against

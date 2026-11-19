@@ -75,6 +75,9 @@ class FakeKnowledge:
     async def get_base(self, ident: uuid.UUID) -> Any:
         return SimpleNamespace(id=ident, name="handbook")
 
+    async def reader_for(self, user: Any) -> Any:
+        return SimpleNamespace(user=user)
+
     async def retrieve(self, bases, query, top_k=None, **charge: Any):
         self.queries.append(query)
         self.charged.append(charge)
@@ -361,7 +364,13 @@ class TestExecution:
         assert [s["node_id"] for s in result["steps"]] == ["start", "search", "answer", "end"]
         assert wf.knowledge.queries == ["Reset?"]
         # E21: the query embedding is accounted to whoever started the run.
-        assert wf.knowledge.charged == [{"user_id": builder.id, "purpose": "workflow.retrieve"}]
+        charged = wf.knowledge.charged[0]
+        assert {k: charged[k] for k in ("user_id", "purpose")} == {
+            "user_id": builder.id,
+            "purpose": "workflow.retrieve",
+        }
+        # E56: it reads documents as whoever started it.
+        assert charged["reader"].user == builder.id
         assert wf.models == ["llama-local"]
         prompt = wf.provider.calls[0]["messages"][-1][1]
         assert "Passwords are reset" in prompt and "Question: Reset?" in prompt

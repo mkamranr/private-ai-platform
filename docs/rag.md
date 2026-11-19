@@ -109,6 +109,37 @@ than intended, and the mistake is invisible until an answer cites a document tha
 supposed to be gone. `VectorStore.delete()` with neither ids nor filters raises rather than
 being read as "delete everything".
 
+### Per-document access
+
+A document is **open** (everyone who can use its knowledge base retrieves it) or
+**restricted** to listed users and teams. Set it with *Access* on the document's row
+(`knowledge.manage`), or restrict at upload (*Only me*, or `restricted`/`users`/`teams` form
+fields) so it is never open while it indexes. The list belongs to the document, not a
+version: a new version keeps it, and a change applies to all versions at once. Every change
+is audited as `DOCUMENT_ACCESS_CHANGED`, with before, after and the reason.
+
+Who a retrieval reads as:
+
+| Caller | Reads as |
+|---|---|
+| Console search, playground, evaluation, `/knowledge-bases/{id}/search` | The signed-in person and their teams |
+| An agent run | The person it runs for (for `agent:` through `/v1`, the API key's owner) |
+| A workflow run started by someone | That person |
+| A scheduled or webhook workflow run | Nobody: **open documents only** |
+| A superuser | Everything |
+
+`knowledge.manage` holders see restricted documents in the list (to manage them), marked
+*restricted*, but retrieve only those they are listed for. Others do not see them listed,
+and a direct `GET /documents/{id}` answers 404.
+
+Enforced twice. Each chunk in the vector store carries an `access` label list (`public`, or
+`restricted` plus `user:<id>` / `team:<id>`), and every search filters on the reader's
+labels, so top-k is filled with passages the reader may see. The PostgreSQL rows the hits
+resolve to are then checked again, so if relabelling fails (the change is saved, and the
+audit entry says `index_updated: false`) a stale label can hide a passage but never show one.
+Chunks indexed before this feature carry no label and count as open, which they were; no
+re-index is needed. Relabelling rewrites the payload in place, without re-embedding.
+
 ---
 
 ## Three memory layers
@@ -249,6 +280,8 @@ ever considered — the same guard that stops the platform stopping its own data
   — what an agent *should* choose to remember is a product decision, and inferring it
   silently is how an agent's picture of someone ossifies around a guess.
 * **`DATABASE` and `OPENAPI` tools are not implemented.**
+* **Access is by user and team only.** No identity-provider groups, and nothing is
+  inherited from where a document came from.
 
 ---
 

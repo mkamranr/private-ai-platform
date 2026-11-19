@@ -96,6 +96,7 @@ async def retrieval_playground(
     reranker = _reranker(payload)
     if reranker not in (None, RERANK_DEFAULT):
         await guard.model_name(reranker)
+    reader = await service.reader_for(actor)
     trace = await service.retrieve(
         bases,
         payload.query,
@@ -105,6 +106,7 @@ async def retrieval_playground(
         reranker=reranker,
         user_id=actor.id,
         purpose="retrieval.playground",
+        reader=reader,
     )
     baseline = None
     if payload.compare and trace.reranked:
@@ -117,6 +119,7 @@ async def retrieval_playground(
                 reranker=None,
                 user_id=actor.id,
                 purpose="retrieval.playground",
+                reader=reader,
             )
         )
     return PlaygroundResponse(

@@ -1168,6 +1168,41 @@
 </div>
 
 <!-- Document versions (E5) ----------------------------------------------------->
+<div class="modal fade" id="doc-access-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Access to <span id="da-name" class="mono"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="da-restricted">
+          <label class="form-check-label" for="da-restricted">Restricted</label>
+        </div>
+        <p class="small text-secondary">Open documents are retrieved by everyone who can use
+          the knowledge base. A restricted one is retrieved only by the users and teams below
+          (and superusers), by agents running for them, and by workflow runs they start;
+          scheduled and webhook runs never see it. Applies to every version.</p>
+        <div id="da-readers">
+          <label class="form-label small mb-1">Users</label>
+          <div id="da-users" class="mb-1"></div>
+          <select id="da-users-pick" class="form-select form-select-sm mb-3"></select>
+          <label class="form-label small mb-1">Teams</label>
+          <div id="da-teams" class="mb-1"></div>
+          <select id="da-teams-pick" class="form-select form-select-sm mb-3"></select>
+        </div>
+        <input id="da-reason" class="form-control form-control-sm" maxlength="500"
+               placeholder="Reason (recorded in the audit log)">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="da-save">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="doc-versions-modal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">

@@ -42,6 +42,19 @@ class CollectionSpec:
     distance: Distance = Distance.COSINE
 
 
+@dataclass(frozen=True, slots=True)
+class AnyOrMissing:
+    """A filter value matching points whose field holds any of ``values``, or that have no
+    such field at all (E56).
+
+    For access labels: points indexed before labels existed carry none and are open, so
+    they must keep matching without a re-index. A labelled point must hold one of
+    ``values``.
+    """
+
+    values: tuple[str, ...]
+
+
 class VectorStore(ABC):
     """Vector collection and point operations."""
 
@@ -87,3 +100,10 @@ class VectorStore(ABC):
 
     @abstractmethod
     async def health(self) -> bool: ...
+
+    async def set_payload(
+        self, collection: str, ids: Sequence[str], payload: dict[str, Any]
+    ) -> None:
+        """Set ``payload`` keys on the points ``ids``, leaving their vectors and other keys
+        alone (E56: relabelling a document's access without re-embedding it)."""
+        raise NotImplementedError(f"{type(self).__name__} cannot update payloads.")

@@ -234,6 +234,14 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: original and metadata but have no chunks or vectors.
     superseded_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # -- access (E56) ---------------------------------------------------------
+    #: False: everyone who can use the knowledge base can retrieve it, as before E56.
+    #: True: only the users and teams in ``document_access`` for its lineage. The same on
+    #: every version of a document; a new version copies it.
+    restricted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
     chunks: Mapped[list[DocumentChunk]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
@@ -245,6 +253,32 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return f"<Document {self.filename} {self.status}>"
+
+
+class DocumentAccessPrincipal(enum.StrEnum):
+    USER = "user"
+    TEAM = "team"
+
+
+class DocumentAccess(Base):
+    """Who may read a restricted document (E56). One row per user or team, per lineage.
+
+    Keyed by lineage, not document, so every version of a document has the same readers
+    and a new version needs nothing copied. No foreign key to users or teams (the
+    principal is either): a row naming a deleted user or team simply matches nobody.
+    """
+
+    __tablename__ = "document_access"
+    __table_args__ = (
+        CheckConstraint("principal_type IN ('user','team')", name="principal_type_valid"),
+    )
+
+    lineage_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    principal_type: Mapped[str] = mapped_column(String(8), primary_key=True)
+    principal_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class DocumentChunk(Base):

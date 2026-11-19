@@ -34,19 +34,35 @@ from typing import Any, Final, Protocol
 from app.config.settings import Settings
 from app.core.errors import ConflictError, NotFoundError, RateLimitError, ValidationError
 from app.core.interfaces.media import OcrEngine
-from app.core.interfaces.vector import CollectionSpec, Distance, VectorRecord, VectorStore
+from app.core.interfaces.vector import (
+    AnyOrMissing,
+    CollectionSpec,
+    Distance,
+    VectorRecord,
+    VectorStore,
+)
 from app.core.logging import get_logger
 from app.models.audit import AuditAction
 from app.models.auth import User
-from app.models.knowledge import Document, DocumentChunk, DocumentStatus, KnowledgeBase
+from app.models.knowledge import (
+    Document,
+    DocumentAccessPrincipal,
+    DocumentChunk,
+    DocumentStatus,
+    KnowledgeBase,
+)
 from app.repositories.knowledge import (
+    DocumentAccessRepository,
     DocumentChunkRepository,
     DocumentRepository,
     EmbeddingModelRepository,
     KnowledgeBaseRepository,
 )
+from app.repositories.teams import TeamRepository
+from app.repositories.user import UserRepository
 from app.services.audit import AuditService
 from app.services.chunking import chunk_segments
+from app.services.document_access import DocumentReader, access_labels
 from app.services.document_parsers import (
     ParsedSegment,
     ParseResult,
@@ -196,6 +212,9 @@ class KnowledgeService:
         self._settings = settings
         self._bases = bases
         self._documents = documents
+        #: E56: built on the same session rather than injected, so every construction of
+        #: this service (requests, workers, tests) enforces access the same way.
+        self._grants = DocumentAccessRepository(documents.session)
         self._chunks = chunks
         self._models = models
         self._vectors = vectors
@@ -375,14 +394,170 @@ class KnowledgeService:
         return base
 
     async def list_documents(
-        self, base_id: uuid.UUID, *, limit: int = 200, include_superseded: bool = False
+        self,
+        base_id: uuid.UUID,
+        *,
+        limit: int = 200,
+        include_superseded: bool = False,
+        reader: DocumentReader | None = None,
+        manager: bool = False,
     ) -> list[Document]:
+        """The base's documents. Restricted ones the reader may not read are left out,
+        unless ``manager`` (``knowledge.manage``: they decide who reads them)."""
         await self.get_base(base_id)
-        return list(
+        documents = list(
             await self._documents.list_for_base(
                 base_id, limit=limit, include_superseded=include_superseded
             )
         )
+        return await self.visible(documents, reader or DocumentReader.open_only(), manager)
+
+    async def visible(
+        self, documents: list[Document], reader: DocumentReader, manager: bool = False
+    ) -> list[Document]:
+        """``documents`` the reader may see, in order (E56)."""
+        if manager or reader.unrestricted:
+            return documents
+        restricted = [d.lineage_id for d in documents if d.restricted]
+        grants = await self._grants.for_lineages(restricted)
+        return [d for d in documents if reader.may_read(d.restricted, grants.get(d.lineage_id, []))]
+
+    async def require_visible(
+        self, document_id: uuid.UUID, reader: DocumentReader, manager: bool = False
+    ) -> Document:
+        """The document, or 404 when the reader may not see it: a restricted document is
+        not confirmed to exist to someone who cannot read it."""
+        document = await self.get_document(document_id)
+        if not await self.visible([document], reader, manager):
+            raise NotFoundError(f"No document with id {document_id}.")
+        return document
+
+    async def reader_for(self, user: User | uuid.UUID | None) -> DocumentReader:
+        """The reader a person retrieves as: themselves and the teams they belong to."""
+        if user is None:
+            return DocumentReader.open_only()
+        if isinstance(user, uuid.UUID):
+            found = await UserRepository(self._documents.session).get(user)
+            if found is None or not found.is_active:
+                return DocumentReader.open_only()
+            user = found
+        teams = await TeamRepository(self._documents.session).team_ids_for(user.id)
+        return DocumentReader(user_id=user.id, team_ids=teams, unrestricted=user.is_superuser)
+
+    # -- access (E56) --------------------------------------------------------
+    async def describe_access(self, document: Document) -> dict[str, Any]:
+        grants = (await self._grants.for_lineages([document.lineage_id])).get(
+            document.lineage_id, []
+        )
+        user_ids = [p for kind, p in grants if kind == DocumentAccessPrincipal.USER]
+        team_ids = [p for kind, p in grants if kind == DocumentAccessPrincipal.TEAM]
+        users = UserRepository(self._documents.session)
+        teams = TeamRepository(self._documents.session)
+        named_users = []
+        for user_id in user_ids:
+            user = await users.get(user_id)
+            named_users.append({"id": user_id, "name": user.username if user else None})
+        named_teams = []
+        for team_id in team_ids:
+            team = await teams.get(team_id)
+            named_teams.append({"id": team_id, "name": team.name if team else None})
+        return {
+            "document_id": document.id,
+            "lineage_id": document.lineage_id,
+            "restricted": document.restricted,
+            "users": named_users,
+            "teams": named_teams,
+        }
+
+    async def _checked_grants(
+        self, user_ids: list[uuid.UUID], team_ids: list[uuid.UUID]
+    ) -> list[tuple[str, uuid.UUID]]:
+        """Every listed user and team must exist: a typo would otherwise restrict a
+        document to nobody, silently. Repeats are dropped."""
+        user_ids = list(dict.fromkeys(user_ids))
+        team_ids = list(dict.fromkeys(team_ids))
+        users = UserRepository(self._documents.session)
+        teams = TeamRepository(self._documents.session)
+        for user_id in user_ids:
+            if await users.get(user_id) is None:
+                raise ValidationError(f"No user with id {user_id}.", details={"field": "users"})
+        for team_id in team_ids:
+            if await teams.get(team_id) is None:
+                raise ValidationError(f"No team with id {team_id}.", details={"field": "teams"})
+        user, team = str(DocumentAccessPrincipal.USER), str(DocumentAccessPrincipal.TEAM)
+        return [(user, u) for u in user_ids] + [(team, t) for t in team_ids]
+
+    async def set_access(
+        self,
+        document_id: uuid.UUID,
+        *,
+        restricted: bool,
+        user_ids: list[uuid.UUID],
+        team_ids: list[uuid.UUID],
+        actor: User,
+        reason: str | None = None,
+    ) -> Document:
+        """Open a document, or restrict it to these users and teams (E56).
+
+        Applies to every version of it. The access labels on its indexed chunks are
+        rewritten in place, without re-embedding. If that fails the change still stands:
+        retrieval checks PostgreSQL as well, so a stale label can hide a passage but never
+        show one.
+        """
+        document = await self.get_document(document_id)
+        base = await self.get_base(document.knowledge_base_id)
+        if not restricted and (user_ids or team_ids):
+            raise ValidationError(
+                "An open document has no reader list. Restrict it to name readers.",
+                details={"field": "restricted"},
+            )
+        grants = await self._checked_grants(user_ids, team_ids)
+        before = await self.describe_access(document)
+        await self._grants.replace(document.lineage_id, grants if restricted else [])
+        versions = list(await self._documents.lineage(document.lineage_id))
+        for version in versions:
+            version.restricted = restricted
+        await self._documents.flush()
+
+        labels = access_labels(restricted, grants)
+        relabelled = True
+        for version in versions:
+            ids = [
+                c.vector_id for c in await self._chunks.list_for_document(version.id) if c.vector_id
+            ]
+            try:
+                await self._vectors.set_payload(base.collection, ids, {"access": labels})
+            except Exception as exc:
+                relabelled = False
+                log.warning(
+                    "document_access_relabel_failed", document=str(version.id), error=str(exc)
+                )
+
+        await self._audit.record(
+            AuditAction.DOCUMENT_ACCESS_CHANGED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="document",
+            resource_id=str(document.id),
+            metadata={
+                "knowledge_base": base.name,
+                "filename": document.filename,
+                "lineage_id": str(document.lineage_id),
+                "before": {
+                    "restricted": before["restricted"],
+                    "users": [str(u["id"]) for u in before["users"]],
+                    "teams": [str(t["id"]) for t in before["teams"]],
+                },
+                "after": {
+                    "restricted": restricted,
+                    "users": [str(p) for k, p in grants if k == DocumentAccessPrincipal.USER],
+                    "teams": [str(p) for k, p in grants if k == DocumentAccessPrincipal.TEAM],
+                },
+                "index_updated": relabelled,
+                "reason": reason,
+            },
+        )
+        return document
 
     async def list_versions(self, document_id: uuid.UUID) -> list[Document]:
         document = await self.get_document(document_id)
@@ -404,8 +579,15 @@ class KnowledgeService:
         content: bytes,
         actor: User,
         version_of: uuid.UUID | None = None,
+        restricted: bool = False,
+        user_ids: list[uuid.UUID] | None = None,
+        team_ids: list[uuid.UUID] | None = None,
     ) -> Document:
         """Record an upload and hand it to the worker. Returns immediately (202).
+
+        ``restricted`` with ``user_ids`` / ``team_ids`` (E56) restricts a new document from
+        the start, so it is never searchable by everyone, not even while it is indexed. A
+        new version keeps its document's access and ignores them.
 
         The bytes are stored and hashed here; nothing is parsed. Parsing a large PDF inside
         the request would hold a connection open for minutes and time out behind any proxy.
@@ -450,6 +632,17 @@ class KnowledgeService:
                 details={"document_id": str(duplicate.id)},
             )
 
+        grants: list[tuple[str, uuid.UUID]] = []
+        if previous:
+            restricted = previous[0].restricted
+        elif restricted:
+            grants = await self._checked_grants(user_ids or [], team_ids or [])
+        elif user_ids or team_ids:
+            raise ValidationError(
+                "Readers were named but the document is not restricted.",
+                details={"field": "restricted"},
+            )
+
         document_id = uuid.uuid4()
         document = Document(
             id=document_id,
@@ -465,9 +658,12 @@ class KnowledgeService:
             # A first version is current from the start, as every document was before
             # versions existed. A later one waits until it is indexed.
             is_current=not previous,
+            restricted=restricted,
         )
         self._documents.add(document)
         await self._documents.flush()
+        if grants:
+            await self._grants.replace(document.lineage_id, grants)
 
         # The original goes to object storage before the worker is told about it. A
         # re-embed — new model, new chunk size, better parser — then needs nothing from
@@ -489,6 +685,7 @@ class KnowledgeService:
                 "size_bytes": len(content),
                 "version": document.version,
                 "lineage_id": str(document.lineage_id),
+                "restricted": document.restricted,
             },
         )
         return document
@@ -744,6 +941,10 @@ class KnowledgeService:
             user_id=document.uploaded_by,
             team_id=base.team_id,
         )
+        # E56: who may retrieve these chunks, read now from PostgreSQL so an access change
+        # made while the document was queued is what gets indexed.
+        grants = await self._grants.for_lineages([document.lineage_id])
+        labels = access_labels(document.restricted, grants.get(document.lineage_id, []))
         for start in range(0, len(rows), EMBED_BATCH):
             batch = rows[start : start + EMBED_BATCH]
             vectors = await self._embed(  # type: ignore[operator]
@@ -775,6 +976,7 @@ class KnowledgeService:
                             # PostgreSQL row; duplicating it in full would double storage
                             # and let the two drift.
                             "preview": row.text[:200],
+                            "access": labels,
                         },
                     )
                     for row, vector in zip(batch, vectors, strict=True)
@@ -822,6 +1024,9 @@ class KnowledgeService:
                 except Exception:
                     log.warning("stored_original_delete_failed", document=str(target.id))
             await self._documents.delete(target)
+        if document.superseded_at is None:
+            # The whole document is gone, so its reader list is too (E56).
+            await self._grants.delete_lineage(document.lineage_id)
 
         await self._audit.record(
             AuditAction.DOCUMENT_DELETED,
@@ -845,10 +1050,16 @@ class KnowledgeService:
         limit: int = 5,
         score_threshold: float | None = None,
         user_id: uuid.UUID | None = None,
+        reader: DocumentReader | None = None,
     ) -> list[SearchResult]:
         """Search, rerank where the bases configure it, and return the passages."""
         trace = await self.retrieve(
-            bases, query, top_k=limit, score_threshold=score_threshold, user_id=user_id
+            bases,
+            query,
+            top_k=limit,
+            score_threshold=score_threshold,
+            user_id=user_id,
+            reader=reader,
         )
         return trace.results
 
@@ -882,6 +1093,7 @@ class KnowledgeService:
         reranker: str | None = RERANK_DEFAULT,
         user_id: uuid.UUID | None = None,
         purpose: str = "knowledge.search",
+        reader: DocumentReader | None = None,
     ) -> RetrievalTrace:
         """Vector search across bases, then an optional rerank, with a trace (E5).
 
@@ -900,7 +1112,12 @@ class KnowledgeService:
 
         Each base's query embedding is accounted (E21) as ``purpose`` to ``user_id`` and
         that base's team. The rerank is accounted too (E38), as ``<purpose>.rerank``.
+
+        ``reader`` (E56) is who the retrieval runs as; restricted documents they may not
+        read are never candidates. None means open documents only, so a caller that
+        forgets it fails closed.
         """
+        reader = reader or DocumentReader.open_only()
         trace = RetrievalTrace()
         active = [b for b in bases if b.enabled]
         if not active or not query.strip():
@@ -943,7 +1160,13 @@ class KnowledgeService:
                 score_threshold=threshold,
                 # Always scoped. The store raises rather than searching unfiltered, so a
                 # filter that fails to translate cannot become a global search (§M16).
-                filters={"tenant_id": base.tenant_id, "knowledge_base_id": str(base.id)},
+                filters={
+                    "tenant_id": base.tenant_id,
+                    "knowledge_base_id": str(base.id),
+                    # E56: open passages, unlabelled ones (indexed before E56, so open),
+                    # and those restricted to this reader or one of their teams.
+                    "access": None if reader.unrestricted else AnyOrMissing(reader.labels()),
+                },
             )
             search_ms += (time.perf_counter() - started) * 1000
             if not hits:
@@ -953,6 +1176,10 @@ class KnowledgeService:
             # preview, and answering from a truncated preview would silently degrade every
             # answer.
             chunk_rows = await self._chunks.get_by_vector_ids([hit.id for hit in hits])
+            # E56, the second check: PostgreSQL decides, whatever the labels said.
+            grants = await self._grants.for_lineages(
+                list({r.document.lineage_id for r in chunk_rows.values() if r.document.restricted})
+            )
             for hit in hits:
                 row = chunk_rows.get(hit.id)
                 if row is None:
@@ -963,6 +1190,11 @@ class KnowledgeService:
                 if not row.document.is_current:
                     # A new version mid-embedding, not yet published (E5). Its vectors
                     # exist, but the version it will replace is still the one answering.
+                    continue
+                if not reader.may_read(
+                    row.document.restricted, grants.get(row.document.lineage_id, [])
+                ):
+                    log.warning("restricted_passage_filtered", document=str(row.document_id))
                     continue
                 found.append(
                     SearchResult(
