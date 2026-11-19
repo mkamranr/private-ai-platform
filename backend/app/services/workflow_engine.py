@@ -52,7 +52,7 @@ from app.repositories.teams import ScopeLookupRepository
 from app.repositories.workflows import WorkflowApprovalRepository, WorkflowStepRepository
 from app.services import workflow_definition as wd
 from app.services.team_references import TeamReferences, describe
-from app.services.tool_pipeline import _definition, _truncate
+from app.services.tool_pipeline import _truncate, executable_definition
 
 log = get_logger(__name__)
 
@@ -628,10 +628,7 @@ class WorkflowEngine:
         executor = self._executors.get(ToolType(tool.type))
         if executor is None:
             raise NodeFailedError(f"No executor is available for {tool.type} tools.")
-        definition = _definition(tool)
-        definition.config["_tool_id"] = str(tool.id)
-        if tool.credentials_encrypted:
-            definition.config["_credentials_encrypted"] = tool.credentials_encrypted
+        definition = executable_definition(tool)
         result = _truncate(
             await executor.execute(
                 ToolInvocation(

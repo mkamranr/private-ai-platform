@@ -36,6 +36,7 @@ from app.core.tracing import configure_tracing, instrument_app
 from app.db.clients import MinioClient, QdrantClientWrapper, RedisClient
 from app.db.session import Database
 from app.services.auth_providers import OidcAuthProvider
+from app.services.connectors import ConnectorLimits
 from app.services.embedding_usage import EmbeddingCharge, embed_with
 from app.services.health import HealthService
 from app.services.langfuse import LangfuseClient
@@ -78,7 +79,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The session factory reaches the internal handlers that read platform state
     # (M12). They open their own short-lived session rather than borrowing the caller's,
     # which may belong to a request transaction about to be rolled back.
-    app.state.tool_executors = build_executors(app.state.secret_cipher, database.sessionmaker)
+    app.state.tool_executors = build_executors(
+        app.state.secret_cipher, database.sessionmaker, ConnectorLimits.from_settings(settings)
+    )
 
     # One HTTP client for talking to an identity provider (M03). Shared so the OIDC
     # provider's discovery document and JWKS cache survive between requests — refetching

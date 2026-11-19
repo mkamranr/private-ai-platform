@@ -279,7 +279,6 @@ ever considered — the same guard that stops the platform stopping its own data
 * **Agents do not write memory yet.** `remember()` works and is scoped, but no run calls it
   — what an agent *should* choose to remember is a product decision, and inferring it
   silently is how an agent's picture of someone ossifies around a guess.
-* **`DATABASE` and `OPENAPI` tools are not implemented.**
 * **Access is by user and team only.** No identity-provider groups, and nothing is
   inherited from where a document came from.
 

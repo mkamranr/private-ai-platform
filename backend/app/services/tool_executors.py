@@ -8,9 +8,9 @@ outcome, not an exception.** The agent should observe "the directory search retu
 such user" and reason about it, exactly as it would a successful empty result. Raising
 would end the run over something the model could have handled.
 
-Phase 4 ships INTERNAL, REST and MCP. DATABASE and OPENAPI are stubs that report
-themselves unimplemented rather than pretending; PYTHON and COMMAND are refused by the
-pipeline before reaching an executor at all (§25).
+INTERNAL, REST and MCP live here; DATABASE and OPENAPI are the E57 connectors in
+``connectors.py``. PYTHON and COMMAND are refused by the pipeline before reaching an
+executor at all (§25).
 """
 
 from __future__ import annotations
@@ -38,6 +38,11 @@ from app.core.interfaces.tools import (
 from app.core.logging import get_logger
 from app.core.security import SecretCipher
 from app.core.url_policy import check_outbound_url
+from app.services.connectors import (
+    ConnectorLimits,
+    DatabaseToolExecutor,
+    OpenApiToolExecutor,
+)
 
 log = get_logger(__name__)
 
@@ -73,14 +78,30 @@ class RestToolExecutor(ToolExecutor):
                 error="no_endpoint",
             )
 
+        # E57: the shared outbound-URL policy, at call time too: a row saved before it
+        # existed, or a host that now resolves somewhere else, is refused here.
+        try:
+            endpoint = check_outbound_url(tool.endpoint, field="endpoint")
+        except ValidationError as exc:
+            return ToolResult(
+                success=False,
+                content=f"Refused: {exc}",
+                duration_ms=_elapsed(started),
+                error="refused",
+            )
+
         method = str(tool.config.get("method", "POST")).upper()
         headers = {**tool.config.get("headers", {}), **self._auth_headers(tool)}
 
         try:
-            async with httpx.AsyncClient(timeout=invocation.timeout_seconds) as client:
+            # Redirects are not followed: a redirect is a second request to a host nobody
+            # checked.
+            async with httpx.AsyncClient(
+                timeout=invocation.timeout_seconds, follow_redirects=False
+            ) as client:
                 response = await client.request(
                     method,
-                    tool.endpoint,
+                    endpoint,
                     json=invocation.arguments if method in ("POST", "PUT", "PATCH") else None,
                     params=invocation.arguments if method == "GET" else None,
                     headers=headers,
@@ -130,8 +151,7 @@ class RestToolExecutor(ToolExecutor):
     async def validate(self, tool: ToolDefinition) -> None:
         if not tool.endpoint:
             raise ValueError("A REST tool needs an endpoint.")
-        if not tool.endpoint.startswith(("http://", "https://")):
-            raise ValueError("The endpoint must be an http(s) URL.")
+        check_outbound_url(tool.endpoint, field="endpoint")
 
 
 class McpToolExecutor(ToolExecutor):
@@ -254,37 +274,6 @@ class InternalToolExecutor(ToolExecutor):
         handler = tool.config.get("handler", tool.name)
         if handler not in self._handlers:
             raise ValueError(f"No internal handler named {handler!r}.")
-
-
-class UnimplementedToolExecutor(ToolExecutor):
-    """Placeholder for a type the platform catalogues but cannot yet run.
-
-    Reports itself plainly rather than being absent. A missing executor would surface as
-    "no executor available", which reads like a deployment fault; this says the type is
-    not implemented, which is the truth.
-    """
-
-    def __init__(self, tool_type: ToolType, arrives_in: str) -> None:
-        self._type = tool_type
-        self._arrives_in = arrives_in
-
-    @property
-    def tool_type(self) -> ToolType:
-        return self._type
-
-    async def execute(self, invocation: ToolInvocation) -> ToolResult:
-        return ToolResult(
-            success=False,
-            content=(
-                f"Tools of type {self._type} are not implemented yet ({self._arrives_in}). "
-                f"'{invocation.tool.name}' is registered but cannot be called."
-            ),
-            duration_ms=0.0,
-            error="not_implemented",
-        )
-
-    async def validate(self, tool: ToolDefinition) -> None:
-        raise ValueError(f"{self._type} tools are not implemented yet ({self._arrives_in}).")
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +749,9 @@ def _platform_status(session_factory: Any) -> Any:
 
 
 def build_executors(
-    cipher: SecretCipher, session_factory: Any | None = None
+    cipher: SecretCipher,
+    session_factory: Any | None = None,
+    limits: ConnectorLimits | None = None,
 ) -> dict[ToolType, ToolExecutor]:
     """The executor table.
 
@@ -771,6 +762,8 @@ def build_executors(
         ToolType.REST: RestToolExecutor(cipher),
         ToolType.MCP: McpToolExecutor(cipher),
         ToolType.INTERNAL: InternalToolExecutor(build_internal_handlers(session_factory)),
-        ToolType.DATABASE: UnimplementedToolExecutor(ToolType.DATABASE, "Phase 5"),
-        ToolType.OPENAPI: UnimplementedToolExecutor(ToolType.OPENAPI, "Phase 5"),
+        # E57. Without limits (tests, tooling) both allow-lists are empty: every host is
+        # refused, which is the safe reading of "nobody configured this".
+        ToolType.DATABASE: DatabaseToolExecutor(cipher, limits or ConnectorLimits()),
+        ToolType.OPENAPI: OpenApiToolExecutor(cipher, limits or ConnectorLimits()),
     }

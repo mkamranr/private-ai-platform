@@ -176,6 +176,14 @@ Enabling them requires a hardened executor first: separate container, no network
 read-only filesystem, seccomp profile, dropped capabilities, hard timeout, no
 credential mounts. Until that exists they stay off.
 
+### Where tools may reach
+
+REST tools are held to the outbound-URL policy (no metadata or link-local addresses) when
+saved and on every call, and do not follow redirects. SQL and OpenAPI connector tools reach
+only hosts on `AGENTS__DATABASE_ALLOWED_HOSTS` and `AGENTS__OPENAPI_ALLOWED_HOSTS`, both
+empty by default. SQL runs read-only with a timeout and row limit, and the model supplies
+values, never SQL. See [tools.md](tools.md#connectors-sql-and-openapi).
+
 ---
 
 ## Transport

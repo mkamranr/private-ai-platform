@@ -282,6 +282,7 @@ async def _definitions_import() -> int:
                 ToolRegistryService,
             )
             from app.services.audit import AuditService
+            from app.services.connectors import ConnectorLimits
             from app.services.definitions import DefinitionImporter
             from app.services.tool_executors import build_executors
 
@@ -304,7 +305,9 @@ async def _definitions_import() -> int:
                     ToolRepository(session),
                     audit,
                     cipher,
-                    build_executors(cipher, database.sessionmaker),
+                    build_executors(
+                        cipher, database.sessionmaker, ConnectorLimits.from_settings(settings)
+                    ),
                 ),
                 SkillRegistryService(SkillRepository(session)),
                 AgentRegistryService(

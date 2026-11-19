@@ -29,6 +29,74 @@ into a team therefore stops shared agents that use it at their next run, with a 
 saying which tool. Existing and discovered tools are shared. See
 [teams.md](teams.md#what-an-agent-or-workflow-may-use).
 
+**REST tools** call their endpoint under the platform's outbound-URL policy, checked when
+the tool is saved and on every call: no cloud metadata or link-local addresses, no
+credentials in the URL. Private hosts are fine. Redirects are not followed.
+
+## Connectors: SQL and OpenAPI
+
+Two tool types for reaching the systems an agent most often needs, built so the dangerous
+version cannot be configured. Both reach only hosts the deployer lists, and both lists
+are **empty by default**:
+
+```bash
+AGENTS__DATABASE_ALLOWED_HOSTS='["db.internal", "*.reporting.corp.local"]'
+AGENTS__OPENAPI_ALLOWED_HOSTS='["tickets.corp.local"]'
+```
+
+`db.internal` matches only itself; `*.corp.local` matches its subdomains, not
+`corp.local`. The lists are deployment settings (shown read-only on the Settings page), so
+a console user cannot widen where agents reach. Hosts are checked when a tool is saved and
+again on every call.
+
+### Read-only SQL (`DATABASE`)
+
+*Tools & MCP → Add SQL tool*, or `POST /tools` with `type: "DATABASE"`:
+
+```json
+{"type": "DATABASE", "config": {"sql": "SELECT id, total FROM orders WHERE customer_id = :customer_id", "max_rows": 50},
+ "credentials": "postgresql://reader:…@db.internal:5432/crm", ...}
+```
+
+* **The operator writes the SQL; the model fills in values.** `:name` placeholders are sent
+  as bound parameters (`$1`, `$2`, …), never as SQL text. A value is converted to the
+  parameter's PostgreSQL type, so a date, number or uuid can arrive as a string.
+* Without a `parameters_schema`, one is made from the placeholders (each a required
+  string). Add descriptions with a new tool if the model needs them.
+* **Read-only, bounded.** Every call runs in a `READ ONLY` transaction, so PostgreSQL itself
+  refuses a write, whatever the template says. It has a `statement_timeout`
+  (`AGENTS__DATABASE_STATEMENT_TIMEOUT_SECONDS`, default 10) and reads at most `max_rows`
+  through a cursor (capped by `AGENTS__DATABASE_MAX_ROWS`, default 200). The model is told
+  when more rows exist.
+* One statement, a query (`SELECT`, `WITH`, `VALUES`, `TABLE`). Checked on save.
+* The connection string is the tool's credential: encrypted, never returned, never shown.
+  **Use a role that can only read what the query needs.** The read-only transaction stops
+  writes, not reads of a table the role should not see.
+* PostgreSQL only. *Test* connects and prepares the statement without running it.
+
+### OpenAPI operations (`OPENAPI`)
+
+*Tools & MCP → Import OpenAPI*, or `POST /tools/openapi/import` with an OpenAPI 3 document
+(JSON or YAML text, or an object; the platform never fetches a spec). Each operation becomes
+one tool, `<prefix>.<operationId>`:
+
+* Every tool arrives **disabled at HIGH risk**, like a discovered MCP tool. Nothing an
+  import adds is callable until someone has read it and enabled it. Names that already
+  exist are skipped, never overwritten.
+* Path, query and header parameters and a JSON body (`body`) become the parameter schema.
+  Local `$ref`s are resolved. Operations with other bodies (multipart, form) are skipped
+  and listed.
+* The base URL (`base_url`, or the spec's `servers[0].url`) passes the outbound-URL policy
+  and must be on `AGENTS__OPENAPI_ALLOWED_HOSTS`.
+* The optional credential is sent as `Authorization: Bearer …` (`auth_header`,
+  `auth_scheme` to change it). An `Authorization` parameter in the spec is ignored.
+* Path values are URL-encoded, slashes included, so a value cannot climb the path.
+  Redirects are not followed. At most 1 MB of a response is read.
+* Imports are audited as `OPENAPI_IMPORTED`.
+
+Not built: other databases, OpenAPI 2 (Swagger), OAuth flows for an API, and fetching a spec
+from a URL.
+
 **The authorisation pipeline — including the intersection rule that makes agents safe
 — is documented in [agents.md](agents.md#the-tool-pipeline).** Read that before adding
 an executor.

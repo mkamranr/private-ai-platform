@@ -52,8 +52,19 @@ from app.repositories.agents import (
 from app.schemas.agents import AgentVersionRead
 from app.services import connector_manifest
 from app.services.audit import AuditService
+from app.services.connectors import (
+    ConnectorLimits,
+    ImportPlan,
+    check_openapi_base,
+    check_template,
+    compile_template,
+    dsn_host,
+    host_allowed,
+    parse_openapi,
+    schema_for,
+)
 from app.services.tool_executors import McpError, call_mcp
-from app.services.tool_pipeline import _definition
+from app.services.tool_pipeline import executable_definition
 
 log = get_logger(__name__)
 
@@ -127,6 +138,14 @@ class ToolRegistryService:
                 details={"allowed": sorted(str(t) for t in ToolType)},
             )
 
+        endpoint, parameters_schema = self._check_connector(
+            tool_type,
+            endpoint=endpoint,
+            config=config,
+            parameters_schema=parameters_schema,
+            credentials=credentials,
+        )
+
         # Registerable, never runnable. Catalogued so an operator can see what exists and
         # plan for it, refused at execution by the pipeline (§25 over §M12).
         detail = None
@@ -194,6 +213,30 @@ class ToolRegistryService:
         tool = await self.get_tool(tool_id)
         changed: list[str] = []
 
+        new_endpoint = getattr(payload, "endpoint", None)
+        new_config = getattr(payload, "config", None)
+        new_credentials = getattr(payload, "credentials", None)
+        if (
+            (new_endpoint is not None and new_endpoint != tool.endpoint)
+            or (new_config is not None and new_config != tool.config)
+            or new_credentials
+        ):
+            # E57: the same checks as registration, on what the tool would become.
+            checked_endpoint, _ = self._check_connector(
+                tool.type,
+                endpoint=new_endpoint if new_endpoint is not None else tool.endpoint,
+                config=new_config if new_config is not None else tool.config,
+                parameters_schema=tool.parameters_schema,
+                credentials=new_credentials
+                or (
+                    self._cipher.decrypt(tool.credentials_encrypted)
+                    if tool.credentials_encrypted and tool.type == ToolType.DATABASE
+                    else None
+                ),
+            )
+            if new_endpoint is not None:
+                payload.endpoint = checked_endpoint  # type: ignore[attr-defined]
+
         for field in (
             "display_name",
             "description",
@@ -246,15 +289,120 @@ class ToolRegistryService:
         )
 
     def _with_credentials(self, tool: Tool) -> ToolDefinition:
-        """Project for an executor, smuggling the encrypted credential through config.
+        return executable_definition(tool)
 
-        The executor decrypts at the last moment. Passing the plaintext here would put it
-        in a dataclass that gets logged, traced and serialised into events.
+    def _check_connector(
+        self,
+        tool_type: str,
+        *,
+        endpoint: str | None,
+        config: dict,
+        parameters_schema: dict,
+        credentials: str | None,
+    ) -> tuple[str | None, dict]:
+        """Save-time checks per tool type (E57). Returns the normalised endpoint and the
+        parameter schema (a DATABASE tool without one gets a starting schema built from its
+        template's placeholders). Every check runs again at call time."""
+        limits = ConnectorLimits.from_settings(self._settings)
+        if tool_type == ToolType.REST and endpoint:
+            endpoint = check_outbound_url(endpoint, field="endpoint")
+        elif tool_type == ToolType.OPENAPI:
+            if not endpoint:
+                raise ValidationError(
+                    "An OPENAPI tool needs its API's base URL as the endpoint. Import a spec "
+                    "to create these tools.",
+                    details={"field": "endpoint"},
+                )
+            endpoint = check_openapi_base(endpoint, limits, "endpoint")
+        elif tool_type == ToolType.DATABASE:
+            sql = str((config or {}).get("sql") or "")
+            if not (parameters_schema or {}).get("properties"):
+                parameters_schema = schema_for(compile_template(sql).names)
+            check_template(sql, parameters_schema)
+            if not credentials:
+                raise ValidationError(
+                    "A DATABASE tool needs its connection string as the credential: "
+                    "postgresql://user:password@host:5432/database, with a read-only role.",
+                    details={"field": "credentials"},
+                )
+            host = dsn_host(credentials)
+            if not limits.database_allowed_hosts or not host_allowed(
+                host, limits.database_allowed_hosts
+            ):
+                raise ValidationError(
+                    f"{host or 'That host'} is not on AGENTS__DATABASE_ALLOWED_HOSTS "
+                    f"({', '.join(limits.database_allowed_hosts) or 'empty'}).",
+                    details={"field": "credentials"},
+                )
+            endpoint = None  # the connection string is the credential, never shown
+        return endpoint, parameters_schema
+
+    async def import_openapi(
+        self,
+        *,
+        spec: str | dict,
+        base_url: str | None,
+        prefix: str,
+        required_permission: str,
+        credentials: str | None,
+        auth_header: str | None,
+        auth_scheme: str | None,
+        timeout_seconds: int,
+        actor: User,
+    ) -> tuple[ImportPlan, list[Tool], list[str]]:
+        """One tool per operation of an OpenAPI 3 spec (E57).
+
+        Every tool arrives **disabled at HIGH risk**: nothing an import adds is callable
+        until an operator has reviewed it, and HIGH means each call waits for an approver
+        until someone lowers it. A name that already exists is skipped, never overwritten.
         """
-        definition = _definition(tool)
-        if tool.credentials_encrypted:
-            definition.config["_credentials_encrypted"] = tool.credentials_encrypted
-        return definition
+        plan = parse_openapi(spec, prefix=prefix, base_url=base_url)
+        limits = ConnectorLimits.from_settings(self._settings)
+        plan.base_url = check_openapi_base(plan.base_url, limits, "base_url")
+        encrypted = self._cipher.encrypt(credentials) if credentials else None
+        created: list[Tool] = []
+        skipped = list(plan.skipped)
+        for op in plan.operations:
+            if await self._tools.get_by_name(op.name):
+                skipped.append(f"{op.name}: a tool with this name already exists")
+                continue
+            config = dict(op.config)
+            if auth_header:
+                config["auth_header"] = auth_header
+            if auth_scheme is not None:
+                config["auth_scheme"] = auth_scheme
+            tool = Tool(
+                name=op.name,
+                display_name=op.display_name,
+                description=op.description,
+                type=ToolType.OPENAPI,
+                parameters_schema=op.parameters_schema,
+                required_permission=required_permission,
+                risk_level="HIGH",
+                endpoint=plan.base_url,
+                config=config,
+                credentials_encrypted=encrypted,
+                enabled=False,
+                timeout_seconds=timeout_seconds,
+            )
+            self._tools.add(tool)
+            created.append(tool)
+        await self._tools.flush()
+        await self._audit.record(
+            AuditAction.OPENAPI_IMPORTED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="tool",
+            message=f"Imported {len(created)} operation(s) from {plan.title}.",
+            metadata={
+                "title": plan.title,
+                "base_url": plan.base_url,
+                "created": [t.name for t in created],
+                "skipped": skipped,
+                "required_permission": required_permission,
+            },
+        )
+        return plan, created, skipped
 
 
 def checked_mcp_endpoint(endpoint: str, transport: str) -> str:
@@ -928,14 +1076,10 @@ class AgentRegistryService:
                 # Skipped rather than offered-and-refused: telling the model about a tool
                 # it will always be denied wastes an iteration every single run.
                 continue
-            definition = _definition(tool)
             # The pipeline authorises by id, and the model only ever sees names. Carrying
             # the id through config is what lets the runtime map one to the other without
             # a second lookup against a possibly-different version.
-            definition.config["_tool_id"] = str(tool.id)
-            if tool.credentials_encrypted:
-                definition.config["_credentials_encrypted"] = tool.credentials_encrypted
-            definitions.append(definition)
+            definitions.append(executable_definition(tool))
 
         return AgentSpec(
             agent_id=str(agent.id),

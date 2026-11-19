@@ -227,7 +227,9 @@ class ToolPipeline:
         try:
             result = await executor.execute(
                 ToolInvocation(
-                    tool=_definition(tool),
+                    # With the credential: `_definition` alone sent agent REST, MCP and
+                    # connector calls out unauthenticated (fixed in E57).
+                    tool=executable_definition(tool),
                     arguments=execution.arguments,
                     run_id=str(run.id),
                     agent_id=str(run.agent_id),
@@ -339,6 +341,17 @@ def _definition(tool: Tool) -> ToolDefinition:
         # flush, and they would then be handed out in the API.
         config=dict(tool.config),
     )
+
+
+def executable_definition(tool: Tool) -> ToolDefinition:
+    """The projection an executor runs: the definition plus the tool's id and its
+    *encrypted* credential, which the executor decrypts at the last moment. Plaintext here
+    would sit in a dataclass that gets logged, traced and serialised into events."""
+    definition = _definition(tool)
+    definition.config["_tool_id"] = str(tool.id)
+    if tool.credentials_encrypted:
+        definition.config["_credentials_encrypted"] = tool.credentials_encrypted
+    return definition
 
 
 def _truncate(result: ToolResult) -> ToolResult:
