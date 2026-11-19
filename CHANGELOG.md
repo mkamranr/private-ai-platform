@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Restricted documents
+- **Keep a document to the people who should read it.** *Access* on a document's row restricts it to chosen users and teams. Everyone else, and the agents and workflows they run, no longer retrieve it or see it listed. Superusers still do. People who manage knowledge bases see it listed, marked *restricted*, but read it only if listed.
+- **Restrict from the start.** Tick *Only me* when uploading, or send `restricted`, `users` and `teams` with the upload, so the document is never open while it indexes.
+- Scheduled and webhook workflows read open documents only; a workflow someone starts reads what they can. New versions keep the same access. Every change is recorded in the audit log with its reason.
+- **Upgrade.** Migration `b2d4f6a8c0e1` adds a column to `documents` and a `document_access` table. Existing documents stay open and need no re-indexing.
+
 ### Stop all agents
 - **One switch for an incident.** *Stop all agents* on the Agents page stops every agent at once: no run starts or is approved, and running agents stop before their next step. This covers the console, the API, voice and `agent:` models in chat. *Resume agents* turns it back off. Runs waiting for approval keep waiting and can be approved after resuming.
 - Everyone on the Agents page sees a banner while agents are stopped. The switch needs the right to change settings, asks for a reason and is recorded in the audit log. It is also on the Settings page under Security (`agents.kill_switch`).

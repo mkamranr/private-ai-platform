@@ -16,6 +16,7 @@ from app.models.knowledge import (
     Conversation,
     ConversationMessage,
     Document,
+    DocumentAccess,
     DocumentChunk,
     DocumentStatus,
     EmbeddingModel,
@@ -169,6 +170,39 @@ class DocumentRepository(BaseRepository[Document]):
             )
         ).all()
         return {row[0]: row[1] for row in rows}
+
+
+class DocumentAccessRepository(BaseRepository[DocumentAccess]):
+    """Who may read restricted documents (E56), by lineage."""
+
+    model = DocumentAccess
+
+    async def for_lineages(
+        self, lineage_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, list[tuple[str, uuid.UUID]]]:
+        """``lineage -> [(principal_type, principal_id)]``; lineages with none are absent."""
+        if not lineage_ids:
+            return {}
+        stmt = select(DocumentAccess).where(DocumentAccess.lineage_id.in_(list(lineage_ids)))
+        found: dict[uuid.UUID, list[tuple[str, uuid.UUID]]] = {}
+        for row in (await self.session.execute(stmt)).scalars():
+            found.setdefault(row.lineage_id, []).append((row.principal_type, row.principal_id))
+        return found
+
+    async def replace(self, lineage_id: uuid.UUID, grants: Sequence[tuple[str, uuid.UUID]]) -> None:
+        await self.session.execute(
+            delete(DocumentAccess).where(DocumentAccess.lineage_id == lineage_id)
+        )
+        for kind, principal in dict.fromkeys(grants):
+            self.session.add(
+                DocumentAccess(lineage_id=lineage_id, principal_type=kind, principal_id=principal)
+            )
+        await self.session.flush()
+
+    async def delete_lineage(self, lineage_id: uuid.UUID) -> None:
+        await self.session.execute(
+            delete(DocumentAccess).where(DocumentAccess.lineage_id == lineage_id)
+        )
 
 
 class DocumentChunkRepository(BaseRepository[DocumentChunk]):

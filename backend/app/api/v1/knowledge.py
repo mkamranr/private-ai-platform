@@ -6,7 +6,7 @@ import uuid
 from dataclasses import asdict
 from typing import Annotated
 
-from fastapi import APIRouter, File, Path, Query, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, Path, Query, Response, UploadFile, status
 
 from app.api.deps import (
     KnowledgeServiceDep,
@@ -26,6 +26,8 @@ from app.schemas.knowledge import (
     ConversationDetail,
     ConversationMessageRead,
     DocumentAcceptedResponse,
+    DocumentAccessRead,
+    DocumentAccessUpdate,
     DocumentRead,
     KnowledgeBaseCreateRequest,
     KnowledgeBaseDetail,
@@ -40,6 +42,25 @@ from app.schemas.knowledge import (
 )
 
 router = APIRouter(tags=["knowledge"], route_class=CommittingRoute)
+
+
+def _manages(user: User) -> bool:
+    """Holders of ``knowledge.manage`` see restricted documents listed: they decide who
+    reads them (E56). It does not let them retrieve one they are not listed for."""
+    return user.is_superuser or Perm.KNOWLEDGE_MANAGE in user.effective_permissions
+
+
+def _ids(raw: str | None, field: str) -> list[uuid.UUID]:
+    """Comma-separated ids from a multipart form field."""
+    if not raw or not raw.strip():
+        return []
+    try:
+        return [uuid.UUID(part.strip()) for part in raw.split(",") if part.strip()]
+    except ValueError as exc:
+        raise ValidationError(
+            f"{field} must be comma-separated ids.", details={"field": field}
+        ) from exc
+
 
 #: Upload ceiling. nginx is configured with no limit for model weights, so the guard has to
 #: live here — a 2 GB document would otherwise be read into memory before anything checked.
@@ -203,18 +224,23 @@ async def delete_knowledge_base(
 )
 async def list_documents(
     service: KnowledgeServiceDep,
-    _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
     guard: ScopeGuardDep,
     base_id: uuid.UUID = Path(...),
     include_superseded: Annotated[
         bool, Query(description="Include versions replaced by a newer one (E5).")
     ] = False,
 ) -> list[DocumentRead]:
+    """Restricted documents the caller may not read are left out (E56), unless they hold
+    ``knowledge.manage``."""
     await guard.knowledge_base(base_id)
-    return [
-        DocumentRead.model_validate(d)
-        for d in await service.list_documents(base_id, include_superseded=include_superseded)
-    ]
+    documents = await service.list_documents(
+        base_id,
+        include_superseded=include_superseded,
+        reader=await service.reader_for(actor),
+        manager=_manages(actor),
+    )
+    return [DocumentRead.model_validate(d) for d in documents]
 
 
 @router.post(
@@ -230,8 +256,16 @@ async def upload_document(
     response: Response,
     base_id: uuid.UUID = Path(...),
     file: UploadFile = File(...),
+    restricted: Annotated[
+        bool, Form(description="Restrict to the users and teams below from the start (E56).")
+    ] = False,
+    users: Annotated[str | None, Form(description="Comma-separated user ids.")] = None,
+    teams: Annotated[str | None, Form(description="Comma-separated team ids.")] = None,
 ) -> DocumentAcceptedResponse:
     """Accept a file for ingestion. **Returns 202, not 201.**
+
+    ``restricted`` with ``users`` and ``teams`` makes it readable only by them from the
+    start (E56); setting access after upload would leave it open while it was indexed.
 
     Parsing and embedding a 200-page PDF takes minutes — longer than any sensible proxy
     timeout — so the bytes are stored, the document is queued, and the caller polls
@@ -252,6 +286,9 @@ async def upload_document(
         content_type=file.content_type or "",
         content=content,
         actor=actor,
+        restricted=restricted,
+        user_ids=_ids(users, "users"),
+        team_ids=_ids(teams, "teams"),
     )
     poll_url = f"/api/v1/documents/{document.id}"
     response.headers["Location"] = poll_url
@@ -289,7 +326,9 @@ async def upload_document_version(
     are removed and it is kept as history. If the new version fails, nothing changes.
     """
     await guard.document(document_id)
-    anchor = await service.get_document(document_id)
+    anchor = await service.require_visible(
+        document_id, await service.reader_for(actor), _manages(actor)
+    )
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValidationError(
@@ -327,11 +366,12 @@ async def upload_document_version(
 )
 async def list_document_versions(
     service: KnowledgeServiceDep,
-    _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
     guard: ScopeGuardDep,
     document_id: uuid.UUID = Path(...),
 ) -> list[DocumentRead]:
     await guard.document(document_id)
+    await service.require_visible(document_id, await service.reader_for(actor), _manages(actor))
     return [DocumentRead.model_validate(d) for d in await service.list_versions(document_id)]
 
 
@@ -354,13 +394,14 @@ async def reingest_document(
     document's content without that gap, upload a new version instead.
     """
     await guard.document(document_id)
+    await service.require_visible(document_id, await service.reader_for(actor), _manages(actor))
     return DocumentRead.model_validate(await service.reingest(document_id, actor=actor))
 
 
 @router.get("/documents/{document_id}", response_model=DocumentRead, summary="Get a document")
 async def get_document(
     service: KnowledgeServiceDep,
-    _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
     guard: ScopeGuardDep,
     document_id: uuid.UUID = Path(...),
 ) -> DocumentRead:
@@ -368,7 +409,9 @@ async def get_document(
     one, and `status_detail` explains a NO_TEXT one — which is usually a scanned file
     awaiting OCR rather than anything broken."""
     await guard.document(document_id)
-    return DocumentRead.model_validate(await service.get_document(document_id))
+    return DocumentRead.model_validate(
+        await service.require_visible(document_id, await service.reader_for(actor), _manages(actor))
+    )
 
 
 @router.delete(
@@ -381,6 +424,7 @@ async def delete_document(
     document_id: uuid.UUID = Path(...),
 ) -> MessageResponse:
     await guard.document(document_id)
+    await service.require_visible(document_id, await service.reader_for(actor), _manages(actor))
     await service.delete_document(document_id, actor=actor)
     return MessageResponse(
         message=(
@@ -388,6 +432,50 @@ async def delete_document(
             "current version deletes every version; deleting a superseded one removes only it."
         )
     )
+
+
+@router.get(
+    "/documents/{document_id}/access",
+    response_model=DocumentAccessRead,
+    summary="Who may retrieve a document",
+)
+async def get_document_access(
+    service: KnowledgeServiceDep,
+    _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    guard: ScopeGuardDep,
+    document_id: uuid.UUID = Path(...),
+) -> DocumentAccessRead:
+    await guard.document(document_id)
+    document = await service.get_document(document_id)
+    return DocumentAccessRead.model_validate(await service.describe_access(document))
+
+
+@router.put(
+    "/documents/{document_id}/access",
+    response_model=DocumentAccessRead,
+    summary="Open a document, or restrict it to users and teams",
+)
+async def set_document_access(
+    payload: DocumentAccessUpdate,
+    service: KnowledgeServiceDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    guard: ScopeGuardDep,
+    document_id: uuid.UUID = Path(...),
+) -> DocumentAccessRead:
+    """Applies to every version of the document, at once (E56). Audited as
+    ``DOCUMENT_ACCESS_CHANGED``. A listed team must be visible to the caller."""
+    await guard.document(document_id)
+    for team_id in payload.teams:
+        await guard.assignable(team_id)
+    document = await service.set_access(
+        document_id,
+        restricted=payload.restricted,
+        user_ids=payload.users,
+        team_ids=payload.teams,
+        actor=actor,
+        reason=payload.reason,
+    )
+    return DocumentAccessRead.model_validate(await service.describe_access(document))
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +507,7 @@ async def search_knowledge_base(
         limit=payload.limit,
         score_threshold=payload.score_threshold,
         user_id=actor.id,
+        reader=await service.reader_for(actor),
     )
     return SearchResponse(
         query=payload.query,

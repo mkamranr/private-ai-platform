@@ -25,6 +25,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client import models as qmodels
 
 from app.core.interfaces.vector import (
+    AnyOrMissing,
     CollectionSpec,
     Distance,
     SearchHit,
@@ -44,7 +45,9 @@ _DISTANCES = {
 #: Payload keys that carry scope. Indexed in Qdrant so a filtered search stays fast as a
 #: collection grows — an unindexed filter degrades to a full scan, and the first symptom
 #: is a search that quietly takes seconds.
-SCOPE_KEYS = ("tenant_id", "knowledge_base_id", "user_id", "agent_id", "end_user")
+#: E56 added ``access``. Collections created earlier lack its index; filtering on it
+#: still works, just without the index.
+SCOPE_KEYS = ("tenant_id", "knowledge_base_id", "user_id", "agent_id", "end_user", "access")
 
 
 class QdrantVectorStore(VectorStore):
@@ -166,6 +169,18 @@ class QdrantVectorStore(VectorStore):
         )
         return int(result.count)
 
+    async def set_payload(
+        self, collection: str, ids: Sequence[str], payload: dict[str, Any]
+    ) -> None:
+        if not ids or not await self.collection_exists(collection):
+            return
+        await self._client.set_payload(
+            collection_name=collection,
+            payload=payload,
+            points=list(ids),
+            wait=True,
+        )
+
     async def health(self) -> bool:
         try:
             await self._client.get_collections()
@@ -185,13 +200,26 @@ def _to_filter(filters: dict[str, Any] | None) -> qmodels.Filter | None:
     if not filters:
         return None
 
-    conditions: list[qmodels.FieldCondition] = []
+    conditions: list[qmodels.FieldCondition | qmodels.Filter] = []
     for key, value in filters.items():
         if value is None:
             # Dropped on purpose: callers build these dicts from optional scope values,
             # and `user_id=None` means "not scoped to a user", not "match null".
             continue
-        if isinstance(value, (list, tuple, set)):
+        if isinstance(value, AnyOrMissing):
+            if not value.values:
+                raise TypeError(f"AnyOrMissing for {key} needs at least one value.")
+            conditions.append(
+                qmodels.Filter(
+                    should=[
+                        qmodels.FieldCondition(
+                            key=key, match=qmodels.MatchAny(any=list(value.values))
+                        ),
+                        qmodels.IsEmptyCondition(is_empty=qmodels.PayloadField(key=key)),
+                    ]
+                )
+            )
+        elif isinstance(value, (list, tuple, set)):
             conditions.append(
                 qmodels.FieldCondition(key=key, match=qmodels.MatchAny(any=list(value)))
             )

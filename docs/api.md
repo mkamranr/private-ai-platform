@@ -678,6 +678,8 @@ Under `/api/v1`, authenticated with the platform JWT. See
 | PATCH | `/knowledge-bases/{id}` | `knowledge.manage`. `display_name`, `description`, `enabled`, `reranker_model` (empty string removes it), `retrieval_top_k`, `rerank_candidates`, `min_score`, `clear_min_score` |
 | POST | `/documents/{id}/versions` | `document.upload`. Multipart `file`; **202**; the current version answers until the new one is indexed |
 | GET | `/documents/{id}/versions` | `knowledge.view`. Newest first |
+| GET | `/documents/{id}/access` | `knowledge.manage`. `{restricted, users: [{id, name}], teams: [{id, name}]}` |
+| PUT | `/documents/{id}/access` | `knowledge.manage`. `{restricted, users: [ids], teams: [ids], reason}`; every version; audited `DOCUMENT_ACCESS_CHANGED`. Readers without `restricted: true` is a 422 |
 | POST | `/documents/{id}/reingest` | `document.upload`. **202**; terminal, current documents only. Clears `retry_at` (when a budget-refused document will be retried by itself) |
 | POST | `/retrieval/playground` | `knowledge.view`. `knowledge_base_ids`, `query`, `top_k`, `candidates`, `score_threshold`, `reranker` (`default`/`none`/`model`), `reranker_model`, `compare` |
 | GET / POST | `/knowledge-bases/{id}/eval-sets` | `knowledge.view` / `knowledge.manage` |
@@ -698,6 +700,10 @@ Changes to existing routes, all backwards-compatible:
   `score` stays the vector similarity. `POST /knowledge-bases/{id}/search` reranks when the
   base configures a reranker.
 - `DELETE /documents/{id}` on a current version deletes every version of the document.
+- Restricted documents (see [rag.md](rag.md#per-document-access)) are left out of document
+  lists and answer 404 to anyone not listed, except `knowledge.manage` holders, who see them
+  listed. Upload accepts optional form fields `restricted` (bool), `users` and `teams`
+  (comma-separated ids). Search and the playground return only passages the caller may read.
 
 ## Workflows
 

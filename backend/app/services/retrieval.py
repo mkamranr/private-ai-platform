@@ -122,6 +122,8 @@ class RetrievalService:
             fallback_threshold=MIN_SCORE,
             user_id=user_id,
             purpose="agent.retrieve",
+            # E56: the person the run is for (the API client's owner for an agent: call).
+            reader=await self._knowledge.reader_for(user_id),
         )
         for warning in trace.warnings:
             log.warning("agent_retrieval_degraded", detail=warning)

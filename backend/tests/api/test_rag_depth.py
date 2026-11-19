@@ -25,7 +25,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_knowledge_service
-from app.core.interfaces.vector import CollectionSpec, SearchHit, VectorRecord, VectorStore
+from app.core.interfaces.vector import (
+    AnyOrMissing,
+    CollectionSpec,
+    SearchHit,
+    VectorRecord,
+    VectorStore,
+)
 from app.core.permissions import Permission as Perm
 from app.models.audit import AuditAction, AuditLog
 from app.models.knowledge import Document, DocumentStatus, KnowledgeBase
@@ -89,11 +95,32 @@ class FakeVectors(VectorStore):
 
     @staticmethod
     def _matches(record: VectorRecord, filters: dict[str, Any] | None) -> bool:
-        return all(
-            record.payload.get(key) == value
-            for key, value in (filters or {}).items()
-            if value is not None
-        )
+        for key, value in (filters or {}).items():
+            if value is None:
+                continue
+            held = record.payload.get(key)
+            if isinstance(value, AnyOrMissing):
+                # Qdrant semantics: a list field matches if any element is wanted; a
+                # missing or empty field matches too.
+                if held in (None, []):
+                    continue
+                items = held if isinstance(held, list) else [held]
+                if not set(items) & set(value.values):
+                    return False
+            elif held != value:
+                return False
+        return True
+
+    async def set_payload(
+        self, collection: str, ids: Sequence[str], payload: dict[str, Any]
+    ) -> None:
+        points = self.collections.get(collection, {})
+        for ident in ids:
+            if ident in points:
+                record = points[ident]
+                points[ident] = VectorRecord(
+                    id=record.id, vector=record.vector, payload={**record.payload, **payload}
+                )
 
     async def search(
         self,
