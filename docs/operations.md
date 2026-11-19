@@ -35,7 +35,7 @@ runs these operations itself:
   |---|---|
   | backup.create | `scripts/backup.py create` |
   | backup.verify | `scripts/backup.py verify backups/<name>` |
-  | backup.restore | `scripts/backup.py restore backups/<name> --yes` |
+  | backup.restore | `scripts/backup.py restore backups/<name> --yes [--parts …]` |
   | bundle.verify | signature check, then `offline/lib.sh` `verify_bundle` |
   | upgrade | the installed `offline/upgrade.sh`, then optionally `alembic upgrade head` |
   | rollback | `offline/rollback.sh <root> <point> --yes` |
@@ -112,8 +112,9 @@ The page lists each backup with:
 
 - Asks for a reason and for the backup's name typed back.
 - `backup.py` verifies the backup again before it stops anything.
-- It is all-or-nothing, and the API is down while it runs.
-- Vector snapshots are not restored automatically (see [backup.md](backup.md)).
+- The API is down while it runs.
+- A restore brings back the database, the stored files and the vectors, or the parts you
+  choose (see [backup.md](backup.md#restore)).
 
 **Schedule.** With `ops.backup_interval_hours` set, the platform queues backups
 itself as jobs requested by `scheduler`. With `ops.backup_keep` or
@@ -251,7 +252,7 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 | `GET /ops/backups`, `POST /ops/backups` | `backup.manage` | list (with last verify), take |
 | `GET /ops/backups/schedule` | `backup.manage` | schedule, next due, overdue, retention candidates |
 | `POST /ops/backups/{name}/verify` | `backup.manage` | |
-| `POST /ops/backups/{name}/restore` | `backup.restore` | body `{confirm: name, reason}` |
+| `POST /ops/backups/{name}/restore` | `backup.restore` | body `{confirm: name, reason, parts?}` |
 | `GET /ops/bundles`, `POST /ops/bundles/{name}/verify` | `system.upgrade` | |
 | `GET /ops/bundles/{name}/preflight` | `system.upgrade` | checks with pass/warn/fail |
 | `POST /ops/upgrades` | `system.upgrade` | `{bundle, confirm, reason, migrate}`; refused while preflight fails |
@@ -279,7 +280,7 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 
 - Off-host copies go to a directory the host can write to or to S3-compatible storage.
   There is no SFTP or other remote protocol, and copies are pruned with the local backups.
-- No partial restore (one team or knowledge base), and no automatic Qdrant snapshot restore.
+- No restore of one team or knowledge base: a restore replaces whole parts.
 - Bundle import is a copy on the host. There is no streaming upload through the console.
 - One runner per site is the tested shape. Several are tolerated, but the pages show the
   most recently seen runner's inventory.

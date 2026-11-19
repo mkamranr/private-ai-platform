@@ -443,3 +443,86 @@ class TestDiagnostics:
             .all()
         )
         assert len(exported) == 1
+
+
+class TestPartialRestore:
+    """E60: restoring only some parts of a backup."""
+
+    OTHER_KEY = "20260901T020000Z"
+
+    def _backups(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": BACKUP,
+                "artifacts": ["minio.tar", "postgres.dump", "qdrant"],
+                "parts": ["database", "files", "vectors"],
+                "key_matches": True,
+                "complete": True,
+            },
+            {
+                "name": self.OTHER_KEY,
+                "artifacts": ["minio.tar", "postgres.dump", "qdrant"],
+                "parts": ["database", "files"],
+                "key_matches": False,
+                "complete": True,
+            },
+        ]
+
+    async def test_parts_reach_the_runner(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        h = auth_header(tokens, operator)
+        r = await client.post(
+            f"/api/v1/ops/backups/{BACKUP}/restore",
+            json={"confirm": BACKUP, "reason": "vectors only", "parts": ["vectors", "files"]},
+            headers=h,
+        )
+        assert r.status_code == 202, r.text
+        spec = (await claim(client, runner_headers)).json()
+        # Ordered as backup.py restores them.
+        assert spec["params"] == {"backup": BACKUP, "parts": ["files", "vectors"]}
+
+    async def test_every_part_is_a_whole_restore(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        h = auth_header(tokens, operator)
+        r = await client.post(
+            f"/api/v1/ops/backups/{BACKUP}/restore",
+            json={"confirm": BACKUP, "reason": "drill", "parts": ["database", "files", "vectors"]},
+            headers=h,
+        )
+        assert r.status_code == 202, r.text
+        assert (await claim(client, runner_headers)).json()["params"] == {"backup": BACKUP}
+
+    async def test_a_part_the_backup_lacks_is_refused(
+        self, client, operator, tokens, runner_headers
+    ):
+        await beat(client, runner_headers, backups=self._backups())
+        r = await client.post(
+            f"/api/v1/ops/backups/{self.OTHER_KEY}/restore",
+            json={"confirm": self.OTHER_KEY, "reason": "drill", "parts": ["vectors"]},
+            headers=auth_header(tokens, operator),
+        )
+        assert r.status_code == 422 and "holds no vectors" in r.text
+
+    async def test_another_key_still_restores_files(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        h = auth_header(tokens, operator)
+        url = f"/api/v1/ops/backups/{self.OTHER_KEY}/restore"
+        r = await client.post(
+            url,
+            json={"confirm": self.OTHER_KEY, "reason": "drill", "parts": ["database"]},
+            headers=h,
+        )
+        assert r.status_code == 422 and "encryption key" in r.text
+        r = await client.post(
+            url, json={"confirm": self.OTHER_KEY, "reason": "drill", "parts": ["files"]}, headers=h
+        )
+        assert r.status_code == 202, r.text
+
+    async def test_unknown_parts_are_refused(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        r = await client.post(
+            f"/api/v1/ops/backups/{BACKUP}/restore",
+            json={"confirm": BACKUP, "reason": "drill", "parts": ["everything"]},
+            headers=auth_header(tokens, operator),
+        )
+        assert r.status_code == 422

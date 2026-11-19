@@ -37,11 +37,11 @@ from app.schemas.ops import (
     BackupScheduleStatus,
     BundleItem,
     BundleList,
-    ConfirmedJobRequest,
     JobRequest,
     OpsJobDetail,
     OpsJobRead,
     Preflight,
+    RestoreRequest,
     RollbackList,
     RollbackRequest,
     RunnerClaim,
@@ -290,15 +290,17 @@ async def verify_backup(
     "/backups/{name}/restore",
     response_model=OpsJobRead,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Restore a backup (replaces the database and object storage)",
+    summary="Restore a backup, or some of it (database, files, vectors)",
 )
 async def restore_backup(
-    body: ConfirmedJobRequest,
+    body: RestoreRequest,
     service: OpsServiceDep,
     actor: Annotated[User, require_permission(Perm.BACKUP_RESTORE)],
     name: NamePath,
 ) -> OpsJobRead:
-    job = await service.request_restore(name, confirm=body.confirm, reason=body.reason, actor=actor)
+    job = await service.request_restore(
+        name, confirm=body.confirm, reason=body.reason, actor=actor, parts=body.parts
+    )
     await service.commit()
     return _read(job)
 

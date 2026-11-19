@@ -307,9 +307,9 @@ backup-verify: ## Prove a backup is restorable: make backup-verify B=backups/202
 	@test -n "$(B)" || (echo "Usage: make backup-verify B=backups/<stamp>" && exit 2)
 	@python3 scripts/backup.py verify "$(B)"
 
-backup-restore: .env ## REPLACE this platform's data: make backup-restore B=backups/<stamp>
-	@test -n "$(B)" || (echo "Usage: make backup-restore B=backups/<stamp>" && exit 2)
-	@python3 scripts/backup.py restore "$(B)"
+backup-restore: .env ## REPLACE this platform's data: make backup-restore B=backups/<stamp> [PARTS=files,vectors]
+	@test -n "$(B)" || (echo "Usage: make backup-restore B=backups/<stamp> [PARTS=database,files,vectors]" && exit 2)
+	@python3 scripts/backup.py restore "$(B)" $(if $(PARTS),--parts "$(PARTS)")
 
 .PHONY: ops-runner ops-inventory
 ops-runner: .env ## Run the host ops runner (backups/upgrades from the admin console, E7)
