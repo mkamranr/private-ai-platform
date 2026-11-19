@@ -522,7 +522,11 @@ def _restore_files(path: Path, env: dict) -> list:
                 stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
                 aside = data_root / f"minio.before-restore-{stamp}"
                 target.rename(aside)
-            archive.extractall(data_root, members=members)  # noqa: S202 - members checked
+            # The "data" filter (Python 3.12, and 3.8.17+ backports) refuses links and device
+            # files and strips set-uid bits, on top of _safe_members' own checks; without it,
+            # newer Pythons warn and 3.14 changes the default.
+            extra = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+            archive.extractall(data_root, members=members, **extra)  # noqa: S202 - members checked
     except (OSError, ValueError, tarfile.TarError) as exc:
         print("FAILED")
         if aside is not None and not target.exists():
