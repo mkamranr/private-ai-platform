@@ -34,6 +34,7 @@ from app.repositories.knowledge import (
 )
 from app.services.audit import AuditService
 from app.services.knowledge import KnowledgeService
+from app.services.knowledge_reindex import KnowledgeReindexService
 from app.services.vector_store import QdrantVectorStore
 
 log = get_logger(__name__)
@@ -78,7 +79,9 @@ class IngestionWorker:
             documents = DocumentRepository(session)
             document = await documents.claim_next_pending()
             if document is None:
-                return False
+                # E59: rebuilds run when no upload is waiting, so new documents are never
+                # held behind a long rebuild.
+                return await self._reindex_step(session)
 
             # Re-fetched with its base attached: the pipeline needs the chunking settings
             # and collection name, and the claiming query deliberately loads nothing extra.
@@ -147,6 +150,38 @@ class IngestionWorker:
         return list(ids)
 
     # -- internals ---------------------------------------------------------
+    async def _reindex_step(self, session: AsyncSession) -> bool:
+        """Stage one document of a running rebuild, or swap it in (E59)."""
+        service = self._service(session)
+        reindex = KnowledgeReindexService(
+            service,
+            DocumentRepository(session),
+            DocumentChunkRepository(session),
+            EmbeddingModelRepository(session),
+            AuditService(AuditRepository(session)),
+            QdrantVectorStore(self._qdrant.client),
+        )
+        result = await reindex.step()
+        if result is None:
+            return False
+        await session.commit()
+        if result.drop_collection:
+            # Only after the commit: until then the base still points at it.
+            try:
+                await QdrantVectorStore(self._qdrant.client).delete_collection(
+                    result.drop_collection
+                )
+            except Exception:
+                log.warning("old_collection_delete_failed", collection=result.drop_collection)
+        log.info(
+            "reindex_step",
+            reindex=str(result.reindex_id),
+            state=result.state,
+            document=str(result.document_id) if result.document_id else None,
+        )
+        # A paused rebuild is not claimed again until its retry time, so this cannot spin.
+        return True
+
     def _service(self, session: AsyncSession) -> KnowledgeService:
         return KnowledgeService(
             self._settings,

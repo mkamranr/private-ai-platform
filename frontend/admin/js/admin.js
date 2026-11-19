@@ -2989,13 +2989,82 @@ function baseRow(base) {
   </tr>`;
 }
 
+// E59: progress of a whole-base rebuild, or how the last one ended.
+function rebuildBanner(base, rebuild) {
+  if (!rebuild) return '';
+  const target = `${esc(rebuild.embedding_model)}, chunks of ${esc(rebuild.chunk_size)}/${esc(rebuild.chunk_overlap)}`;
+  const notes = (rebuild.notes || []).length
+    ? `<ul class="mb-0 mt-1">${rebuild.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '';
+  if (rebuild.state === 'RUNNING') {
+    const total = Math.max(rebuild.total_documents, 1);
+    const percent = Math.round((100 * rebuild.done_documents) / total);
+    return `
+      <div class="alert alert-info py-2 small">
+        <div class="d-flex align-items-center gap-2">
+          <strong>Rebuilding</strong> with ${target}:
+          ${esc(rebuild.done_documents)} of ${esc(rebuild.total_documents)} documents.
+          ${can('knowledge.manage') ? `<button id="kb-reindex-cancel"
+            class="btn btn-sm btn-outline-danger ms-auto py-0">Cancel rebuild</button>` : ''}
+        </div>
+        <div class="progress my-1" style="height:6px">
+          <div class="progress-bar" style="width:${percent}%"></div></div>
+        Searches use the current index until the new one is complete. New uploads wait until then.
+        ${rebuild.error ? `<div class="text-warning-emphasis mt-1">${esc(rebuild.error)}</div>` : ''}
+        ${notes}
+      </div>`;
+  }
+  const finished = rebuild.finished_at ? new Date(rebuild.finished_at).toLocaleString() : '';
+  if (rebuild.state === 'FAILED') {
+    return `<div class="alert alert-danger py-2 small">The rebuild with ${target} failed
+      ${esc(finished)}: ${esc(rebuild.error || 'unknown error')}. The index in use was not
+      changed.</div>`;
+  }
+  if (rebuild.state === 'DONE' && notes) {
+    return `<div class="alert alert-secondary py-2 small">Rebuilt ${esc(finished)} with
+      ${target}. Notes:${notes}</div>`;
+  }
+  return '';
+}
+
+function openReindexModal(base) {
+  const element = document.getElementById('kb-reindex-modal');
+  document.getElementById('kr-name').textContent = base.display_name;
+  document.getElementById('kr-model').value = base.embedding_model;
+  document.getElementById('kr-size').value = base.chunk_size;
+  document.getElementById('kr-overlap').value = base.chunk_overlap;
+  document.getElementById('kr-reparse').checked = false;
+  document.getElementById('kr-reason').value = '';
+  const modal = bootstrap.Modal.getOrCreateInstance(element);
+  document.getElementById('kr-start').onclick = (event) => guard(event.target, async () => {
+    const model = document.getElementById('kr-model').value.trim();
+    const size = Number(document.getElementById('kr-size').value);
+    const overlap = Number(document.getElementById('kr-overlap').value);
+    const body = {
+      embedding_model: model && model !== base.embedding_model ? model : null,
+      chunk_size: size && size !== base.chunk_size ? size : null,
+      chunk_overlap: overlap !== base.chunk_overlap ? overlap : null,
+      reparse: document.getElementById('kr-reparse').checked,
+      reason: document.getElementById('kr-reason').value.trim() || null,
+    };
+    const started = await api(`/knowledge-bases/${base.id}/reindex`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    modal.hide();
+    alert(`Rebuild started: ${started.total_documents} document(s) to re-embed.`, 'success');
+    await refresh({ force: true });
+  });
+  modal.show();
+}
+
 async function renderBaseDetail(base) {
   if (!base) { document.getElementById('kb-detail').innerHTML = ''; return; }
 
-  const [detail, documents] = await Promise.all([
+  const [detail, documents, rebuild] = await Promise.all([
     api(`/knowledge-bases/${base.id}`),
     api(`/knowledge-bases/${base.id}/documents`),
+    api(`/knowledge-bases/${base.id}/reindex`).catch(() => null),
   ]);
+  const rebuilding = rebuild?.state === 'RUNNING';
 
   document.getElementById('kb-detail').innerHTML = `
     <h6 class="mb-2 text-secondary">${esc(base.display_name)} — documents</h6>
@@ -3015,6 +3084,8 @@ async function renderBaseDetail(base) {
         chunks. Some documents are missing vectors (or the index has orphans); re-ingest the
         affected documents to rebuild them.</div>` : ''}
 
+    ${rebuildBanner(base, rebuild)}
+
     <div class="card card-body py-2 mb-3">
       <div class="d-flex align-items-center gap-2 flex-wrap">
         <input type="file" id="kb-upload" class="form-control form-control-sm"
@@ -3025,6 +3096,9 @@ async function renderBaseDetail(base) {
           <label class="form-check-label small" for="kb-upload-restricted">Only me</label>
         </div>
         <button id="kb-upload-btn" class="btn btn-sm btn-primary">Upload</button>
+        ${can('knowledge.manage') && !rebuilding ? `<button id="kb-reindex-btn"
+          class="btn btn-sm btn-outline-secondary ms-auto"
+          title="Re-embed every document with another model or chunking">Rebuild index…</button>` : ''}
         <span class="small text-secondary">
           Parsing and embedding run in a worker, so this returns immediately and the row
           below walks PENDING → PARSING → CHUNKING → EMBEDDING → INDEXED.
@@ -3068,6 +3142,16 @@ async function renderBaseDetail(base) {
       alert(`${accepted.filename} accepted (${accepted.status}). ${accepted.message}`, 'success');
       await refresh({ force: true });
     });
+
+  document.getElementById('kb-reindex-btn')?.addEventListener('click', () =>
+    openReindexModal(base));
+  document.getElementById('kb-reindex-cancel')?.addEventListener('click', (event) =>
+    guard(event.target, async () => {
+      if (!confirm('Cancel the rebuild? What it has built so far is deleted; the current index is untouched.')) return;
+      await api(`/knowledge-bases/${base.id}/reindex`, { method: 'DELETE' });
+      alert('Rebuild cancelled.', 'success');
+      await refresh({ force: true });
+    }));
 
   const runSearch = (event) => guard(event.target, async () => {
     const query = document.getElementById('kb-query').value.trim();

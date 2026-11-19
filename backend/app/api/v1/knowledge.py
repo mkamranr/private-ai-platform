@@ -36,6 +36,8 @@ from app.schemas.knowledge import (
     MemoryEntryRead,
     MemorySearchRequest,
     RecalledMemoryRead,
+    ReindexRead,
+    ReindexRequest,
     SearchRequest,
     SearchResponse,
     SearchResultRead,
@@ -212,6 +214,74 @@ async def delete_knowledge_base(
     return MessageResponse(
         message="Knowledge base deleted, along with its documents and vector collection."
     )
+
+
+@router.post(
+    "/knowledge-bases/{base_id}/reindex",
+    response_model=ReindexRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Rebuild a knowledge base",
+)
+async def start_reindex(
+    payload: ReindexRequest,
+    service: KnowledgeServiceDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    guard: ScopeGuardDep,
+    base_id: uuid.UUID = Path(...),
+) -> ReindexRead:
+    """Re-embed every document with another model and/or chunking (E59).
+
+    Built beside the live index and swapped in once complete: searches keep working from
+    the old index meanwhile. New uploads wait until the swap, then are ingested with the
+    new settings. 409 while documents are being ingested or another rebuild is running.
+    """
+    await guard.knowledge_base(base_id)
+    if payload.embedding_model:
+        await guard.model_name(payload.embedding_model)
+    reindex = await service.reindexer().start(
+        base_id,
+        embedding_model=payload.embedding_model,
+        chunk_size=payload.chunk_size,
+        chunk_overlap=payload.chunk_overlap,
+        reparse=payload.reparse,
+        reason=payload.reason,
+        actor=actor,
+    )
+    return ReindexRead.model_validate(reindex)
+
+
+@router.get(
+    "/knowledge-bases/{base_id}/reindex",
+    response_model=ReindexRead | None,
+    summary="The latest rebuild of a knowledge base",
+)
+async def get_reindex(
+    service: KnowledgeServiceDep,
+    _actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
+    base_id: uuid.UUID = Path(...),
+) -> ReindexRead | None:
+    """The running rebuild, or the last one to finish; null when there has never been one."""
+    await guard.knowledge_base(base_id)
+    reindex = await service.reindexer().latest(base_id)
+    return ReindexRead.model_validate(reindex) if reindex else None
+
+
+@router.delete(
+    "/knowledge-bases/{base_id}/reindex",
+    response_model=ReindexRead,
+    summary="Cancel a rebuild",
+)
+async def cancel_reindex(
+    service: KnowledgeServiceDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_MANAGE)],
+    guard: ScopeGuardDep,
+    base_id: uuid.UUID = Path(...),
+) -> ReindexRead:
+    """Stops the rebuild and deletes what it built. The live index is untouched."""
+    await guard.knowledge_base(base_id)
+    reindex = await service.reindexer().cancel(base_id, actor=actor)
+    return ReindexRead.model_validate(reindex)
 
 
 # ---------------------------------------------------------------------------

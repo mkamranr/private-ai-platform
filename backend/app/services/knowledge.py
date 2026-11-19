@@ -28,8 +28,9 @@ import hashlib
 import re
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from app.config.settings import Settings
 from app.core.errors import ConflictError, NotFoundError, RateLimitError, ValidationError
@@ -57,11 +58,12 @@ from app.repositories.knowledge import (
     DocumentRepository,
     EmbeddingModelRepository,
     KnowledgeBaseRepository,
+    KnowledgeReindexRepository,
 )
 from app.repositories.teams import TeamRepository
 from app.repositories.user import UserRepository
 from app.services.audit import AuditService
-from app.services.chunking import chunk_segments
+from app.services.chunking import Chunk, chunk_segments
 from app.services.document_access import DocumentReader, access_labels
 from app.services.document_parsers import (
     ParsedSegment,
@@ -70,6 +72,9 @@ from app.services.document_parsers import (
     parse,
 )
 from app.services.embedding_usage import EmbeddingCharge
+
+if TYPE_CHECKING:
+    from app.services.knowledge_reindex import KnowledgeReindexService
 
 log = get_logger(__name__)
 #: E32: how long after a budget resets to retry a document it refused, so the retry does
@@ -320,6 +325,15 @@ class KnowledgeService:
         requested on privacy grounds is precisely the wrong outcome.
         """
         base = await self.get_base(base_id)
+        # E59: an index being built goes too; nothing else would ever delete it.
+        building = await KnowledgeReindexRepository(self._documents.session).running_collections(
+            base.id
+        )
+        for collection in building:
+            try:
+                await self._vectors.delete_collection(collection)
+            except Exception:
+                log.warning("collection_delete_failed", collection=collection)
         try:
             await self._vectors.delete_collection(base.collection)
         except Exception:
@@ -926,29 +940,55 @@ class KnowledgeService:
     async def _embed_and_index(
         self, base: KnowledgeBase, document: Document, rows: list[DocumentChunk]
     ) -> None:
+        await self.index_rows(
+            base,
+            document,
+            rows,
+            collection=base.collection,
+            model=base.embedding_model,
+            dimensions=base.embedding_dimensions,
+            purpose="knowledge.ingest",
+        )
+
+    async def access_labels_for(self, document: Document) -> list[str]:
+        """E56: who may retrieve a document's chunks, read now from PostgreSQL so an access
+        change made while it was queued is what gets indexed."""
+        grants = await self._grants.for_lineages([document.lineage_id])
+        return access_labels(document.restricted, grants.get(document.lineage_id, []))
+
+    async def index_rows(
+        self,
+        base: KnowledgeBase,
+        document: Document,
+        rows: Sequence[Any],
+        *,
+        collection: str,
+        model: str,
+        dimensions: int,
+        purpose: str,
+    ) -> None:
+        """Embed chunk rows and write them to ``collection``.
+
+        ``rows`` need ``text``, ``vector_id``, ``ordinal`` and ``location``: live chunks at
+        ingestion, staged ones when a whole base is rebuilt (E59) into a collection that is
+        not yet the base's.
+        """
         await self._vectors.ensure_collection(
-            CollectionSpec(
-                name=base.collection,
-                vector_size=base.embedding_dimensions,
-                distance=Distance.COSINE,
-            )
+            CollectionSpec(name=collection, vector_size=dimensions, distance=Distance.COSINE)
         )
 
         # E21: accounted to whoever uploaded the document and the base's team.
         charge = EmbeddingCharge(
-            "knowledge.ingest",
+            purpose,
             f"kb:{base.name}",
             user_id=document.uploaded_by,
             team_id=base.team_id,
         )
-        # E56: who may retrieve these chunks, read now from PostgreSQL so an access change
-        # made while the document was queued is what gets indexed.
-        grants = await self._grants.for_lineages([document.lineage_id])
-        labels = access_labels(document.restricted, grants.get(document.lineage_id, []))
+        labels = await self.access_labels_for(document)
         for start in range(0, len(rows), EMBED_BATCH):
             batch = rows[start : start + EMBED_BATCH]
             vectors = await self._embed(  # type: ignore[operator]
-                [row.text for row in batch], base.embedding_model, charge=charge
+                [row.text for row in batch], model, charge=charge
             )
             if len(vectors) != len(batch):
                 raise RuntimeError(
@@ -957,7 +997,7 @@ class KnowledgeService:
                 )
 
             await self._vectors.upsert(
-                base.collection,
+                collection,
                 [
                     VectorRecord(
                         id=row.vector_id or str(uuid.uuid4()),
@@ -983,11 +1023,41 @@ class KnowledgeService:
                 ],
             )
 
+    async def chunks_from_original(
+        self, document: Document, content: bytes, *, chunk_size: int, overlap: int
+    ) -> list[Chunk] | None:
+        """E59: parse a stored original again and chunk it with these settings. None when
+        it yields no text this time (a scan with no OCR model deployed, say): the caller
+        keeps the document's existing chunks rather than dropping it from the index."""
+        try:
+            parsed = parse(document.filename, content, document.content_type)
+            if parsed.needs_ocr:
+                if self._ocr is None:
+                    return None
+                parsed = await self._recognise(document, content)
+        except Exception as exc:
+            log.warning("reparse_failed", document=str(document.id), error=str(exc)[:200])
+            return None
+        if not parsed.segments or parsed.text_length == 0:
+            return None
+        return chunk_segments(parsed.segments, chunk_size=chunk_size, overlap=overlap) or None
+
+    async def probe_dimensions(self, model: str, *, actor: User | None = None) -> int:
+        return await self._probe_dimensions(model, actor=actor)
+
     async def _fail(self, document: Document, message: str) -> IngestOutcome:
         document.status = DocumentStatus.FAILED
         document.error = message[:2000]
         await self._documents.flush()
         return IngestOutcome(document.id, document.status, detail=message)
+
+    def reindexer(self) -> KnowledgeReindexService:
+        """The whole-base rebuild (E59), sharing this service's session and stores."""
+        from app.services.knowledge_reindex import KnowledgeReindexService
+
+        return KnowledgeReindexService(
+            self, self._documents, self._chunks, self._models, self._audit, self._vectors
+        )
 
     async def load_content(self, document: Document) -> bytes:
         """Fetch the stored original, for ingestion or re-embedding."""

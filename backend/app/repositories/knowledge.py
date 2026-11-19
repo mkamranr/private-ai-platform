@@ -21,10 +21,13 @@ from app.models.knowledge import (
     DocumentStatus,
     EmbeddingModel,
     KnowledgeBase,
+    KnowledgeReindex,
     MemoryEntry,
     RagEvalCase,
     RagEvalRun,
     RagEvalSet,
+    ReindexState,
+    StagedChunk,
 )
 from app.repositories.base import BaseRepository
 
@@ -130,14 +133,51 @@ class DocumentRepository(BaseRepository[Document]):
         would double every chunk in the index. Skipping rather than waiting means a second
         worker moves on to other work instead of blocking.
         """
+        rebuilding = select(KnowledgeReindex.knowledge_base_id).where(
+            KnowledgeReindex.state == ReindexState.RUNNING
+        )
         stmt = (
             select(Document)
-            .where(Document.status == DocumentStatus.UPLOADED)
+            .where(
+                Document.status == DocumentStatus.UPLOADED,
+                # E59: a base being rebuilt queues its new documents until the swap, so
+                # they are ingested once, with the new settings, into the new index.
+                Document.knowledge_base_id.not_in(rebuilding),
+            )
             .order_by(Document.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
         )
         return (await self.session.execute(stmt)).scalars().first()
+
+    async def current_indexed(self, knowledge_base_id: uuid.UUID) -> Sequence[Document]:
+        """E59: the documents a rebuild covers: current versions with an index."""
+        stmt = (
+            select(Document)
+            .where(
+                Document.knowledge_base_id == knowledge_base_id,
+                Document.is_current.is_(True),
+                Document.superseded_at.is_(None),
+                Document.status == DocumentStatus.INDEXED,
+            )
+            .order_by(Document.created_at, Document.id)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def count_in_progress(self, knowledge_base_id: uuid.UUID) -> int:
+        """E59: documents a worker is parsing or embedding right now."""
+        stmt = select(func.count()).where(
+            Document.knowledge_base_id == knowledge_base_id,
+            Document.status.in_(
+                [
+                    DocumentStatus.PARSING,
+                    DocumentStatus.OCR,
+                    DocumentStatus.CHUNKING,
+                    DocumentStatus.EMBEDDING,
+                ]
+            ),
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
 
     async def requeue_refused(self, now: dt.datetime) -> list[uuid.UUID]:
         """E32: queue again every document a budget refused whose budget has reset.
@@ -500,3 +540,72 @@ class RagEvalRunRepository(BaseRepository[RagEvalRun]):
             .limit(limit)
         )
         return (await self.session.execute(stmt)).scalars().all()
+
+
+class KnowledgeReindexRepository(BaseRepository[KnowledgeReindex]):
+    """Whole-base rebuilds (E59)."""
+
+    model = KnowledgeReindex
+
+    async def running_for_base(self, knowledge_base_id: uuid.UUID) -> KnowledgeReindex | None:
+        stmt = select(KnowledgeReindex).where(
+            KnowledgeReindex.knowledge_base_id == knowledge_base_id,
+            KnowledgeReindex.state == ReindexState.RUNNING,
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def latest_for_base(self, knowledge_base_id: uuid.UUID) -> KnowledgeReindex | None:
+        stmt = (
+            select(KnowledgeReindex)
+            .where(KnowledgeReindex.knowledge_base_id == knowledge_base_id)
+            .order_by(KnowledgeReindex.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
+    async def claim_runnable(self, now: dt.datetime) -> KnowledgeReindex | None:
+        """A running rebuild with work to do, locked so two workers never step the same
+        one (which would embed a document twice)."""
+        stmt = (
+            select(KnowledgeReindex)
+            .where(
+                KnowledgeReindex.state == ReindexState.RUNNING,
+                or_(KnowledgeReindex.retry_at.is_(None), KnowledgeReindex.retry_at <= now),
+            )
+            .order_by(KnowledgeReindex.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
+    async def running_collections(self, knowledge_base_id: uuid.UUID) -> list[str]:
+        stmt = select(KnowledgeReindex.collection).where(
+            KnowledgeReindex.knowledge_base_id == knowledge_base_id,
+            KnowledgeReindex.state == ReindexState.RUNNING,
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+
+class StagedChunkRepository(BaseRepository[StagedChunk]):
+    """Chunks of an index being built (E59)."""
+
+    model = StagedChunk
+
+    async def staged_document_ids(self, reindex_id: uuid.UUID) -> set[uuid.UUID]:
+        stmt = (
+            select(StagedChunk.document_id)
+            .where(StagedChunk.reindex_id == reindex_id, StagedChunk.document_id.is_not(None))
+            .distinct()
+        )
+        return {row for row in (await self.session.execute(stmt)).scalars().all() if row}
+
+    async def for_reindex(self, reindex_id: uuid.UUID) -> Sequence[StagedChunk]:
+        stmt = (
+            select(StagedChunk)
+            .where(StagedChunk.reindex_id == reindex_id)
+            .order_by(StagedChunk.document_id, StagedChunk.ordinal)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def delete_for_reindex(self, reindex_id: uuid.UUID) -> None:
+        await self.session.execute(delete(StagedChunk).where(StagedChunk.reindex_id == reindex_id))

@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Rebuild a knowledge base with another model or chunk size
+- **No more new base and re-upload.** *Rebuild index…* on a knowledge base re-embeds every document with another embedding model, chunk size or overlap. A model change reuses the text already stored; a chunking change parses the stored originals again.
+- **No downtime.** The new index is built beside the current one, and searches keep using the current one until the new one is complete. Then the base switches over in one step. A progress banner shows how far it has got, and *Cancel rebuild* throws away what was built.
+- Uploads made during a rebuild wait and are indexed once, with the new settings. A rebuild that runs out of token budget pauses until the budget resets. Starting and finishing are recorded in the audit log.
+- **Upgrade.** Migration `d4f6b8a0c2e3` adds two tables. Nothing changes until you start a rebuild.
+
 ### Several copies of a model now share the work
 - **More copies, more capacity.** When a model runs as several deployments, calls are now spread across them: each goes to the copy with the fewest calls in progress. Before, the first copy took every call and the others only stepped in when it failed.
 - **A failed call tries another copy.** A call that fails is retried once on another copy before the alias's fallback. A streamed answer moves only if it failed before anything was sent.
