@@ -526,3 +526,140 @@ class TestPartialRestore:
             headers=auth_header(tokens, operator),
         )
         assert r.status_code == 422
+
+
+class TestTrustChange:
+    """E63: retiring or revoking a bundle signing key from the console."""
+
+    OLD = "sha256:" + "a" * 64
+    NEW = "sha256:" + "b" * 64
+    CHILD = "sha256:" + "c" * 64
+
+    def _trust(self, *, accepted: list[str], keys: list[dict[str, Any]]) -> dict[str, Any]:
+        return {"configured": True, "fingerprint": accepted[0], "accepted": accepted, "keys": keys}
+
+    def _two_keys(self) -> dict[str, Any]:
+        return self._trust(
+            accepted=[self.OLD, self.NEW],
+            keys=[
+                {"fingerprint": self.OLD, "status": "trusted", "source": "installed"},
+                {"fingerprint": self.NEW, "status": "trusted", "source": "installed"},
+            ],
+        )
+
+    async def test_a_revoke_reaches_the_runner(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, trust_key=self._two_keys())
+        r = await client.post(
+            "/api/v1/ops/trust/keys",
+            json={
+                "fingerprint": self.OLD,
+                "action": "revoke",
+                "confirm": "revoke",
+                "reason": "leaked",
+            },
+            headers=auth_header(tokens, operator),
+        )
+        assert r.status_code == 202, r.text
+        spec = (await claim(client, runner_headers)).json()
+        assert spec["kind"] == "trust.change"
+        assert spec["params"] == {"fingerprint": self.OLD, "action": "revoke", "reason": "leaked"}
+
+    async def test_the_action_must_be_typed_back(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, trust_key=self._two_keys())
+        r = await client.post(
+            "/api/v1/ops/trust/keys",
+            json={
+                "fingerprint": self.OLD,
+                "action": "retire",
+                "confirm": "yes",
+                "reason": "rotated",
+            },
+            headers=auth_header(tokens, operator),
+        )
+        assert r.status_code == 422
+
+    async def test_the_last_key_is_refused(self, client, operator, tokens, runner_headers):
+        trust = self._trust(
+            accepted=[self.OLD, self.CHILD],
+            keys=[
+                {"fingerprint": self.OLD, "status": "trusted", "source": "installed"},
+                # Added on OLD's authority, so revoking OLD revokes it too.
+                {
+                    "fingerprint": self.CHILD,
+                    "status": "trusted",
+                    "source": "update",
+                    "added_by": self.OLD,
+                },
+            ],
+        )
+        await beat(client, runner_headers, trust_key=trust)
+        h = auth_header(tokens, operator)
+        revoke = await client.post(
+            "/api/v1/ops/trust/keys",
+            json={
+                "fingerprint": self.OLD,
+                "action": "revoke",
+                "confirm": "revoke",
+                "reason": "leaked",
+            },
+            headers=h,
+        )
+        assert revoke.status_code == 422 and "no trusted key" in revoke.text
+        # Retiring doesn't cascade, so the child remains and it is allowed.
+        retire = await client.post(
+            "/api/v1/ops/trust/keys",
+            json={
+                "fingerprint": self.OLD,
+                "action": "retire",
+                "confirm": "retire",
+                "reason": "rotated",
+            },
+            headers=h,
+        )
+        assert retire.status_code == 202, retire.text
+
+    async def test_unknown_or_already_ended_keys(self, client, operator, tokens, runner_headers):
+        trust = self._two_keys()
+        trust["keys"][1]["status"] = "retired"
+        trust["accepted"] = [self.OLD]
+        await beat(client, runner_headers, trust_key=trust)
+        h = auth_header(tokens, operator)
+        unknown = await client.post(
+            "/api/v1/ops/trust/keys",
+            json={
+                "fingerprint": "sha256:" + "d" * 64,
+                "action": "retire",
+                "confirm": "retire",
+                "reason": "x y z",
+            },
+            headers=h,
+        )
+        assert unknown.status_code == 404
+        again = await client.post(
+            "/api/v1/ops/trust/keys",
+            json={
+                "fingerprint": self.NEW,
+                "action": "retire",
+                "confirm": "retire",
+                "reason": "again",
+            },
+            headers=h,
+        )
+        assert again.status_code == 409
+
+    async def test_needs_system_upgrade(
+        self, client, tokens, session, settings, runner_headers, ops_env
+    ):
+        await beat(client, runner_headers, trust_key=self._two_keys())
+        viewer = await _user_with(session, settings, [Perm.DIAGNOSTICS_VIEW], name="e63view")
+        r = await client.post(
+            "/api/v1/ops/trust/keys",
+            json={
+                "fingerprint": self.OLD,
+                "action": "revoke",
+                "confirm": "revoke",
+                "reason": "leaked",
+            },
+            headers=auth_header(tokens, viewer),
+        )
+        assert r.status_code == 403

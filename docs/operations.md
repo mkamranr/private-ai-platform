@@ -189,11 +189,67 @@ manifest lists the checksum of everything else, one signature covers the whole b
 
 - Get the public key and its fingerprint (`python3 scripts/bundle_signing.py fingerprint
   bundle-signing.pub`) through a channel other than the bundle itself.
-- The key is installed at `<root>/.trust/bundle-signing.pub`. That is outside the tree, so a
-  bundle cannot replace its own trust anchor.
+- The key is added to the site's trust store, `<root>/.trust/trust.json`. That is outside the
+  tree, so a bundle cannot replace its own trust anchor. (A site set up before this keeps
+  its `<root>/.trust/bundle-signing.pub`, which still counts.)
 - From then on, an unsigned or wrongly signed bundle is refused by `install.sh`,
-  `upgrade.sh`, the runner and the preflight. There is no override flag: removing the key is
-  the deliberate way back.
+  `upgrade.sh`, the runner and the preflight. There is no override flag: removing the
+  trust store is the deliberate way back.
+
+### Changing the signing key
+
+A site can trust several keys. A bundle is accepted when its signature verifies against
+one that is neither **retired** (a planned end) nor **revoked** (it may be compromised).
+
+**Planned rotation, with nothing carried to the sites:**
+
+```bash
+# On the build site
+python3 scripts/bundle_signing.py keygen --out ~/aip-signing-2027
+python3 scripts/bundle_signing.py statement --key ~/aip-signing/bundle-signing.key \
+    --add ~/aip-signing-2027/bundle-signing.pub=2027
+git add offline/trust-updates && git commit -m "Trust the 2027 signing key"
+make bundle SIGN_KEY=~/aip-signing-2027/bundle-signing.key
+```
+
+The statement (`offline/trust-updates/0001.json` and `.sig`) is a *trust update* signed by
+the old key. It ships in this bundle and every later one. On upgrade, each site applies the
+trust updates it hasn't applied yet, then checks the bundle, which the new key signed.
+Once every site has upgraded, retire the old key in a second statement signed by the new
+one (`statement --key <new> --retire <old fingerprint>=rotated`).
+
+**A key that may be compromised:**
+
+- Revoke it on each site, from the Offline Updates page (*Revoke*) or on the host:
+  `python3 scripts/bundle_signing.py trust --trust-dir <root>/.trust revoke <fingerprint> --reason "..."`.
+- Revoking also revokes every key a trust update added on the revoked key's authority,
+  because whoever held it could have added their own. Keys installed by hand stay trusted.
+- Ship a revocation to every site too: a statement signed by a key that is still trusted
+  (`statement --key <good> --revoke <fingerprint>=compromised`).
+- A site that trusted only the compromised key needs a new key installed by hand
+  (`upgrade.sh ... --trust-key new.pub`, or `trust add`). Neither the console nor a
+  trust update signed by the compromised key can be used for that.
+
+**The rules a trust update follows:**
+
+- Only a key the site accepts can sign one. Retired and revoked keys sign nothing.
+- It can't bring back a key the site has retired or revoked.
+- An update that would leave the site with no accepted key is ignored, so a stolen key
+  can't lock a site out by revoking every other key at once. The console and the runner
+  refuse the same thing.
+- Updates apply in sequence order, once each, when `install.sh` or `upgrade.sh` checks a
+  bundle, and are kept even if that bundle is then refused. Listing or verifying a bundle in
+  the console shows what would change without changing it.
+
+**On the Offline Updates page:**
+
+- *Bundle trust* lists every key with its status, its label, and how it arrived (installed
+  on the host, or added by a trust update from which key).
+- *Retire* and *Revoke* queue an audited `trust.change` job. They need `system.upgrade`, and
+  the action typed back.
+- Each bundle shows how many trust updates it would apply, and how many it would ignore.
+- **Keys can't be added from the console.** A console account can make the site trust
+  less, never more.
 
 **Sites without a trust key:**
 

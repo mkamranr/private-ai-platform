@@ -53,17 +53,42 @@ bundle_preflight() {  # bundle_preflight <bundle>
 
 TRUST_KEY_NAME="bundle-signing.pub"
 
-trust_key_path() {  # trust_key_path <target>
+trust_dir() {  # trust_dir <target>
+  printf '%s/.trust' "$1"
+}
+
+trust_key_path() {  # trust_key_path <target>  (the E7 single key; still honoured)
   printf '%s/.trust/%s' "$1" "$TRUST_KEY_NAME"
 }
 
-install_trust_key() {  # install_trust_key <public-key-file> <target>
+signing_helper() {  # signing_helper <bundle> <target>
+  # E63: the trust store's rules live in scripts/bundle_signing.py (stdlib + this host's
+  # openssl). The target's installed copy is preferred: on an upgrade it is code this site
+  # already trusts. A first install has no installed copy, and uses the bundle's own, as it
+  # already uses the bundle's own install.sh.
+  local bundle="$1" target="$2"
+  if [[ -f "$target/scripts/bundle_signing.py" ]]; then
+    printf '%s' "$target/scripts/bundle_signing.py"
+  elif [[ -f "$bundle/tree/scripts/bundle_signing.py" ]]; then
+    printf '%s' "$bundle/tree/scripts/bundle_signing.py"
+  fi
+}
+
+install_trust_key() {  # install_trust_key <public-key-file> <target> [<bundle>]
   # Outside the tree on purpose: upgrade.sh copies a bundle's tree over the target, and a
   # trust anchor a bundle could overwrite would let any bundle vouch for itself.
-  local key="$1" target="$2" dest
+  local key="$1" target="$2" bundle="${3:-}" helper dest
   [[ -f "$key" ]] || die "No such public key: $key"
   command -v openssl >/dev/null || die "openssl is required to use a trust key."
   openssl pkey -pubin -in "$key" -noout 2>/dev/null || die "$key is not a public key."
+  helper=$(signing_helper "$bundle" "$target")
+  if [[ -n "$helper" ]]; then
+    # E63: one more key in the trust store; any others stay trusted.
+    python3 "$helper" trust --trust-dir "$(trust_dir "$target")" add "$key" \
+      --label "$(basename "$key")" >/dev/null || die "could not add $key to the trust store"
+    ok "trust key added: $(key_fingerprint "$key")"
+    return 0
+  fi
   dest=$(trust_key_path "$target")
   mkdir -p "$(dirname "$dest")"
   install -m 644 "$key" "$dest"
@@ -75,18 +100,24 @@ key_fingerprint() {  # key_fingerprint <public-key-file>
     | openssl dgst -sha256 -r | cut -d' ' -f1)"
 }
 
+trust_configured() {  # trust_configured <target>
+  [[ -f "$(trust_key_path "$1")" || -f "$(trust_dir "$1")/trust.json" ]]
+}
+
 verify_signature() {  # verify_signature <bundle> <target> [--allow-unsigned]
-  # Uses THIS host's openssl and THIS host's trust key — never code or keys from inside the
+  # Uses THIS host's openssl and THIS host's trust store — never keys from inside the
   # bundle being judged. Checksums (verify_bundle) prove the bundle is intact; this proves
   # who built it. The manifest lists every archive's checksum, so verifying the manifest's
   # signature covers the whole bundle.
   #
-  #   trust key installed + valid signature   -> ok
-  #   trust key installed + anything else     -> refuse (no override: that is the point)
-  #   no trust key + signed or unsigned       -> warn, continue (sites that never opted in)
-  local bundle="$1" target="$2" allow_unsigned="${3:-}" key
-  key=$(trust_key_path "$target")
-  if [[ ! -f "$key" ]]; then
+  #   trust configured + signed by an accepted key  -> ok
+  #   trust configured + anything else              -> refuse (no override: that is the point)
+  #   no trust configured                           -> warn, continue (sites that never opted in)
+  #
+  # E63: the bundle's trust updates (offline/trust-updates in its tree) are applied first,
+  # each only if signed by a key this site already trusts; see scripts/bundle_signing.py.
+  local bundle="$1" target="$2" allow_unsigned="${3:-}" helper code
+  if ! trust_configured "$target"; then
     if [[ -f "$bundle/manifest.sig" ]]; then
       warn "bundle is signed, but no trust key is installed — the signer cannot be checked"
     else
@@ -96,20 +127,29 @@ verify_signature() {  # verify_signature <bundle> <target> [--allow-unsigned]
     return 0
   fi
   command -v openssl >/dev/null || die "A trust key is installed but openssl is missing."
-  if [[ ! -f "$bundle/manifest.sig" ]]; then
-    [[ "$allow_unsigned" == "--allow-unsigned" ]] && die \
-      "--allow-unsigned is refused while a trust key is installed ($key).
-     Remove the key deliberately if this site no longer requires signed bundles."
-    die "This bundle is not signed, and this site requires signed bundles ($key)."
+  if [[ ! -f "$bundle/manifest.sig" && "$allow_unsigned" == "--allow-unsigned" ]]; then
+    die "--allow-unsigned is refused while a trust key is installed ($(trust_dir "$target")).
+     Remove the trust store deliberately if this site no longer requires signed bundles."
   fi
-  if openssl dgst -sha256 -verify "$key" -signature "$bundle/manifest.sig" \
-       "$bundle/manifest.json" >/dev/null 2>&1; then
-    ok "signature valid ($(key_fingerprint "$key"))"
-  else
-    die "The bundle's signature does not verify against $key.
-     The manifest was changed after signing, or it was signed by a different key.
-     Nothing was changed."
+  helper=$(signing_helper "$bundle" "$target")
+  if [[ -z "$helper" ]]; then
+    # No helper anywhere (a hand-assembled tree): the E7 check against the single key.
+    [[ -f "$bundle/manifest.sig" ]] || die "This bundle is not signed, and this site requires signed bundles."
+    openssl dgst -sha256 -verify "$(trust_key_path "$target")" -signature "$bundle/manifest.sig" \
+      "$bundle/manifest.json" >/dev/null 2>&1 \
+      || die "The bundle's signature does not verify against $(trust_key_path "$target"). Nothing was changed."
+    ok "signature valid ($(key_fingerprint "$(trust_key_path "$target")"))"
+    return 0
   fi
+  local output
+  output=$(python3 "$helper" check "$bundle" --trust-dir "$(trust_dir "$target")" --apply 2>&1) && code=0 || code=$?
+  while IFS= read -r line; do [[ -n "$line" ]] && printf '    %s\n' "$line"; done <<<"$output"
+  case "$code" in
+    0) ok "signature valid" ;;
+    *) die "This bundle is refused by this site's trust store ($(trust_dir "$target")).
+     It is unsigned, signed by a key this site does not trust, or signed by a retired or
+     revoked key. Nothing was changed." ;;
+  esac
 }
 
 verify_bundle() {  # verify_bundle <bundle> [service...]

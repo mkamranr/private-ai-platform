@@ -47,7 +47,7 @@ printf '%s\n' "═════════════════════�
 # ---------------------------------------------------------------------------
 say "1/5  Verifying the bundle before anything is written"
 if [[ -n "$TRUST_KEY" ]]; then
-  install_trust_key "$TRUST_KEY" "$TARGET"
+  install_trust_key "$TRUST_KEY" "$TARGET" "$BUNDLE"
 fi
 verify_signature "$BUNDLE" "$TARGET"
 verify_bundle "$BUNDLE"

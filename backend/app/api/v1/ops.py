@@ -51,6 +51,7 @@ from app.schemas.ops import (
     RunnerRead,
     RunnerReport,
     RunnerStatus,
+    TrustChangeRequest,
     UpgradeRequest,
 )
 from app.services.audit import AuditService
@@ -337,6 +338,28 @@ async def verify_bundle(
     name: NamePath,
 ) -> OpsJobRead:
     job = await service.request_bundle_verify(name, actor=actor, reason=body.reason)
+    await service.commit()
+    return _read(job)
+
+
+@router.post(
+    "/trust/keys",
+    response_model=OpsJobRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Retire or revoke a bundle signing key",
+)
+async def change_trust_key(
+    body: TrustChangeRequest,
+    service: OpsServiceDep,
+    actor: Annotated[User, require_permission(Perm.SYSTEM_UPGRADE)],
+) -> OpsJobRead:
+    """E63: queue a retire (a planned end) or revoke (compromised) of a signing key in the
+    runner host's trust store. Bundles signed by it are refused from then on; revoking also
+    revokes keys a trust update added on its authority. Refused if no trusted key would
+    remain. Adding a key is not possible here: do it on the host."""
+    job = await service.request_trust_change(
+        body.fingerprint, body.action, confirm=body.confirm, reason=body.reason, actor=actor
+    )
     await service.commit()
     return _read(job)
 

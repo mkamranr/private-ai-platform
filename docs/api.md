@@ -766,6 +766,7 @@ rollback, gets 409. See [operations.md](operations.md).
 | GET | `/ops/bundles` | `system.upgrade` |
 | POST | `/ops/bundles/{name}/verify` | `system.upgrade` |
 | GET | `/ops/bundles/{name}/preflight` | `system.upgrade`. `ok`, `checks[]` (pass/warn/fail) |
+| POST | `/ops/trust/keys` | `system.upgrade`. `fingerprint`, `action` (`retire`/`revoke`), `confirm` (the action), `reason`; **202**. Queues a `trust.change` job; 422 if no trusted key would remain. Keys can't be added through the API |
 | POST | `/ops/upgrades` | `system.upgrade`. `bundle`, `confirm`, `reason`, `migrate`; 409 while preflight fails |
 | GET / POST | `/ops/rollbacks` | `system.upgrade`. POST: `point`, `confirm`, `reason` |
 | GET | `/diagnostics/health` | `diagnostics.view` |
