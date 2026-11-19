@@ -142,6 +142,37 @@ re-index is needed. Relabelling rewrites the payload in place, without re-embedd
 
 ---
 
+## Rebuilding a whole base
+
+A base's embedding model and chunking are fixed once it holds chunks: vectors from two
+models cannot be compared, and chunks of two sizes rank against each other unevenly.
+**Rebuild index…** on the base (or `POST /knowledge-bases/{id}/reindex`) re-embeds every
+document with another model, another chunk size and overlap, or both.
+
+* **Built beside the live index.** A new Qdrant collection, with chunk rows staged in
+  `staged_document_chunks`. Searches, agents and workflows keep answering from the current
+  index the whole time.
+* **Swapped in one transaction** once every document is staged: the new chunks replace the
+  old, and the base points at the new collection, model and chunking. The old collection is
+  deleted after that commit, never before.
+* **A model-only change reuses the chunk text** already in PostgreSQL. A chunking change
+  (or *Re-parse the stored originals*, for a parser or OCR improvement) parses each stored
+  original again. A document whose original cannot be read, or yields no text this time,
+  keeps its existing chunks, re-embedded, and the rebuild records a note naming it.
+* **The ingestion worker does the work**, one document per transaction, when no upload is
+  waiting. A restart resumes where it stopped.
+* **Uploads made during a rebuild wait** and are ingested after the swap, once, with the
+  new settings. A document deleted mid-rebuild leaves no vectors behind. Access changes
+  made mid-rebuild are applied at the swap.
+* **A token budget refusal pauses** the rebuild until a minute after the budget resets. Any
+  other failure stops it and deletes what it built; the live index is untouched. *Cancel
+  rebuild* does the same on request.
+* A rebuild can't start while documents are being ingested, or while another rebuild of
+  the same base is running (409). Starting and finishing are audited
+  (`KNOWLEDGE_REINDEX_STARTED`, `KNOWLEDGE_REINDEX_FINISHED` with its outcome).
+
+---
+
 ## Three memory layers
 
 | Layer | Store | Holds | Lifetime |
@@ -271,9 +302,9 @@ ever considered — the same guard that stops the platform stopping its own data
   `{"blocks": [{"text", "page", "confidence"}], "language"}`. `mock-vllm` implements it
   for GPU-free development; `models/manifests/examples/paddleocr-v4.yaml` is the
   production shape.
-* **No re-embed of a whole base.** Changing a base's model or chunk size needs a new
-  base. Single documents can be re-ingested from their stored original
-  (`POST /documents/{id}/reingest`).
+* **A rebuild re-embeds every document**, even when only some would change. There is no
+  partial or incremental rebuild, and a rebuild that fails starts again from the first
+  document.
 * **Nothing sweeps expired memories.** `delete_expired` exists and is tested; recall skips
   expired entries at read time, so they are inert, but they are not reclaimed.
 * **Agents do not write memory yet.** `remember()` works and is scoped, but no run calls it

@@ -1176,6 +1176,47 @@
 </div>
 
 <!-- Document versions (E5) ----------------------------------------------------->
+<!-- Rebuild a whole knowledge base (E59) -->
+<div class="modal fade" id="kb-reindex-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Rebuild <span id="kr-name" class="mono"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-secondary">Every document is embedded again into a new index,
+          built beside the current one. Searches keep using the current index until the new
+          one is complete, then switch over in one step. Uploads made meanwhile wait and are
+          ingested with the new settings.</p>
+        <label class="form-label small mb-1" for="kr-model">Embedding model</label>
+        <input id="kr-model" class="form-control form-control-sm mb-2" maxlength="128">
+        <div class="row g-2 mb-2">
+          <div class="col">
+            <label class="form-label small mb-1" for="kr-size">Chunk size (characters)</label>
+            <input id="kr-size" type="number" min="200" max="8000" class="form-control form-control-sm">
+          </div>
+          <div class="col">
+            <label class="form-label small mb-1" for="kr-overlap">Overlap</label>
+            <input id="kr-overlap" type="number" min="0" max="2000" class="form-control form-control-sm">
+          </div>
+        </div>
+        <div class="form-check mb-2" title="A chunking change always re-parses">
+          <input class="form-check-input" type="checkbox" id="kr-reparse">
+          <label class="form-check-label small" for="kr-reparse">Re-parse the stored originals
+            (after a parser or OCR improvement)</label>
+        </div>
+        <input id="kr-reason" class="form-control form-control-sm" maxlength="500"
+               placeholder="Reason (recorded in the audit log)">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="kr-start">Start rebuild</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="doc-access-modal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">

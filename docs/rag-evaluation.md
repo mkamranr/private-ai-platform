@@ -232,6 +232,7 @@ previous run. **View** opens the per-question results.
   the run trace (`RAG_SEARCH` events), as before.
 * **Runs are synchronous**, hence the 100-question cap. A larger set would need a worker,
   like ingestion.
-* **No re-embed of a whole base.** Changing the embedding model or chunk size still means
-  a new base. Re-ingest works per document.
+* A whole base is re-embedded with **Rebuild index…** (see
+  [rag.md](rag.md#rebuilding-a-whole-base)), not from the evaluation page. Run the set
+  before and after to compare.
 * **No per-document access control.** Scope stays per knowledge base.

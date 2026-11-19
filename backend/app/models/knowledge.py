@@ -498,3 +498,97 @@ class RagEvalRun(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
+
+
+class ReindexState(enum.StrEnum):
+    RUNNING = "RUNNING"
+    #: The new index answers; the old one is gone.
+    DONE = "DONE"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class KnowledgeReindex(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Rebuilding a whole knowledge base with a new embedding model or chunking (E59).
+
+    Built beside the live index (a new collection, chunks in ``staged_document_chunks``)
+    and swapped in one transaction when every document is staged, so the base answers from
+    its old index until the new one is complete. At most one runs per base.
+    """
+
+    __tablename__ = "knowledge_reindexes"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('RUNNING','DONE','FAILED','CANCELLED')", name="reindex_state_valid"
+        ),
+        Index(
+            "uq_knowledge_reindex_running",
+            "knowledge_base_id",
+            unique=True,
+            postgresql_where=text("state = 'RUNNING'"),
+        ),
+    )
+
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(String(16), default=ReindexState.RUNNING, nullable=False)
+    #: The collection being built; becomes the base's on swap.
+    collection: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_overlap: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Parse the stored originals again (always, when chunking changes). Otherwise the
+    #: existing chunk text is embedded with the new model.
+    reparse: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: The base's settings before, for the record and the audit entry.
+    previous: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    total_documents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    done_documents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: A token budget refused an embedding: paused until then.
+    retry_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    #: Things worth knowing that did not stop it, e.g. a scan kept its old text because
+    #: no OCR model was deployed.
+    notes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(500))
+    started_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class StagedChunk(Base):
+    """A chunk of the index being built (E59), moved to ``document_chunks`` on swap.
+
+    A separate table rather than a flag on ``document_chunks``: the live index's rows stay
+    exactly as they are, so nothing that reads chunks (search, citations, statistics,
+    access changes) needs to know a rebuild is happening.
+    """
+
+    __tablename__ = "staged_document_chunks"
+    __table_args__ = (
+        UniqueConstraint("reindex_id", "document_id", "ordinal", name="staged_document_ordinal"),
+        Index("ix_staged_chunks_reindex_document", "reindex_id", "document_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    reindex_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("knowledge_reindexes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: SET NULL, not CASCADE: a document deleted mid-rebuild leaves its rows, so the swap
+    #: still knows which vectors in the new collection to delete.
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL")
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    token_estimate: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    location: Mapped[str | None] = mapped_column(String(64))
+    vector_id: Mapped[str] = mapped_column(String(64), nullable=False)

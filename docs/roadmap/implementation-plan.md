@@ -77,7 +77,7 @@ dashboard real signals.
 - [x] `POST /retrieval/playground`: candidates, reranked results, optional vector-order baseline, timings and warnings.
 - [x] Evaluation sets labelled by document lineage; synchronous runs (≤100 questions) scoring hit rate, recall, precision and MRR over distinct documents, with per-question results stored. Audited.
 - [x] Admin: retrieval settings, version badges, New version / Re-ingest / Versions on the Knowledge Bases page; new Retrieval Playground page with an Evaluation sets tab. Doc: [docs/rag-evaluation.md](../rag-evaluation.md).
-- [ ] Answer faithfulness scoring (needs a judge model), query history, asynchronous runs for large sets, and whole-base re-embed are not included (per-document access arrived in E56). See rag-evaluation.md.
+- [ ] Answer faithfulness scoring (needs a judge model), query history, asynchronous runs for large sets, are not included (per-document access arrived in E56, whole-base re-embed in E59). See rag-evaluation.md.
 
 ## E6: Workflows (P2)
 
@@ -525,6 +525,15 @@ matrix still listed as missing.
 - [x] Runtime settings `gateway.load_balancing` and `gateway.replica_retries`; metric `ai_platform_gateway_replica_failovers_total{model,kind}`. No migration.
 - [x] Tests: `tests/api/test_replica_balancing.py`. Docs: [gateway-policy.md](../gateway-policy.md#spreading-calls-across-copies), models.md, database.md, settings.md.
 - [ ] A stream that has sent part of its answer is not moved. No weights per copy and no session affinity for prefix caching. Chat, embeddings, transcription and speech all spread and retry on another copy; OCR and the platform's own internal calls spread but do not retry.
+
+## E59: Rebuild a whole knowledge base (closes the feature-matrix re-embed gap)
+
+- [x] Models `KnowledgeReindex` (`knowledge_reindexes`; at most one RUNNING per base, by partial unique index) and `StagedChunk` (`staged_document_chunks`; `document_id` SET NULL so a deleted document's staged vectors can still be found). Migration `d4f6b8a0c2e3`.
+- [x] `services/knowledge_reindex.py`: `start` (probes the new model's width, creates the collection, refuses while documents ingest or a rebuild runs, or when nothing would change), `step` (one document per transaction: reparse, or reuse the chunk text for a model-only change; `index_rows` into the new collection), `_swap` (base row locked; staged rows replace live ones for documents still current; orphans' vectors deleted; documents indexed mid-rebuild requeued; access labels rewritten; old collection returned for deletion after commit), `cancel`. A budget refusal unstages the document and sets `retry_at`; any other failure deletes what was built.
+- [x] `IngestionWorker.tick` runs a rebuild step when no upload is waiting; `claim_next_pending` holds uploads to a base being rebuilt. `delete_base` deletes a collection being built. `KnowledgeService.index_rows` shared by ingestion and rebuilds.
+- [x] API `POST/GET/DELETE /knowledge-bases/{id}/reindex`; audit `KNOWLEDGE_REINDEX_STARTED`/`_FINISHED`. Console: *Rebuild index…*, a progress banner with *Cancel rebuild*.
+- [x] Tests: `tests/api/test_knowledge_reindex.py`. Docs: [rag.md](../rag.md#rebuilding-a-whole-base), api.md.
+- [ ] Every document is re-embedded, even when some would not change; no incremental rebuild. A failed rebuild starts over. A document that keeps its old chunks because its original cannot be re-parsed is noted, not flagged on the document itself.
 
 ## Phase acceptance (applies to each)
 

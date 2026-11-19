@@ -6,7 +6,7 @@ import datetime as dt
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.common import ORMModel
 
@@ -88,6 +88,56 @@ class KnowledgeBaseRead(ORMModel):
     created_at: dt.datetime
     # Deliberately not `collection`: the Qdrant collection name is internal, and exposing it
     # would invite a caller to query the vector store directly, bypassing every scope filter.
+
+
+class ReindexRequest(BaseModel):
+    """Rebuild the whole base with another embedding model and/or chunking (E59)."""
+
+    embedding_model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="A deployed EMBEDDING model or alias. Omit to keep the current one.",
+    )
+    chunk_size: int | None = Field(default=None, ge=200, le=8000)
+    chunk_overlap: int | None = Field(default=None, ge=0, le=2000)
+    reparse: bool = Field(
+        default=False,
+        description=(
+            "Re-parse the stored originals even when chunking is unchanged, e.g. after a "
+            "parser or OCR improvement. Implied by a chunking change."
+        ),
+    )
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class ReindexRead(ORMModel):
+    id: uuid.UUID
+    knowledge_base_id: uuid.UUID
+    state: str
+    embedding_model: str
+    embedding_dimensions: int
+    chunk_size: int
+    chunk_overlap: int
+    reparse: bool
+    previous: dict[str, Any] = Field(default_factory=dict)
+    total_documents: int
+    done_documents: int
+    retry_at: dt.datetime | None = None
+    error: str | None = None
+    notes: list[str] = Field(default_factory=list)
+    reason: str | None = None
+    started_by: uuid.UUID | None = None
+    created_at: dt.datetime
+    finished_at: dt.datetime | None = None
+
+    @field_validator("previous", mode="before")
+    @classmethod
+    def _internal_names_hidden(cls, value: Any) -> Any:
+        # The collection name stays internal, as on KnowledgeBaseRead.
+        if isinstance(value, dict):
+            return {k: v for k, v in value.items() if k != "collection"}
+        return value
 
 
 class KnowledgeBaseDetail(KnowledgeBaseRead):

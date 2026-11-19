@@ -681,6 +681,9 @@ Under `/api/v1`, authenticated with the platform JWT. See
 | GET | `/documents/{id}/versions` | `knowledge.view`. Newest first |
 | GET | `/documents/{id}/access` | `knowledge.manage`. `{restricted, users: [{id, name}], teams: [{id, name}]}` |
 | PUT | `/documents/{id}/access` | `knowledge.manage`. `{restricted, users: [ids], teams: [ids], reason}`; every version; audited `DOCUMENT_ACCESS_CHANGED`. Readers without `restricted: true` is a 422 |
+| POST | `/knowledge-bases/{id}/reindex` | `knowledge.manage`. `{embedding_model?, chunk_size?, chunk_overlap?, reparse, reason}`; **202**. Rebuilds every document into a new index, swapped in when complete. 409 while documents are ingesting or a rebuild is running; 422 when nothing would change |
+| GET | `/knowledge-bases/{id}/reindex` | `knowledge.view`. The running rebuild, else the latest; `null` if none. `state` (`RUNNING`/`DONE`/`FAILED`/`CANCELLED`), `done_documents`/`total_documents`, `retry_at` and `error` while paused by a budget, `notes`, `previous` settings |
+| DELETE | `/knowledge-bases/{id}/reindex` | `knowledge.manage`. Cancels the running rebuild and deletes what it built; 404 if none |
 | POST | `/documents/{id}/reingest` | `document.upload`. **202**; terminal, current documents only. Clears `retry_at` (when a budget-refused document will be retried by itself) |
 | POST | `/retrieval/playground` | `knowledge.view`. `knowledge_base_ids`, `query`, `top_k`, `candidates`, `score_threshold`, `reranker` (`default`/`none`/`model`), `reranker_model`, `compare` |
 | GET / POST | `/knowledge-bases/{id}/eval-sets` | `knowledge.view` / `knowledge.manage` |

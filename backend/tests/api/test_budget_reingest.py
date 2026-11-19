@@ -218,6 +218,12 @@ class TestWorker:
 
         monkeypatch.setattr(DocumentRepository, "requeue_refused", requeue)
         monkeypatch.setattr(DocumentRepository, "claim_next_pending", nothing)
+
+        async def no_rebuild(self, session):
+            return False
+
+        # E59: with the queue empty the worker steps a rebuild; none here.
+        monkeypatch.setattr(IngestionWorker, "_reindex_step", no_rebuild)
         factory = self.Factory()
         worker = IngestionWorker(settings, factory, None, None, fake_embed)  # type: ignore[arg-type]
         assert await worker.tick() is False
