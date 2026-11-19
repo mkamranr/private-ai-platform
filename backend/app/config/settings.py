@@ -566,6 +566,13 @@ class GatewaySettings(BaseModel):
     #: replica cannot release its slots, so they lapse after this instead of shrinking
     #: the limit forever. Longer than any sane generation.
     concurrency_lease_seconds: int = Field(default=1800, ge=60, le=86_400)
+    #: E58: how a call picks among a model's running copies. ``least_busy`` (fewest calls
+    #: in flight, taking turns between equals), ``round_robin`` or ``first`` (always the
+    #: oldest; the others only on failure, as before E58).
+    load_balancing: str = "least_busy"
+    #: E58: other copies of the same model a failed call is retried on, before the alias's
+    #: fallback. A stream is retried only if it failed before sending anything.
+    replica_retries: int = Field(default=1, ge=0, le=5)
     #: E12: a daily or monthly token budget raises a WARNING alert at this share of its
     #: limit and a CRITICAL one when it is used up. The gateway refuses at 100% either way;
     #: the alert is the notice before that happens.

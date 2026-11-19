@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Several copies of a model now share the work
+- **More copies, more capacity.** When a model runs as several deployments, calls are now spread across them: each goes to the copy with the fewest calls in progress. Before, the first copy took every call and the others only stepped in when it failed.
+- **A failed call tries another copy.** A call that fails is retried once on another copy before the alias's fallback. A streamed answer moves only if it failed before anything was sent.
+- **Your choice.** Settings page, *Gateway resilience*: *Load balancing across copies* (`least_busy`, `round_robin`, or `first` for the old behaviour) and *Retries on another copy* (0–5).
+- **Upgrade.** Nothing to do: no migration.
+
 ### SQL and OpenAPI tools
 - **Let agents query a database, safely.** *Add SQL tool* on the Tools & MCP page saves a query you write, with `:name` placeholders the agent fills in. The agent never writes SQL. Every call is read-only, has a time limit and returns at most a set number of rows. PostgreSQL only.
 - **Turn an API into tools.** *Import OpenAPI* reads an OpenAPI 3 document and adds one tool per operation. Each arrives disabled at HIGH risk until you review and enable it.

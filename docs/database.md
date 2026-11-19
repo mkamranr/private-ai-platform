@@ -246,9 +246,8 @@ takes minutes, so `POST /models/{id}/deploy` returns `202` and the client polls.
 `id`, `alias` (unique, e.g. `enterprise-chat`), `model_id` FK, `type`, `enabled`,
 `description`, timestamps.
 
-V1 resolution is deterministic: alias → model → **first healthy deployment by
-creation order**, warning when several exist. Round-robin and failover (V2) slot in
-behind the same resolver.
+Resolution: alias → model → one of its healthy deployments, the least busy by default
+(E58, see [gateway-policy.md](gateway-policy.md#spreading-calls-across-copies)).
 
 ---
 
@@ -396,8 +395,9 @@ is in the contract before the module that needs it is built.
    shell execution is forbidden. Reconciled: registerable but disabled pending a hardened executor.
 4. **Streaming vs usage accounting** — you cannot count tokens in a response you
    never buffer. Request `stream_options.include_usage`; handle mid-stream disconnect.
-5. **Alias → deployment when several serve one model** — failover is V2, so V1 is
-   deterministic: first healthy deployment by creation order, warn on multiples.
+5. **Alias → deployment when several serve one model** — V1 took the first healthy
+   deployment by creation order. Since E58 calls are spread across them, with retry on
+   another copy.
 6. **Metrics retention** — unbounded growth by default. Rollup and retention defined
    when the table is created.
 

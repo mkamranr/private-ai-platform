@@ -153,9 +153,10 @@ would invite callers to depend on it, and repointing would then break them.
 
 ### When several deployments serve one model
 
-Resolution is deterministic: **first healthy deployment by creation order**, and a warning
-is logged when there is more than one. Round-robin and failover are not implemented; they
-would slot in behind the same resolver.
+Calls are **spread across the healthy copies**: each goes to the one with the fewest calls
+in flight, and equally busy copies take turns. A call that fails is retried on another
+copy before the alias's fallback; a stream is moved only if it failed before sending
+anything. See [gateway-policy.md](gateway-policy.md#spreading-calls-across-copies).
 
 ---
 
