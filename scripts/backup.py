@@ -3,7 +3,7 @@
 
     python3 scripts/backup.py create  [--output DIR]
     python3 scripts/backup.py verify  PATH
-    python3 scripts/backup.py restore PATH [--yes]
+    python3 scripts/backup.py restore PATH [--yes] [--parts database,files,vectors]
     python3 scripts/backup.py list    [--output DIR]
 
 **Host-side, like check_airgap.py.** ``pg_dump`` lives in the postgres image and Rule 4
@@ -333,54 +333,146 @@ def verify(path: Path) -> int:
 # ---------------------------------------------------------------------------
 # restore
 # ---------------------------------------------------------------------------
-def restore(path: Path, assume_yes: bool) -> int:
+#: What a restore can bring back (E60). ``database`` is PostgreSQL; ``files`` the stored
+#: originals in MinIO; ``vectors`` the Qdrant collections.
+PARTS = ("database", "files", "vectors")
+#: Where snapshot files are staged inside the Qdrant container to be recovered from:
+#: under Qdrant's snapshots directory, the place it recovers ``file://`` locations from.
+QDRANT_STAGING = "/qdrant/snapshots/restore"
+
+
+def _snapshots(path: Path) -> list:
+    directory = path / "qdrant"
+    return sorted(directory.glob("*.snapshot")) if directory.is_dir() else []
+
+
+def available_parts(path: Path, manifest: dict) -> list:
+    """The parts this backup holds, in ``PARTS`` order."""
+    artifacts = manifest.get("artifacts") or {}
+    found = []
+    if "postgres.dump" in artifacts:
+        found.append("database")
+    if "minio.tar" in artifacts:
+        found.append("files")
+    if _snapshots(path):
+        found.append("vectors")
+    return found
+
+
+def parse_parts(raw):
+    """``database,vectors`` -> an ordered list; None (every part the backup has) if empty."""
+    if raw is None or not raw.strip():
+        return None
+    wanted = {p.strip() for p in raw.split(",") if p.strip()}
+    unknown = sorted(wanted - set(PARTS))
+    if unknown:
+        raise ValueError(f"unknown part(s): {', '.join(unknown)}; choose from {', '.join(PARTS)}")
+    return [p for p in PARTS if p in wanted]
+
+
+def restore(path: Path, assume_yes: bool, parts=None) -> int:
     if verify(path) != 0:
         print("\nRefusing to restore a backup that does not verify.", file=sys.stderr)
         return 1
 
     manifest = json.loads((path / MANIFEST_NAME).read_text(encoding="utf-8"))
     env = _env()
-
-    recorded = manifest.get("encryption_key_fingerprint", "")
-    current = _key_fingerprint(env)
-    if recorded and current and recorded != current:
+    present = available_parts(path, manifest)
+    chosen = list(present) if parts is None else list(parts)
+    missing = [p for p in chosen if p not in present]
+    if missing:
         print(
-            "\nREFUSED: this platform's SECURITY__ENCRYPTION_KEY is not the one this "
-            "backup was taken with.\n\n"
-            "Restoring anyway would appear to succeed. Every encrypted tool credential "
-            "and node token\nwould decrypt to garbage, and you would find out days later "
-            "when an agent's LDAP\nlookup failed for no visible reason. Put the original "
-            "key back and run this again.",
+            f"\nREFUSED: this backup holds no {', '.join(missing)} "
+            f"(it has: {', '.join(present) or 'nothing restorable'}).",
             file=sys.stderr,
         )
         return 1
-    if recorded and not current:
-        print(
-            "\nREFUSED: this backup records an encryption key fingerprint but no "
-            "SECURITY__ENCRYPTION_KEY is set here.",
-            file=sys.stderr,
-        )
+    if not chosen:
+        print("\nNothing to restore.", file=sys.stderr)
         return 1
 
-    print(
-        f"\nAbout to REPLACE this platform's database with the backup from "
-        f"{manifest['created_at']}.\nEverything currently in it is lost: users, agents, "
-        "runs, audit history."
-    )
+    # The key protects only what is inside the database dump. Files and vectors are not
+    # encrypted with it, so restoring only those is allowed under another key.
+    if "database" in chosen:
+        recorded = manifest.get("encryption_key_fingerprint", "")
+        current = _key_fingerprint(env)
+        if recorded and current and recorded != current:
+            print(
+                "\nREFUSED: this platform's SECURITY__ENCRYPTION_KEY is not the one this "
+                "backup was taken with.\n\n"
+                "Restoring anyway would appear to succeed. Every encrypted tool credential "
+                "and node token\nwould decrypt to garbage, and you would find out days later "
+                "when an agent's LDAP\nlookup failed for no visible reason. Put the original "
+                "key back and run this again.",
+                file=sys.stderr,
+            )
+            return 1
+        if recorded and not current:
+            print(
+                "\nREFUSED: this backup records an encryption key fingerprint but no "
+                "SECURITY__ENCRYPTION_KEY is set here.",
+                file=sys.stderr,
+            )
+            return 1
+
+    described = {
+        "database": "the database (users, agents, runs, audit history, document text)",
+        "files": "the stored original documents",
+        "vectors": "the vector collections",
+    }
+    print(f"\nAbout to REPLACE, with the backup from {manifest['created_at']}:")
+    for part in chosen:
+        print(f"  - {described[part]}")
+    skipped = [p for p in PARTS if p not in chosen]
+    if skipped:
+        print(f"Left as they are: {', '.join(skipped)}.")
     if not assume_yes:
         if input("Type the word 'replace' to continue: ").strip() != "replace":
             print("Cancelled.")
             return 1
 
-    user = manifest.get("database", {}).get("user", "ai_platform")
-    database = manifest.get("database", {}).get("name", "ai_platform")
-
+    errors = []
     # The backend holds connections that would block the drop, and would also be serving
-    # requests against a database being replaced underneath it.
+    # requests (and writing to MinIO) while its data is replaced underneath it.
     print("  stopping the control plane … ", end="", flush=True)
     _compose("stop", "backend", capture=True, check=False)
     print("done")
+    try:
+        if "database" in chosen:
+            errors += _restore_database(path, manifest)
+        if "files" in chosen:
+            errors += _restore_files(path, env)
+    finally:
+        print("  starting the control plane … ", end="", flush=True)
+        _compose("start", "backend", capture=True, check=False)
+        print("done")
 
+    if "vectors" in chosen:
+        # After the start: snapshots are recovered through Qdrant's API, reached from the
+        # backend container, as backup creation does.
+        errors += _restore_vectors(path, manifest, prune="database" in chosen)
+    elif "database" in chosen:
+        print(
+            "\n  Vectors were not restored, so searches will not match the restored "
+            "documents.\n  Rebuild each knowledge base (Rebuild index, ticking 'Re-parse the "
+            "stored originals')\n  to re-embed them from the restored text."
+        )
+
+    if errors:
+        print(f"\nRestore finished with {len(errors)} error(s):", file=sys.stderr)
+        for line in errors[:20]:
+            print(f"  - {line}", file=sys.stderr)
+        return 1
+    print(
+        f"\nRestored {', '.join(chosen)} from {manifest['created_at']}.\n"
+        "Check `make check` and sign in before declaring this finished."
+    )
+    return 0
+
+
+def _restore_database(path: Path, manifest: dict) -> list:
+    user = manifest.get("database", {}).get("user", "ai_platform")
+    database = manifest.get("database", {}).get("name", "ai_platform")
     print("  restoring postgres … ", end="", flush=True)
     with (path / "postgres.dump").open("rb") as handle:
         # Staged, for the same reason as in verify(): the custom format is not readable
@@ -395,29 +487,120 @@ def restore(path: Path, assume_yes: bool) -> int:
         )
     # pg_restore reports non-fatal notices on stderr and exits non-zero for them, so the
     # exit code alone would fail a perfectly good restore.
-    errors = [ln for ln in result.stderr.splitlines() if "error:" in ln.lower()]
+    errors = [f"postgres: {ln}" for ln in result.stderr.splitlines() if "error:" in ln.lower()]
     print("done" if not errors else f"{len(errors)} error(s)")
-    for line in errors[:10]:
-        print(f"    {line}", file=sys.stderr)
+    return errors
 
-    snapshots = sorted((path / "qdrant").glob("*.snapshot")) if (path / "qdrant").exists() else []
-    if snapshots:
-        print(f"  qdrant: {len(snapshots)} snapshot(s) present in the backup.")
-        print(
-            "    Not restored automatically — Qdrant recovers a snapshot through its own\n"
-            "    API against a running instance, and the vectors are re-derivable from the\n"
-            "    chunk text just restored. See docs/backup.md."
-        )
 
-    print("  starting the control plane … ", end="", flush=True)
-    _compose("start", "backend", capture=True, check=False)
-    print("done")
+def _safe_members(archive, root: str) -> list:
+    """Members that stay inside ``root/``: no absolute paths, no ``..``, no links or
+    devices. Checked here because the host's Python may predate tarfile's own filter."""
+    members = []
+    for member in archive.getmembers():
+        name = member.name.replace("\\", "/")
+        parts = Path(name).parts
+        if name.startswith("/") or ".." in parts or not parts or parts[0] != root:
+            raise ValueError(f"unsafe path in the archive: {member.name!r}")
+        if not (member.isfile() or member.isdir()):
+            raise ValueError(f"the archive holds a link or device: {member.name!r}")
+        members.append(member)
+    return members
 
-    print(
-        f"\nRestored from {manifest['created_at']}.\n"
-        "Check `make check` and sign in before declaring this finished."
+
+def _restore_files(path: Path, env: dict) -> list:
+    """Replace MinIO's data directory with the backup's. The current one is moved aside,
+    not deleted: a restore must never be what destroys the only copy of something."""
+    data_root = Path(env.get("PLATFORM_DATA_ROOT", str(REPO_ROOT / "data")))
+    target = data_root / "minio"
+    print("  restoring stored files … ", end="", flush=True)
+    aside = None
+    try:
+        with tarfile.open(path / "minio.tar") as archive:
+            members = _safe_members(archive, "minio")
+            _compose("stop", "minio", capture=True, check=False)
+            if target.exists():
+                stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+                aside = data_root / f"minio.before-restore-{stamp}"
+                target.rename(aside)
+            archive.extractall(data_root, members=members)  # noqa: S202 - members checked
+    except (OSError, ValueError, tarfile.TarError) as exc:
+        print("FAILED")
+        if aside is not None and not target.exists():
+            aside.rename(target)  # put the previous files back
+        _compose("start", "minio", capture=True, check=False)
+        return [f"files: {exc}"]
+    _compose("start", "minio", capture=True, check=False)
+    print(f"done ({len(members)} entries)")
+    if aside is not None:
+        print(f"    The previous files are kept in {aside}; delete it once satisfied.")
+    return []
+
+
+def _backend_python(code: str):
+    """Run Python in the backend container, where Qdrant's address is known."""
+    return _compose("exec", "-T", "backend", "python", "-c", code, capture=True, check=False)
+
+
+def _qdrant_request(method: str, suffix: str, body=None) -> bool:
+    payload = json.dumps(body) if body is not None else ""
+    result = _backend_python(
+        "import urllib.request;"
+        "from app.config.settings import get_settings;"
+        "s=get_settings();"
+        f"u=f'http://{{s.qdrant.host}}:{{s.qdrant.port}}{suffix}';"
+        f"d={payload!r}.encode() or None;"
+        f"r=urllib.request.Request(u, data=d, method={method!r}, "
+        "headers={'Content-Type': 'application/json'});"
+        "urllib.request.urlopen(r, timeout=3600);print('ok')"
     )
-    return 0 if not errors else 1
+    return "ok" in (result.stdout or "")
+
+
+def _wait_for_backend(seconds: int = 120) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if "ok" in (_backend_python("print('ok')").stdout or ""):
+            return True
+        time.sleep(3)
+    return False
+
+
+def _restore_vectors(path: Path, manifest: dict, *, prune: bool) -> list:
+    """Recover every collection from its snapshot, replacing what Qdrant holds now.
+
+    With the database restored too, collections the backup does not have are deleted:
+    nothing in the restored database refers to them, and they would hold vectors of
+    documents that no longer exist.
+    """
+    snapshots = _snapshots(path)
+    print(f"  restoring vectors ({len(snapshots)} collection(s)) …", flush=True)
+    if not _wait_for_backend():
+        return ["vectors: the backend did not come back, so Qdrant could not be reached"]
+    errors = []
+    _compose("exec", "-T", "qdrant", "mkdir", "-p", QDRANT_STAGING, capture=True, check=False)
+    for snapshot in snapshots:
+        collection = snapshot.stem
+        staged = f"{QDRANT_STAGING}/{snapshot.name}"
+        copied = _compose("cp", str(snapshot), f"qdrant:{staged}", capture=True, check=False)
+        ok = copied.returncode == 0 and _qdrant_request(
+            "PUT",
+            f"/collections/{collection}/snapshots/recover",
+            # priority=snapshot: the snapshot's points win over anything already there.
+            {"location": f"file://{staged}", "priority": "snapshot"},
+        )
+        _compose("exec", "-T", "qdrant", "rm", "-f", staged, capture=True, check=False)
+        print(f"    {collection}: {'restored' if ok else 'FAILED'}")
+        if not ok:
+            errors.append(f"vectors: {collection} could not be recovered")
+    if prune:
+        recorded = (manifest.get("artifacts", {}).get("qdrant") or {}).get("collections") or []
+        kept = {s.stem for s in snapshots} | set(recorded)
+        for collection in _qdrant_collections():
+            if collection not in kept:
+                deleted = _qdrant_request("DELETE", f"/collections/{collection}")
+                state = "deleted, not in the backup" if deleted else "could not be deleted"
+                print(f"    {collection}: {state}")
+    return errors
 
 
 def list_backups(output_root: Path) -> int:
@@ -453,6 +636,10 @@ def main() -> int:
     restore_parser = sub.add_parser("restore", help="Replace this platform's data.")
     restore_parser.add_argument("path", type=Path)
     restore_parser.add_argument("--yes", action="store_true", help="Skip the confirmation.")
+    restore_parser.add_argument(
+        "--parts",
+        help=f"Comma-separated, from {', '.join(PARTS)}. Default: everything the backup holds.",
+    )
 
     list_parser = sub.add_parser("list", help="List backups.")
     list_parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -463,7 +650,11 @@ def main() -> int:
     if options.command == "verify":
         return verify(options.path)
     if options.command == "restore":
-        return restore(options.path, options.yes)
+        try:
+            parts = parse_parts(options.parts)
+        except ValueError as exc:
+            parser.error(str(exc))
+        return restore(options.path, options.yes, parts)
     return list_backups(options.output)
 
 

@@ -120,6 +120,23 @@ def _key_fingerprint(env: dict[str, str]) -> str:
     return hashlib.sha256(b"ai-platform-backup-keyid\x00" + key.encode()).hexdigest()[:16]
 
 
+#: What backup.py restore can bring back (E60), in its order.
+RESTORE_PARTS = ("database", "files", "vectors")
+
+
+def restorable_parts(manifest: dict) -> list[str]:
+    """The parts a backup holds, from its manifest (backup.py checks the files again)."""
+    artifacts = manifest.get("artifacts") or {}
+    parts = []
+    if "postgres.dump" in artifacts:
+        parts.append("database")
+    if "minio.tar" in artifacts:
+        parts.append("files")
+    if int((artifacts.get("qdrant") or {}).get("snapshots") or 0) > 0:
+        parts.append("vectors")
+    return parts
+
+
 class Inventory:
     def __init__(self, root: Path, import_dir: Path, env: dict[str, str]) -> None:
         self.root = root
@@ -180,6 +197,7 @@ class Inventory:
                     "schema_revision": manifest.get("schema_revision"),
                     "size_bytes": self._cached_size(path),
                     "artifacts": sorted((manifest.get("artifacts") or {}).keys()),
+                    "parts": restorable_parts(manifest),
                     "key_matches": (recorded == current) if recorded and current else None,
                     "complete": True,
                     "copied": self.copied(path.name),
@@ -634,8 +652,13 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
 
     if kind == "backup.restore":
         path = inventory.backup_path(params.get("backup", ""))
-        ok = run_command([*backup, "restore", str(path), "--yes"], reporter, cwd=root) == 0
-        reporter.result = {"backup": path.name}
+        command = [*backup, "restore", str(path), "--yes"]
+        # E60: only some parts. Checked against the known names, as it reaches a command line.
+        parts = [p for p in (params.get("parts") or []) if p in RESTORE_PARTS]
+        if parts:
+            command += ["--parts", ",".join(parts)]
+        ok = run_command(command, reporter, cwd=root) == 0
+        reporter.result = {"backup": path.name, "parts": parts or "all"}
         return ("SUCCEEDED", None) if ok else ("FAILED", "backup.py restore reported errors.")
 
     if kind == "bundle.verify":

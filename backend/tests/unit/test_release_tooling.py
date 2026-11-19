@@ -18,7 +18,7 @@ import sys
 import threading
 import urllib.parse
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -667,3 +667,168 @@ class TestRunnerS3Copy:
         assert reporter.result["deleted_copies"] == [self.NAMES[0]]
         assert not any(k.startswith(f"site-a/{self.NAMES[0]}/") for k in s3.objects)
         assert f"site-a/{self.NAMES[1]}/.complete" in s3.objects
+
+
+class TestRestoreParts:
+    """E60: backup.py restores the database, the stored files and the vectors, or some."""
+
+    @pytest.fixture
+    def backup(self, monkeypatch, tmp_path):
+        module = load("backup")
+        calls: list[tuple] = []
+        requests: list[tuple] = []
+
+        class Done:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+
+        def compose(*args, **_):
+            calls.append(args)
+            return Done()
+
+        def qdrant(method, suffix, body=None):
+            requests.append((method, suffix, body))
+            return True
+
+        data_root = tmp_path / "data"
+        (data_root / "minio" / "bucket").mkdir(parents=True)
+        (data_root / "minio" / "bucket" / "now.txt").write_text("current")
+        monkeypatch.setattr(module, "verify", lambda path: 0)
+        monkeypatch.setattr(module, "_compose", compose)
+        monkeypatch.setattr(module, "_qdrant_request", qdrant)
+        monkeypatch.setattr(module, "_wait_for_backend", lambda seconds=120: True)
+        monkeypatch.setattr(module, "_qdrant_collections", lambda: ["kb_a", "kb_new"])
+        monkeypatch.setattr(module.subprocess, "run", lambda *a, **k: Done())
+        monkeypatch.setattr(
+            module,
+            "_env",
+            lambda: {"PLATFORM_DATA_ROOT": str(data_root), "SECURITY__ENCRYPTION_KEY": "k1"},
+        )
+        return SimpleNamespace(module=module, calls=calls, requests=requests, data_root=data_root)
+
+    def _make(self, module, tmp_path, *, key: str = "k1", unsafe: bool = False) -> Path:
+        import tarfile
+
+        path = tmp_path / "backups" / "20261110T020000Z"
+        (path / "qdrant").mkdir(parents=True)
+        (path / "postgres.dump").write_bytes(b"dump")
+        (path / "qdrant" / "kb_a.snapshot").write_bytes(b"snap")
+        source = tmp_path / "src" / "minio" / "bucket"
+        source.mkdir(parents=True)
+        (source / "then.txt").write_text("from the backup")
+        with tarfile.open(path / "minio.tar", "w") as archive:
+            archive.add(source.parent, arcname="minio")
+            if unsafe:
+                evil = tmp_path / "evil.txt"
+                evil.write_text("x")
+                archive.add(evil, arcname="../evil.txt")
+        manifest = {
+            "created_at": "20261110T020000Z",
+            "encryption_key_fingerprint": module._key_fingerprint(
+                {"SECURITY__ENCRYPTION_KEY": key}
+            ),
+            "artifacts": {
+                "postgres.dump": {},
+                "minio.tar": {},
+                "qdrant": {"collections": ["kb_a"], "snapshots": 1},
+            },
+        }
+        (path / "manifest.json").write_text(json.dumps(manifest))
+        return path
+
+    def test_parse_parts(self, backup):
+        parse = backup.module.parse_parts
+        assert parse(None) is None
+        assert parse("vectors, database") == ["database", "vectors"]
+        with pytest.raises(ValueError, match="unknown"):
+            parse("database,everything")
+
+    def test_available_parts(self, backup, tmp_path):
+        path = self._make(backup.module, tmp_path)
+        manifest = json.loads((path / "manifest.json").read_text())
+        assert backup.module.available_parts(path, manifest) == ["database", "files", "vectors"]
+        (path / "qdrant" / "kb_a.snapshot").unlink()
+        assert backup.module.available_parts(path, manifest) == ["database", "files"]
+
+    def test_everything_is_restored_by_default(self, backup, tmp_path):
+        path = self._make(backup.module, tmp_path)
+        assert backup.module.restore(path, assume_yes=True) == 0
+        minio = backup.data_root / "minio"
+        assert (minio / "bucket" / "then.txt").read_text() == "from the backup"
+        assert not (minio / "bucket" / "now.txt").exists()
+        # The files it replaced are kept, not deleted.
+        aside = [p for p in backup.data_root.iterdir() if p.name.startswith("minio.before-")]
+        assert len(aside) == 1 and (aside[0] / "bucket" / "now.txt").exists()
+        # The snapshot was copied into Qdrant's volume and recovered from there...
+        copies = [c for c in backup.calls if c[0] == "cp"]
+        assert copies and copies[0][2].startswith("qdrant:/qdrant/snapshots/")
+        recover = [r for r in backup.requests if r[0] == "PUT"]
+        assert recover[0][1] == "/collections/kb_a/snapshots/recover"
+        assert recover[0][2]["priority"] == "snapshot"
+        # ...and with the database restored, a collection the backup lacks is deleted.
+        assert ("DELETE", "/collections/kb_new", None) in backup.requests
+        # The API was stopped and started again; so was MinIO.
+        assert ("stop", "backend") in backup.calls and ("start", "backend") in backup.calls
+        assert ("stop", "minio") in backup.calls and ("start", "minio") in backup.calls
+
+    def test_vectors_alone_delete_nothing(self, backup, tmp_path):
+        path = self._make(backup.module, tmp_path)
+        assert backup.module.restore(path, assume_yes=True, parts=["vectors"]) == 0
+        assert not [r for r in backup.requests if r[0] == "DELETE"]
+        # The stored files were left alone.
+        assert (backup.data_root / "minio" / "bucket" / "now.txt").exists()
+
+    def test_another_key_refuses_the_database_only(self, backup, tmp_path):
+        path = self._make(backup.module, tmp_path, key="k-old")
+        assert backup.module.restore(path, assume_yes=True) == 1
+        assert ("stop", "backend") not in backup.calls
+        assert backup.module.restore(path, assume_yes=True, parts=["files"]) == 0
+
+    def test_a_part_the_backup_lacks_is_refused(self, backup, tmp_path):
+        path = self._make(backup.module, tmp_path)
+        (path / "qdrant" / "kb_a.snapshot").unlink()
+        assert backup.module.restore(path, assume_yes=True, parts=["vectors"]) == 1
+        assert not backup.calls
+
+    def test_an_unsafe_archive_changes_nothing(self, backup, tmp_path):
+        path = self._make(backup.module, tmp_path, unsafe=True)
+        assert backup.module.restore(path, assume_yes=True, parts=["files"]) == 1
+        assert (backup.data_root / "minio" / "bucket" / "now.txt").read_text() == "current"
+        assert not (backup.data_root / "evil.txt").exists()
+
+
+class TestRunnerRestoreParts:
+    @pytest.fixture
+    def runner(self):
+        return load("ops_runner")
+
+    def test_parts_from_the_manifest(self, runner):
+        assert runner.restorable_parts(
+            {"artifacts": {"postgres.dump": {}, "qdrant": {"snapshots": 0}}}
+        ) == ["database"]
+        assert runner.restorable_parts(
+            {"artifacts": {"postgres.dump": {}, "minio.tar": {}, "qdrant": {"snapshots": 2}}}
+        ) == ["database", "files", "vectors"]
+
+    def test_parts_reach_the_command_line(self, runner, monkeypatch, tmp_path):
+        commands: list[list[str]] = []
+
+        def run(command, reporter, cwd=None):
+            commands.append([str(c) for c in command])
+            return 0
+
+        monkeypatch.setattr(runner, "run_command", run)
+        inventory = SimpleNamespace(
+            root=tmp_path, backup_path=lambda name: tmp_path / "backups" / name
+        )
+        reporter = SimpleNamespace(result={}, line=lambda text: None)
+        spec = {
+            "kind": "backup.restore",
+            "params": {"backup": "20261110T020000Z", "parts": ["files", "rm -rf /", "vectors"]},
+        }
+        assert runner.execute(spec, inventory, reporter, "python3")[0] == "SUCCEEDED"
+        assert commands[0][-2:] == ["--parts", "files,vectors"]
+        spec["params"] = {"backup": "20261110T020000Z"}
+        runner.execute(spec, inventory, reporter, "python3")
+        assert "--parts" not in commands[1]

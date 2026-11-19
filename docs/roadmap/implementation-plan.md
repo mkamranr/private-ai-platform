@@ -535,6 +535,13 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_knowledge_reindex.py`. Docs: [rag.md](../rag.md#rebuilding-a-whole-base), api.md.
 - [ ] Every document is re-embedded, even when some would not change; no incremental rebuild. A failed rebuild starts over. A document that keeps its old chunks because its original cannot be re-parsed is noted, not flagged on the document itself.
 
+## E60: Restore the stored files and vectors too (closes the feature-matrix restore gap)
+
+- [x] `scripts/backup.py restore --parts database,files,vectors` (default: every part the backup holds). Files: MinIO stopped, its data directory moved aside to `minio.before-restore-<time>` and replaced from `minio.tar`, whose entries are checked first (no absolute paths, `..`, links or devices). Vectors: each snapshot copied into Qdrant's snapshots directory and recovered with `PUT /collections/{name}/snapshots/recover` (`priority: snapshot`); with the database restored too, collections the backup lacks are deleted. The key check applies to the database part only.
+- [x] Runner: inventory reports `parts` per backup from its manifest; `backup.restore` passes `--parts`, filtered to the known names. API: `RestoreRequest.parts`, checked against the reported parts; params carry `parts` only when not the whole backup. Console: a checkbox per part in the restore dialog; a backup under another key can restore its files and vectors.
+- [x] Tests: `tests/unit/test_release_tooling.py` (`TestRestoreParts`, `TestRunnerRestoreParts`), `tests/api/test_ops.py` (`TestPartialRestore`). Docs: [backup.md](../backup.md#restore), operations.md, api.md.
+- [ ] No restore of one team or knowledge base. The previous MinIO directory is kept, not cleaned up. Not exercised against a live Qdrant in CI; the snapshot recovery path is covered by unit tests with the Docker calls replaced.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

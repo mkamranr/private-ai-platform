@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Restore brings back documents and search too
+- **A complete restore.** Restoring a backup now also brings back the stored original documents and the vector collections, not only the database. Search works straight after a restore, with no re-embedding.
+- **Or just some of it.** The restore dialog has a checkbox for *Database*, *Stored files* and *Vectors*; `scripts/backup.py restore` takes `--parts`. A backup taken under another encryption key can still restore its files and vectors.
+- The stored files a restore replaces are kept beside it (`data/minio.before-restore-<time>`) until you delete them.
+- **Upgrade.** Nothing to migrate. Update the ops runner on the host with the rest of the release; an older runner keeps restoring the database only.
+
 ### Rebuild a knowledge base with another model or chunk size
 - **No more new base and re-upload.** *Rebuild index…* on a knowledge base re-embeds every document with another embedding model, chunk size or overlap. A model change reuses the text already stored; a chunking change parses the stored originals again.
 - **No downtime.** The new index is built beside the current one, and searches keep using the current one until the new one is complete. Then the base switches over in one step. A progress banner shows how far it has got, and *Cancel rebuild* throws away what was built.

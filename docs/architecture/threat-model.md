@@ -467,8 +467,8 @@ platform can do. Without care, the API that triggers it becomes a path to the ho
   (`ops.runner_max_failures`).
 - The runner's host user needs Docker access, which is root-equivalent. Run it under a
   dedicated account, as `deploy/systemd/ai-platform-ops-runner.service` shows.
-- A restore is all-or-nothing, and Qdrant vectors are not restored automatically
-  (`docs/backup.md`).
+- A restore replaces whole parts (database, stored files, vectors); there is no restore of
+  one team or knowledge base (`docs/backup.md`).
 
 ## Follow-ups worth scheduling
 

@@ -29,6 +29,9 @@ class InventoryBackup(BaseModel):
     #: E23: whether the runner's off-host directory holds a complete copy. None when no
     #: copy directory is configured.
     copied: bool | None = None
+    #: E60: what a restore of it can bring back (``database``, ``files``, ``vectors``).
+    #: None from a runner older than E60.
+    parts: list[str] | None = None
 
 
 class InventoryBackupCopy(BaseModel):
@@ -190,6 +193,16 @@ class ConfirmedJobRequest(BaseModel):
 
     confirm: str = Field(min_length=1, max_length=128)
     reason: str = Field(min_length=3, max_length=1000)
+
+
+RestorePart = Literal["database", "files", "vectors"]
+RESTORE_PARTS: tuple[str, ...] = ("database", "files", "vectors")
+
+
+class RestoreRequest(ConfirmedJobRequest):
+    """E60: ``parts`` restores only some of a backup; omitted, everything it holds."""
+
+    parts: list[RestorePart] | None = Field(default=None, min_length=1)
 
 
 class UpgradeRequest(ConfirmedJobRequest):

@@ -307,7 +307,8 @@ async function renderBackups() {
       : pill(verify.status, verify.status === 'FAILED' ? 'Verify failed' : titleCase(verify.status));
     const key = b.key_matches === true ? pill('HEALTHY', 'Matches')
       : b.key_matches === false ? pill('FAILED', 'Different key') : pill('UNKNOWN', 'Unknown');
-    const restoreBlocked = !b.complete || b.key_matches === false;
+    // E60: a backup taken under another key can still restore its files and vectors.
+    const restoreBlocked = !b.complete;
     return `<tr>
       <td><div class="fw-medium font-monospace">${esc(b.name)}</div>
         <div class="small text-secondary">${esc(stampText(b.name))} · ${esc(stampAgo(b.name))}</div></td>
@@ -321,9 +322,8 @@ async function renderBackups() {
       <td class="text-end text-nowrap">
         <button class="btn btn-sm btn-outline-secondary" data-backup-verify="${esc(b.name)}" ${b.complete ? '' : 'disabled'}>Verify</button>
         ${canRestore ? `<button class="btn btn-sm btn-outline-danger" data-backup-restore="${esc(b.name)}"
-            ${restoreBlocked ? 'disabled' : ''} title="${restoreBlocked ? esc(b.key_matches === false
-              ? 'Taken under a different encryption key; restoring it would leave stored credentials unreadable.'
-              : 'Incomplete backup') : 'Replace the platform\'s data with this backup'}">Restore</button>` : ''}
+            ${restoreBlocked ? 'disabled' : ''} title="${restoreBlocked ? 'Incomplete backup'
+              : 'Replace some or all of the platform\'s data with this backup'}">Restore</button>` : ''}
       </td></tr>`;
   }).join('');
 
@@ -334,9 +334,9 @@ async function renderBackups() {
           : 'No backups reported. The runner reports what is on disk once it connects.')}</div>`) +
     sectionCard('Recent operations', 'Backups, verifications, retention and restores, with who asked and why.',
       `<div class="${backupJobs.length ? '' : 'card-body pt-0'}">${jobsTable(backupJobs, 'Nothing has been requested yet.')}</div>`) +
-    `<p class="small text-secondary">${icon('i-info')} A restore replaces the database and object storage with
-      the backup's, stops the API while it runs, and is all-or-nothing. Vector collections are
-      restored separately, see docs/backup.md.</p>`;
+    `<p class="small text-secondary">${icon('i-info')} A restore replaces the database, the stored files
+      and the vector collections with the backup's (or only the parts you tick), and stops the API
+      while it runs. See docs/backup.md.</p>`;
 
   wireJobButtons(body);
   createBtn.onclick = () => guard(createBtn, async () => {
@@ -356,6 +356,19 @@ async function renderBackups() {
     b.onclick = () => {
       const backup = items.find((x) => x.name === b.dataset.backupRestore);
       const verified = backup.last_verify?.status === 'SUCCEEDED';
+      // E60: parts. A runner older than E60 reports none; the backup then counts as whole.
+      const available = backup.parts || ['database', 'files', 'vectors'];
+      const labels = { database: 'Database', files: 'Stored files', vectors: 'Vectors' };
+      const partBoxes = ['database', 'files', 'vectors'].map((part) => {
+        const has = available.includes(part);
+        const blocked = !has || (part === 'database' && backup.key_matches === false);
+        const why = !has ? 'not in this backup' : blocked ? 'different encryption key' : '';
+        return `<div class="form-check form-check-inline mb-0">
+          <input class="form-check-input" type="checkbox" id="rp-${part}" data-restore-part="${part}"
+                 ${blocked ? 'disabled' : 'checked'}>
+          <label class="form-check-label" for="rp-${part}">${labels[part]}${why
+            ? ` <span class="text-secondary small">(${why})</span>` : ''}</label></div>`;
+      }).join('');
       confirmOps({
         title: 'Restore backup',
         expected: backup.name,
@@ -364,12 +377,19 @@ async function renderBackups() {
           <dt>Backup</dt><dd class="font-monospace">${esc(backup.name)}</dd>
           <dt>Taken</dt><dd>${esc(stampText(backup.name))} (${esc(stampAgo(backup.name))})</dd>
           <dt>Schema</dt><dd class="font-monospace">${esc(backup.schema_revision || '—')}</dd>
-          <dt>Verified</dt><dd>${verified ? 'Yes' : '<span class="text-danger">No, verify it first</span>'}</dd></dl>`,
-        warning: `${icon('i-alerts')} <b>This replaces all platform data</b> with the backup's. Everything
-          changed since ${esc(stampText(backup.name))} is lost, including users, keys and audit records.
-          The API stops while it runs. backup.py verifies the backup again before touching anything.`,
-        submit: (reason, confirm) => api(`/ops/backups/${encodeURIComponent(backup.name)}/restore`,
-          { method: 'POST', body: JSON.stringify({ reason, confirm }) }),
+          <dt>Verified</dt><dd>${verified ? 'Yes' : '<span class="text-danger">No, verify it first</span>'}</dd>
+          <dt>Restore</dt><dd>${partBoxes}</dd></dl>`,
+        warning: `${icon('i-alerts')} <b>The ticked parts are replaced</b> with the backup's. Restoring the
+          database loses everything changed since ${esc(stampText(backup.name))}, including users, keys and
+          audit records; restore the files and vectors with it, so documents and search match. The API
+          stops while it runs. backup.py verifies the backup again before touching anything.`,
+        submit: (reason, confirm) => {
+          const parts = [...document.querySelectorAll('[data-restore-part]:checked')]
+            .map((box) => box.dataset.restorePart);
+          if (!parts.length) throw new Error('Tick at least one part to restore.');
+          return api(`/ops/backups/${encodeURIComponent(backup.name)}/restore`,
+            { method: 'POST', body: JSON.stringify({ reason, confirm, parts }) });
+        },
       });
     };
   });

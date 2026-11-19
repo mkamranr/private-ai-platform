@@ -50,15 +50,38 @@ Python environment prepared first.
 
 ## Restore
 
-Stops the control plane first: it holds connections that would block the drop, and would
-otherwise be serving requests against a database being replaced underneath it. Then
-`pg_restore --clean --if-exists`, then starts it again.
+A restore brings back three parts. By default it restores every part the backup holds:
 
-**Qdrant snapshots are not restored automatically.** Qdrant recovers a snapshot through its
-own API against a running instance, and the vectors are re-derivable from the chunk text
-that has just been restored — so they are an optimisation, not the source of truth. Re-embed
-rather than hand-recovering snapshots unless the corpus is large enough to make that
-expensive.
+| Part | What | How |
+|---|---|---|
+| `database` | PostgreSQL | `pg_restore --clean --if-exists` |
+| `files` | Stored originals (MinIO) | MinIO stopped, its data directory replaced from `minio.tar`, started again |
+| `vectors` | Qdrant collections | Each snapshot copied into Qdrant's volume and recovered through its API |
+
+```
+python3 scripts/backup.py restore backups/20261110T020000Z            # everything
+python3 scripts/backup.py restore backups/20261110T020000Z --parts files,vectors
+```
+
+On the Backup & Restore page, *Restore* has a checkbox per part.
+
+* **The control plane is stopped** while the database and files are replaced. It holds
+  connections that would block the drop, and would otherwise serve requests (and write
+  files) against data being replaced underneath it. Vectors are recovered after it starts
+  again, because Qdrant is reached from the backend container.
+* **The files it replaces are kept**, moved to `data/minio.before-restore-<time>`. Delete
+  that directory once you're satisfied. A restore must never be what destroys the only copy
+  of something.
+* **The archive is checked before anything is touched.** An entry with an absolute path,
+  `..`, a link or a device refuses the whole files part, and MinIO is left as it was.
+* **With the database restored too, collections the backup doesn't have are deleted.**
+  Nothing in the restored database refers to them. Restoring only vectors deletes nothing.
+* **The encryption key check applies to the database only**, as that is what the key
+  protects. A backup taken under another key can still restore its files and vectors.
+* A database restored without its vectors gives searches that miss the restored documents.
+  The restore says so: rebuild each knowledge base (*Rebuild index*, ticking *Re-parse the
+  stored originals*, see [rag.md](rag.md#rebuilding-a-whole-base)) to re-embed from the
+  restored text. Backups taken before snapshots were captured need this.
 
 ## A trap worth knowing
 
@@ -171,4 +194,4 @@ OPS__BACKUP_COPY_S3_CA_FILE=/etc/ssl/certs/backup-store-ca.pem   # a private CA
 * No other remote protocols (SFTP, rsync): mount them as a directory instead.
 * Scheduling runs through the ops runner. Without the runner, use cron with `make backup`.
 * No incremental backups; every run is full.
-* Restore is all-or-nothing: there is no way to recover a single tenant or knowledge base.
+* No way to recover a single tenant or knowledge base: a restore replaces whole parts.

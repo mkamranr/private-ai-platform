@@ -40,6 +40,7 @@ from app.models.ops import JobKind, JobStatus, OpsJob, OpsRunner
 from app.repositories.ops import OpsJobRepository, OpsRunnerRepository
 from app.schemas.ops import (
     NAME_PATTERN,
+    RESTORE_PARTS,
     InventoryBackup,
     InventoryBundle,
     PreflightCheck,
@@ -383,20 +384,41 @@ class OpsService:
             JobKind.BACKUP_VERIFY, {"backup": name}, actor=actor, reason=reason
         )
 
-    async def request_restore(self, name: str, *, confirm: str, reason: str, actor: User) -> OpsJob:
+    async def request_restore(
+        self,
+        name: str,
+        *,
+        confirm: str,
+        reason: str,
+        actor: User,
+        parts: Sequence[str] | None = None,
+    ) -> OpsJob:
+        """Queue a restore of the whole backup, or (E60) only ``parts`` of it."""
         backup = await self._backup(name)
         self._check_confirm(confirm, name)
         if not backup.complete:
             raise ValidationError("This backup is incomplete and cannot be restored.")
-        if backup.key_matches is False:
-            # backup.py refuses this too; failing here saves a stopped platform.
+        chosen = [p for p in RESTORE_PARTS if p in set(parts)] if parts else None
+        if chosen is not None and backup.parts is not None:
+            missing = [p for p in chosen if p not in backup.parts]
+            if missing:
+                raise ValidationError(
+                    f"This backup holds no {', '.join(missing)}; it has "
+                    f"{', '.join(backup.parts) or 'nothing restorable'}.",
+                    details={"field": "parts", "available": backup.parts},
+                )
+        if (chosen is None or "database" in chosen) and backup.key_matches is False:
+            # backup.py refuses this too; failing here saves a stopped platform. Files and
+            # vectors are not encrypted with the key, so restoring only those is allowed.
             raise ValidationError(
-                "This backup was taken under a different encryption key. Restoring it would "
-                "leave every stored credential unreadable; see docs/backup.md."
+                "This backup was taken under a different encryption key. Restoring its "
+                "database would leave every stored credential unreadable; see "
+                "docs/backup.md. Its files and vectors can still be restored on their own."
             )
-        return await self._request(
-            JobKind.BACKUP_RESTORE, {"backup": name}, actor=actor, reason=reason
-        )
+        params: dict[str, Any] = {"backup": name}
+        if chosen is not None and chosen != (backup.parts or list(RESTORE_PARTS)):
+            params["parts"] = chosen
+        return await self._request(JobKind.BACKUP_RESTORE, params, actor=actor, reason=reason)
 
     # -- bundles, upgrades and rollbacks ----------------------------------------------
     async def bundles(self) -> tuple[list[InventoryBundle], RunnerInventory, bool]:
