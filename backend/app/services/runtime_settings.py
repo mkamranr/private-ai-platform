@@ -419,6 +419,12 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
     DeploymentSetting("security.encryption_key", "security", "Credential encryption key"),
     DeploymentSetting("security.argon2_time_cost", "security", "Password hashing time cost"),
     DeploymentSetting("agents.disabled_tool_types", "security", "Disabled tool types"),
+    DeploymentSetting("agents.database_allowed_hosts", "security", "SQL tool hosts"),
+    DeploymentSetting("agents.openapi_allowed_hosts", "security", "OpenAPI tool hosts"),
+    DeploymentSetting("agents.database_max_rows", "security", "SQL tool row limit"),
+    DeploymentSetting(
+        "agents.database_statement_timeout_seconds", "security", "SQL tool timeout (s)"
+    ),
     DeploymentSetting(
         "agents.approval_required_risk_levels", "security", "Risk levels needing approval"
     ),

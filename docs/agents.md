@@ -358,8 +358,6 @@ the personal data the tool was called to look up, and `audit.view` is broader st
   approval, write an `agent.run` row for the person who started the run and the agent's
   team. Those count toward team and model budgets but are not refused by them. See
   [gateway-policy.md](gateway-policy.md#the-platforms-own-model-calls).
-* **`DATABASE` and `OPENAPI` tools are catalogued but not executable.** They report
-  themselves unimplemented rather than pretending.
 * **Conversation history is not replayed into an agent.** Each run is a fresh
   authorisation with its own trace; feeding it turns it did not run would attribute
   someone else's messages to it. Multi-turn agent conversations need a decision about

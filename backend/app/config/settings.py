@@ -659,6 +659,16 @@ class AgentsSettings(BaseModel):
     # unrestricted shell execution. They stay off until a hardened executor
     # exists (see docs/security.md).
     disabled_tool_types: list[str] = Field(default_factory=lambda: ["COMMAND", "PYTHON"])
+    #: Connectors (E57). Hosts a DATABASE tool may connect to and an OPENAPI tool may call:
+    #: ``db.internal`` exactly, or ``*.corp.local`` for its subdomains. Empty (the default)
+    #: refuses every host, so neither connector reaches anything until the deployer says
+    #: where. Checked when a tool is saved and on every call.
+    database_allowed_hosts: list[str] = Field(default_factory=list)
+    openapi_allowed_hosts: list[str] = Field(default_factory=list)
+    #: Most rows a DATABASE tool returns per call; a template may ask for fewer.
+    database_max_rows: int = Field(default=200, ge=1, le=1000)
+    #: PostgreSQL ``statement_timeout`` for a DATABASE tool call, in seconds.
+    database_statement_timeout_seconds: int = Field(default=10, ge=1, le=300)
 
 
 class LoggingSettings(BaseModel):

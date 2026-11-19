@@ -628,7 +628,15 @@
         </div>
         <div id="mcp-body" class="mb-4"></div>
 
-        <h6 class="mb-2 text-secondary">Tools</h6>
+        <div class="d-flex align-items-center mb-2">
+          <h6 class="mb-0 text-secondary">Tools</h6>
+          <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal"
+                    data-bs-target="#sql-tool-modal">Add SQL tool</button>
+            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal"
+                    data-bs-target="#openapi-modal">Import OpenAPI</button>
+          </div>
+        </div>
         <div id="tools-body"></div>
       </section>
 
@@ -2566,6 +2574,129 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
           <button type="submit" class="btn btn-primary">Register</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="sql-tool-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="sql-tool-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Add SQL tool</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="sql-name">Name</label>
+              <input class="form-control mono" id="sql-name" placeholder="crm.customer_orders"
+                     required pattern="[A-Za-z0-9._-]+">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="sql-display">Display name</label>
+              <input class="form-control" id="sql-display" placeholder="Customer orders" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="sql-desc">Description</label>
+              <input class="form-control" id="sql-desc" required
+                     placeholder="Recent orders for one customer id, newest first.">
+              <div class="form-text small">Written for the model: it decides from this when to call the tool.</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="sql-sql">Query</label>
+              <textarea class="form-control mono" id="sql-sql" rows="5" required
+                placeholder="SELECT id, total, placed_at FROM orders WHERE customer_id = :customer_id ORDER BY placed_at DESC"></textarea>
+              <div class="form-text small">One SELECT (or WITH). <code>:name</code> marks a value the
+                model fills in; it is sent as a bound parameter, never as SQL text. Runs in a
+                read-only transaction with a timeout and a row limit.</div>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label small text-secondary" for="sql-dsn">Connection string</label>
+              <input class="form-control mono" id="sql-dsn" type="password" required
+                     placeholder="postgresql://reader:password@db.internal:5432/crm">
+              <div class="form-text small">PostgreSQL. Stored encrypted. Its host must be on
+                <code>AGENTS__DATABASE_ALLOWED_HOSTS</code>. Use a role that can only read what
+                this query needs.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="sql-rows">Row limit</label>
+              <input class="form-control" id="sql-rows" type="number" min="1" max="1000"
+                     placeholder="platform limit">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="sql-perm">Required permission</label>
+              <input class="form-control mono" id="sql-perm" value="tool.execute" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="sql-risk">Risk</label>
+              <select class="form-select" id="sql-risk">
+                <option>LOW</option><option selected>MEDIUM</option><option>HIGH</option><option>CRITICAL</option>
+              </select>
+            </div>
+          </div>
+          <div id="sql-tool-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="openapi-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="openapi-form">
+        <div class="modal-header">
+          <h5 class="modal-title">Import OpenAPI</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small text-secondary" for="oa-prefix">Prefix</label>
+              <input class="form-control mono" id="oa-prefix" placeholder="tickets" required
+                     pattern="[A-Za-z0-9_-]+">
+              <div class="form-text small">Tools are named <code>prefix.operation</code>.</div>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label small text-secondary" for="oa-base">Base URL</label>
+              <input class="form-control mono" id="oa-base"
+                     placeholder="from the spec's servers, if absolute">
+              <div class="form-text small">Its host must be on <code>AGENTS__OPENAPI_ALLOWED_HOSTS</code>.</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-secondary" for="oa-file">OpenAPI 3 document</label>
+              <input class="form-control form-control-sm mb-2" id="oa-file" type="file"
+                     accept=".json,.yaml,.yml">
+              <textarea class="form-control mono small" id="oa-spec" rows="6"
+                        placeholder="…or paste JSON or YAML"></textarea>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="oa-cred">API key or token</label>
+              <input class="form-control" id="oa-cred" type="password">
+              <div class="form-text small">Sent as <code>Authorization: Bearer …</code>. Stored encrypted.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary" for="oa-perm">Required permission</label>
+              <input class="form-control mono" id="oa-perm" value="tool.execute" required>
+            </div>
+          </div>
+          <div class="alert alert-secondary py-2 small mt-3 mb-0">
+            Each operation becomes a tool that arrives <strong>disabled</strong> at
+            <strong>HIGH</strong> risk. Review each one, enable what agents should use and set
+            its risk. Names that already exist are skipped.
+          </div>
+          <div id="openapi-error" class="alert alert-danger py-2 small mt-3 d-none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Import</button>
         </div>
       </form>
     </div>

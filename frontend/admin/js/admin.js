@@ -958,6 +958,8 @@ function toolRow(tool) {
         ${['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map((r) =>
           `<option ${r === tool.risk_level ? 'selected' : ''}>${r}</option>`).join('')}
       </select>
+      ${tool.mcp_server_id ? '' : `<button class="btn btn-sm btn-outline-danger ms-1"
+        data-tool-delete="${esc(tool.id)}" data-tool-name="${esc(tool.name)}">Delete</button>`}
     </td>
   </tr>`;
 }
@@ -1003,6 +1005,15 @@ function wireToolActions() {
       await api(`/tools/${button.dataset.toolToggle}`, {
         method: 'PUT', body: JSON.stringify({ enabled: button.dataset.enabled !== 'true' }),
       });
+      await renderTools();
+    });
+  });
+
+  document.querySelectorAll('[data-tool-delete]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      if (!confirm(`Delete ${button.dataset.toolName}?\n\nAgents granted it lose it at once.`)) return;
+      const result = await api(`/tools/${button.dataset.toolDelete}`, { method: 'DELETE' });
+      alert(result.message, 'success');
       await renderTools();
     });
   });
@@ -4970,6 +4981,56 @@ onModalSubmit('mcp-form', 'mcp-error', async (form) => {
 });
 
 /** Submit a modal form, showing failures inline rather than behind the modal. */
+onModalSubmit('sql-tool-form', 'sql-tool-error', async (form) => {
+  const config = { sql: document.getElementById('sql-sql').value.trim() };
+  if (numberField('sql-rows')) config.max_rows = numberField('sql-rows');
+  const tool = await api('/tools', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: field('sql-name'),
+      display_name: field('sql-display'),
+      description: field('sql-desc'),
+      type: 'DATABASE',
+      required_permission: field('sql-perm'),
+      risk_level: document.getElementById('sql-risk').value,
+      config,
+      credentials: document.getElementById('sql-dsn').value,
+    }),
+  });
+  closeModal('sql-tool-modal');
+  form.reset();
+  const params = Object.keys(tool.parameters_schema?.properties || {});
+  alert(`Added ${tool.name}${params.length ? ` (parameters: ${params.join(', ')}, as text)` : ''}. ` +
+    'Use Test to check the connection and query, then grant it to an agent.', 'success');
+  await renderTools();
+});
+
+document.getElementById('oa-file').onchange = async (event) => {
+  const file = event.target.files?.[0];
+  if (file) document.getElementById('oa-spec').value = await file.text();
+};
+
+onModalSubmit('openapi-form', 'openapi-error', async (form) => {
+  const spec = document.getElementById('oa-spec').value.trim();
+  if (!spec) throw new Error('Choose a file or paste the document.');
+  const result = await api('/tools/openapi/import', {
+    method: 'POST',
+    body: JSON.stringify({
+      spec,
+      prefix: field('oa-prefix'),
+      base_url: field('oa-base') || null,
+      credentials: document.getElementById('oa-cred').value || null,
+      required_permission: field('oa-perm'),
+    }),
+  });
+  closeModal('openapi-modal');
+  form.reset();
+  const skipped = result.skipped.length ? ` Skipped ${result.skipped.length}: ${result.skipped.join('; ')}.` : '';
+  alert(`${result.title}: ${result.created.length} tool(s) added, disabled at HIGH risk until ` +
+    `you review them.${skipped}`, result.created.length ? 'success' : 'warning');
+  await renderTools();
+});
+
 function onModalSubmit(formId, errorId, handler) {
   const form = document.getElementById(formId);
   form.onsubmit = async (event) => {

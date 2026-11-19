@@ -508,6 +508,16 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_document_access.py`. Docs: [rag.md](../rag.md#per-document-access), api.md.
 - [ ] No roles or groups from an identity provider as principals (users and teams only, by decision). No inheritance from a source system (SharePoint and the like). Memory is unaffected. Agents' own allow-lists still choose bases, not documents.
 
+## E57: First-party connectors: read-only SQL and OpenAPI (closes the feature-matrix connector gap)
+
+- [x] `services/connectors.py`. `DatabaseToolExecutor`: operator-written templates, `:name` compiled to `$n` outside quotes, comments and casts; asyncpg in a `READ ONLY` transaction with `SET LOCAL statement_timeout`; a cursor fetches `max_rows + 1`; values converted to the prepared statement's parameter types. `OpenApiToolExecutor`: path/query/header parameters and a JSON body, encoded path values, no redirects, 1 MB read cap. Minimal argument checks (required, unknown, scalar types) without a jsonschema dependency.
+- [x] Deployment settings `agents.database_allowed_hosts`, `agents.openapi_allowed_hosts` (empty refuses all; exact or `*.` suffix), `agents.database_max_rows` (200), `agents.database_statement_timeout_seconds` (10). Checked on save and per call. No migration.
+- [x] `POST /tools/openapi/import` (`tool.manage`): OpenAPI 3, JSON or YAML, one tool per operation, disabled at HIGH risk, existing names skipped, audited `OPENAPI_IMPORTED`. DATABASE tools validated on save (query only, one statement, declared placeholders, DSN host); a missing schema is derived from the placeholders.
+- [x] Fixed: `ToolPipeline.execute_approved` projected the tool without its encrypted credential, so agent REST and MCP calls went out unauthenticated. `executable_definition` is now the one projection used by the pipeline, the spec builder, *Test* and the workflow tool step.
+- [x] REST tools: outbound-URL policy on save and per call, redirects not followed.
+- [x] Console: *Add SQL tool*, *Import OpenAPI*, *Delete* on non-MCP tools. Tests: `tests/unit/test_connectors.py`, `tests/api/test_connector_tools.py`. Docs: [tools.md](../tools.md#connectors-sql-and-openapi), security.md, api.md, `.env.example`.
+- [ ] PostgreSQL only. No OpenAPI 2, OAuth flows, spec fetching from a URL or multipart bodies. The workflow tool step still runs executors directly (no `tool_executions` row). Full JSON Schema validation of arguments needs a dependency not in the bundle.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

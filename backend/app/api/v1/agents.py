@@ -41,6 +41,8 @@ from app.schemas.agents import (
     DiscoveryResponse,
     McpServerCreateRequest,
     McpServerRead,
+    OpenApiImportRequest,
+    OpenApiImportResponse,
     PendingApprovalRead,
     RunDetail,
     RunEventRead,
@@ -114,6 +116,42 @@ async def register_tool(
     )
     await guard.place(tool, payload.team_id)
     return _tool_read(tool)
+
+
+@router.post(
+    "/tools/openapi/import",
+    response_model=OpenApiImportResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Import an OpenAPI spec as tools",
+)
+async def import_openapi(
+    payload: OpenApiImportRequest,
+    service: ToolRegistryDep,
+    actor: Annotated[User, require_permission(Perm.TOOL_MANAGE)],
+    guard: ScopeGuardDep,
+) -> OpenApiImportResponse:
+    """One tool per operation (E57), each **disabled at HIGH risk** until reviewed. The
+    API's host must be on ``AGENTS__OPENAPI_ALLOWED_HOSTS``. Existing names are skipped."""
+    await guard.assignable(payload.team_id)
+    plan, created, skipped = await service.import_openapi(
+        spec=payload.spec,
+        base_url=payload.base_url,
+        prefix=payload.prefix,
+        required_permission=payload.required_permission,
+        credentials=payload.credentials,
+        auth_header=payload.auth_header,
+        auth_scheme=payload.auth_scheme,
+        timeout_seconds=payload.timeout_seconds,
+        actor=actor,
+    )
+    for tool in created:
+        await guard.place(tool, payload.team_id)
+    return OpenApiImportResponse(
+        title=plan.title,
+        base_url=plan.base_url,
+        created=[_tool_read(t) for t in created],
+        skipped=skipped,
+    )
 
 
 @router.put("/tools/{tool_id}", response_model=ToolRead, summary="Update a tool")

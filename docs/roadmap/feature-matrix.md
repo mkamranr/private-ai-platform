@@ -28,7 +28,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 20 | OIDC / LDAP / AD | P2 | Existing | `services/auth_providers.py`, `fixtures/oidc` | none |
 | 21 | Multi-host management | P2 | Existing | node enrollment, `services/node_enrollment.py` | none |
 | 22 | Advanced chargeback | P2 | Existing (E9) | `services/chargeback.py`, `api/v1/chargeback.py`, Chargeback page | Currency budgets and cost alerts; non-gateway costs (ingestion, tools, voice) |
-| 23 | Large connector catalogue | P2 | Existing (E10) | `mcp/manifests/` (7), `services/connector_catalogue.py`, `services/connector_manifest.py`, Connector Catalogue page | First-party connectors (read-only SQL, HTTP/OpenAPI with a destination allow-list) |
+| 23 | Large connector catalogue | P2 | Existing (E10) | `mcp/manifests/` (7), `services/connector_catalogue.py`, `services/connector_manifest.py`, Connector Catalogue page | More first-party connectors (read-only SQL and OpenAPI with a host allow-list: E57) |
 | 24 | Teams / tenant isolation | (5.12) | Existing (E3) | `models/teams.py`, `core/scope.py`, `services/teams.py`, Teams page | Agents and workflows checked against their own team at save, move and run time; memory, traces, voice and dashboard follow scope (E18) |
 | 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | ~~GPU-threshold alerts~~ (E52), ~~notification channels~~ (E13) |
 | 26 | Settings page | (§6) | Existing (E8) | `services/runtime_settings.py`, `api/v1/settings.py`, Settings page | More runtime settings as consumers move to per-request reads |

@@ -72,6 +72,39 @@ class ToolRead(ORMModel):
     requires_approval: bool = False
 
 
+class OpenApiImportRequest(BaseModel):
+    """Import an OpenAPI 3 document: one tool per operation, disabled at HIGH risk (E57)."""
+
+    spec: str | dict[str, Any] = Field(
+        description="The document, as JSON/YAML text or a JSON object. Not a URL: the "
+        "platform does not fetch specs."
+    )
+    base_url: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Where to call the API. Defaults to the spec's servers[0].url. Its host "
+        "must be on AGENTS__OPENAPI_ALLOWED_HOSTS.",
+    )
+    prefix: str = Field(
+        min_length=1,
+        max_length=48,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="Tool names become <prefix>.<operationId>.",
+    )
+    required_permission: str = Field(default="tool.execute", min_length=1, max_length=64)
+    credentials: str | None = Field(
+        default=None, description="Sent on every call; stored encrypted, never returned."
+    )
+    auth_header: str | None = Field(
+        default=None, max_length=64, description="Default Authorization."
+    )
+    auth_scheme: str | None = Field(
+        default=None, max_length=32, description='Default "Bearer"; "" sends the bare value.'
+    )
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
+    team_id: uuid.UUID | None = None
+
+
 class ToolUpdateRequest(BaseModel):
     """What an operator may change after registration.
 
@@ -89,6 +122,14 @@ class ToolUpdateRequest(BaseModel):
     credentials: str | None = None
     enabled: bool | None = None
     timeout_seconds: int | None = Field(default=None, ge=1, le=300)
+
+
+class OpenApiImportResponse(BaseModel):
+    title: str
+    base_url: str
+    created: list[ToolRead] = Field(default_factory=list)
+    #: Operations not imported, each with the reason.
+    skipped: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

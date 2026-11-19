@@ -6,6 +6,14 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### SQL and OpenAPI tools
+- **Let agents query a database, safely.** *Add SQL tool* on the Tools & MCP page saves a query you write, with `:name` placeholders the agent fills in. The agent never writes SQL. Every call is read-only, has a time limit and returns at most a set number of rows. PostgreSQL only.
+- **Turn an API into tools.** *Import OpenAPI* reads an OpenAPI 3 document and adds one tool per operation. Each arrives disabled at HIGH risk until you review and enable it.
+- **Only where you allow.** SQL and OpenAPI tools reach only hosts listed in `AGENTS__DATABASE_ALLOWED_HOSTS` and `AGENTS__OPENAPI_ALLOWED_HOSTS`. Both are empty by default, so nothing is reachable until you list hosts.
+- **Fixed: agent tools now send their credentials.** Agent calls to REST and MCP tools went out without the tool's stored token. Workflow tool steps were not affected.
+- REST tools now refuse cloud-metadata and link-local addresses, when saved and on every call, and no longer follow redirects. Tools you added yourself can now be deleted from the Tools page.
+- **Upgrade.** Nothing to migrate. To use the new tools, set the allow-lists in `.env` and restart.
+
 ### Restricted documents
 - **Keep a document to the people who should read it.** *Access* on a document's row restricts it to chosen users and teams. Everyone else, and the agents and workflows they run, no longer retrieve it or see it listed. Superusers still do. People who manage knowledge bases see it listed, marked *restricted*, but read it only if listed.
 - **Restrict from the start.** Tick *Only me* when uploading, or send `restricted`, `users` and `teams` with the upload, so the document is never open while it indexes.
