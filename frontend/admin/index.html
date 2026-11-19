@@ -939,7 +939,8 @@
           <div>
             <h4 class="mb-0">Retrieval Playground</h4>
             <p class="page-subtitle">See what retrieval returns for a question at every stage:
-              vector candidates, the reranker's reordering, and measured timings. Evaluation
+              vector candidates, the reranker's reordering, and measured timings; then the
+              answer a model writes from it and how faithful that answer is. Evaluation
               sets score the same thing over many labelled questions.</p>
           </div>
         </div>
@@ -947,6 +948,8 @@
         <ul class="nav nav-tabs mb-3" role="tablist">
           <li class="nav-item"><button class="nav-link active" data-pg-tab="try"
                 type="button">Playground</button></li>
+          <li class="nav-item"><button class="nav-link" data-pg-tab="history"
+                type="button">History</button></li>
           <li class="nav-item"><button class="nav-link" data-pg-tab="eval"
                 type="button">Evaluation sets</button></li>
         </ul>
@@ -991,6 +994,22 @@
                            list="reranker-models" placeholder="reranker alias">
                   </div>
                 </div>
+                <div class="row g-2 mt-1 align-items-end">
+                  <div class="col-sm-4">
+                    <label class="form-label small text-secondary mb-1" for="pg-answer-model">Answer with</label>
+                    <input class="form-control form-control-sm mono" id="pg-answer-model"
+                           list="chat-models" placeholder="no answer">
+                  </div>
+                  <div class="col-sm-4">
+                    <label class="form-label small text-secondary mb-1" for="pg-judge-model">Judge faithfulness with</label>
+                    <input class="form-control form-control-sm mono" id="pg-judge-model"
+                           list="chat-models" placeholder="not judged">
+                  </div>
+                  <div class="col-sm-4 small text-secondary">
+                    The answer an agent with these bases would write; the judge checks each
+                    of its claims against the passages.
+                  </div>
+                </div>
                 <div class="d-flex align-items-center gap-3 mt-3">
                   <button class="btn btn-primary btn-sm" id="pg-run">Retrieve</button>
                   <div class="form-check mb-0">
@@ -998,13 +1017,30 @@
                     <label class="form-check-label small" for="pg-compare">
                       Compare with vector order</label>
                   </div>
-                  <span class="small text-secondary">Nothing is stored. Empty fields use each
-                    base's own settings.</span>
+                  <span class="small text-secondary">Saved to your History. Empty fields use
+                    each base's own settings.</span>
                 </div>
               </div>
             </div>
           </div>
           <div id="pg-results"></div>
+        </div>
+
+        <div id="pg-tab-history" class="d-none">
+          <div class="d-flex align-items-end gap-2 mb-3 flex-wrap">
+            <div>
+              <label class="form-label small text-secondary mb-1" for="hist-base">Knowledge base</label>
+              <select class="form-select form-select-sm" id="hist-base" style="min-width:16rem"></select>
+            </div>
+            <div class="form-check mb-1 d-none" id="hist-everyone-wrap"
+                 title="Everyone's questions to this base. Their passages and answers stay private.">
+              <input class="form-check-input" type="checkbox" id="hist-everyone">
+              <label class="form-check-label small" for="hist-everyone">Everyone's questions</label>
+            </div>
+            <button class="btn btn-sm btn-outline-danger ms-auto" id="hist-clear">Delete my history</button>
+          </div>
+          <div id="hist-list"></div>
+          <div id="hist-detail" class="mt-3"></div>
         </div>
 
         <div id="pg-tab-eval" class="d-none">
@@ -1113,6 +1149,7 @@
 </div>
 
 <datalist id="reranker-models"></datalist>
+<datalist id="chat-models"></datalist>
 
 <!-- Knowledge base retrieval settings (E5) ------------------------------------>
 <div class="modal fade" id="kb-settings-modal" tabindex="-1">

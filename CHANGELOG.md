@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Check answers, not just passages
+- **See the answer.** In the Retrieval Playground, choose a model to answer with. You get the answer an agent using those knowledge bases would give, written from the passages shown.
+- **Faithfulness.** Choose a judge model too. It splits the answer into claims and checks each one against the passages, giving a score and a list of what's supported and what isn't. An answer that only says "the documents don't cover this" gets no score rather than a perfect one.
+- **Evaluation sets** can answer and judge every question. Questions with an expected answer are also scored for whether the answer agrees with it.
+- **History.** Every playground question is kept for 30 days (setting *Retrieval question history*; 0 keeps none). Open one to read it again, or replay it to compare then and now: which documents came and went, and whether the answer got more faithful. Knowledge managers can see what people ask a base, but not what they were shown.
+- **Upgrade.** Migration `f6b8d0a2c4e5` adds one table.
+
 ### Change a model without taking it down
 - **No downtime by default.** Changing a deployment's settings (engine image, context length, memory) no longer takes the model offline. If another copy is running, it keeps serving while this one restarts. If this is the only copy, a new copy starts on free GPUs and takes over once it's healthy. If there's no room for a second copy, the old behaviour applies, and you're told the model will be down while it loads.
 - **Every copy in one go.** Tick *Every copy, one at a time* in the Revisions dialog to change all copies of a model. Each waits for the one before to be healthy again; if one fails, the rest keep their old settings.

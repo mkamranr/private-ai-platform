@@ -758,6 +758,7 @@ body.app-active main {
   background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis);
 }
 .pg-move { font-size: .72rem; font-weight: 600; color: var(--bs-secondary-color); }
+.pg-answer { white-space: pre-wrap; font-size: .9rem; }
 .pg-move.up, .pg-delta.up { color: #15803d; }
 .pg-move.down, .pg-delta.down { color: #b91c1c; }
 [data-bs-theme="dark"] .pg-move.up, [data-bs-theme="dark"] .pg-delta.up { color: #4ade80; }

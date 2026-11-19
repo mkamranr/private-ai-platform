@@ -7,25 +7,29 @@ many labelled questions at once, so a change of settings can be measured.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from dataclasses import asdict
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Path, status
+from fastapi import APIRouter, Path, Query, status
 
 from app.api.deps import (
     KnowledgeServiceDep,
+    PlaygroundServiceDep,
     RagEvalServiceDep,
     ScopeGuardDep,
     require_permission,
 )
 from app.api.routing import CommittingRoute
+from app.core.errors import PermissionDeniedError, ValidationError
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
-from app.models.knowledge import RagEvalSet
+from app.models.knowledge import RagEvalSet, RetrievalQuery
 from app.schemas.common import MessageResponse
 from app.schemas.knowledge import SearchResultRead
 from app.schemas.retrieval import (
+    AnswerRead,
     EvalCaseCreate,
     EvalCaseRead,
     EvalRunDetail,
@@ -36,13 +40,26 @@ from app.schemas.retrieval import (
     EvalSetRead,
     EvalSetUpdate,
     ExpectedDocument,
+    HistoryDetail,
+    HistoryRead,
+    HistoryResultRead,
     PlaygroundRequest,
     PlaygroundResponse,
+    ReplayChanges,
+    ReplayResponse,
     RetrievalRunRead,
     RetrievalSettings,
+    VerdictRead,
 )
 from app.services.knowledge import RERANK_DEFAULT, RetrievalTrace
 from app.services.rag_eval import RagEvalService, RunSettings
+from app.services.retrieval_playground import (
+    PlaygroundAsk,
+    PlaygroundOutcome,
+    PlaygroundService,
+    changes,
+)
+from app.services.teams import ScopeGuard
 
 router = APIRouter(tags=["retrieval"], route_class=CommittingRoute)
 
@@ -71,6 +88,38 @@ def _run_read(trace: RetrievalTrace) -> RetrievalRunRead:
 # ---------------------------------------------------------------------------
 # Playground
 # ---------------------------------------------------------------------------
+def _answer_reads(outcome: PlaygroundOutcome) -> dict[str, Any]:
+    return {
+        "answer": AnswerRead(**asdict(outcome.answer)) if outcome.answer else None,
+        "answer_error": outcome.answer_error,
+        "verdict": VerdictRead(**outcome.verdict.as_dict()) if outcome.verdict else None,
+        "judge_error": outcome.judge_error,
+        "history_id": outcome.entry.id if outcome.entry else None,
+    }
+
+
+def _playground_response(ask: PlaygroundAsk, outcome: PlaygroundOutcome) -> PlaygroundResponse:
+    return PlaygroundResponse(
+        query=ask.query,
+        knowledge_bases=[b.name for b in ask.bases],
+        run=_run_read(outcome.trace),
+        baseline=_run_read(outcome.baseline) if outcome.baseline else None,
+        **_answer_reads(outcome),
+    )
+
+
+async def _check_models(guard: ScopeGuard, ask: PlaygroundAsk) -> None:
+    """E18: every model named must be one the caller's teams may use."""
+    reranker = ask.reranker
+    for name in (
+        reranker if reranker not in (None, RERANK_DEFAULT) else None,
+        ask.answer_model,
+        ask.judge_model,
+    ):
+        if name:
+            await guard.model_name(name)
+
+
 @router.post(
     "/retrieval/playground",
     response_model=PlaygroundResponse,
@@ -78,7 +127,8 @@ def _run_read(trace: RetrievalTrace) -> RetrievalRunRead:
 )
 async def retrieval_playground(
     payload: PlaygroundRequest,
-    service: KnowledgeServiceDep,
+    knowledge: KnowledgeServiceDep,
+    playground: PlaygroundServiceDep,
     actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
     guard: ScopeGuardDep,
 ) -> PlaygroundResponse:
@@ -87,47 +137,208 @@ async def retrieval_playground(
     Returns the vector candidates, the final results (reranked when a reranker applies),
     measured timings per stage and any warnings, such as a reranker that failed and left
     the results in vector order. ``compare`` also returns the same query without
-    reranking. Nothing is stored.
+    reranking.
+
+    E62: ``answer_model`` also writes the answer an agent would give from the results, and
+    ``judge_model`` scores its faithfulness to them, claim by claim. A model that fails is
+    reported in ``answer_error``/``judge_error`` beside the results. The question is saved
+    to the caller's history unless ``knowledge.query_history_days`` is 0.
     """
     bases = []
     for base_id in dict.fromkeys(payload.knowledge_base_ids):
         await guard.knowledge_base(base_id)
-        bases.append(await service.get_base(base_id))
-    reranker = _reranker(payload)
-    if reranker not in (None, RERANK_DEFAULT):
-        await guard.model_name(reranker)
-    reader = await service.reader_for(actor)
-    trace = await service.retrieve(
-        bases,
-        payload.query,
+        bases.append(await knowledge.get_base(base_id))
+    ask = PlaygroundAsk(
+        bases=bases,
+        query=payload.query,
         top_k=payload.top_k,
         candidates=payload.candidates,
         score_threshold=payload.score_threshold,
-        reranker=reranker,
-        user_id=actor.id,
-        purpose="retrieval.playground",
-        reader=reader,
+        reranker_mode=payload.reranker,
+        reranker_model=payload.reranker_model,
+        compare=payload.compare,
+        answer_model=payload.answer_model,
+        judge_model=payload.judge_model,
     )
-    baseline = None
-    if payload.compare and trace.reranked:
-        baseline = _run_read(
-            await service.retrieve(
-                bases,
-                payload.query,
-                top_k=trace.top_k,
-                score_threshold=payload.score_threshold,
-                reranker=None,
-                user_id=actor.id,
-                purpose="retrieval.playground",
-                reader=reader,
-            )
-        )
-    return PlaygroundResponse(
-        query=payload.query,
-        knowledge_bases=[b.name for b in bases],
-        run=_run_read(trace),
-        baseline=baseline,
+    await _check_models(guard, ask)
+    outcome = await playground.ask(ask, actor=actor, reader=await knowledge.reader_for(actor))
+    return _playground_response(ask, outcome)
+
+
+# ---------------------------------------------------------------------------
+# Question history (E62)
+# ---------------------------------------------------------------------------
+def _manager(user: User) -> bool:
+    return user.is_superuser or Perm.KNOWLEDGE_MANAGE in user.effective_permissions
+
+
+def _history_read(entry: RetrievalQuery, actor: User, names: dict[uuid.UUID, str]) -> HistoryRead:
+    return HistoryRead(
+        id=entry.id,
+        user_id=entry.user_id,
+        username=names.get(entry.user_id) if entry.user_id else None,
+        mine=entry.user_id == actor.id,
+        query=entry.query,
+        knowledge_base_ids=entry.knowledge_base_ids,
+        knowledge_base_names=entry.knowledge_base_names,
+        settings=entry.settings,
+        reranker=entry.reranker,
+        result_count=len(entry.results),
+        answer_model=entry.answer_model,
+        judge_model=entry.judge_model,
+        faithfulness=entry.faithfulness,
+        replay_of=entry.replay_of,
+        created_at=entry.created_at,
     )
+
+
+def _history_detail(
+    entry: RetrievalQuery, actor: User, names: dict[uuid.UUID, str]
+) -> HistoryDetail:
+    """Another person's question without its passage text, answer or claims: they were
+    retrieved under the asker's document access, which the viewer may not share."""
+    mine = entry.user_id == actor.id
+    results = [HistoryResultRead(**r) for r in entry.results]
+    if not mine:
+        for result in results:
+            result.text = None
+    verdict = entry.verdict
+    if verdict and not mine:
+        verdict = {k: v for k, v in verdict.items() if k not in {"claims", "correctness_reason"}}
+    return HistoryDetail(
+        **_history_read(entry, actor, names).model_dump(),
+        results=results,
+        timings_ms=entry.timings_ms,
+        warnings=entry.warnings,
+        answer=entry.answer if mine else None,
+        verdict=verdict,
+    )
+
+
+@router.get(
+    "/retrieval/history",
+    response_model=list[HistoryRead],
+    summary="List saved playground questions",
+)
+async def list_history(
+    playground: PlaygroundServiceDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
+    knowledge_base_id: uuid.UUID | None = Query(default=None),
+    everyone: bool = Query(
+        default=False,
+        description=(
+            "Everyone's questions to knowledge_base_id, not only yours. Needs "
+            "knowledge.manage and a knowledge_base_id."
+        ),
+    ),
+    before: dt.datetime | None = Query(default=None, description="Older than this; paging."),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[HistoryRead]:
+    """Your questions, newest first; optionally only those that searched one base."""
+    if everyone:
+        if not _manager(actor):
+            raise PermissionDeniedError("Everyone's questions need knowledge.manage.")
+        if knowledge_base_id is None:
+            raise ValidationError("Everyone's questions are listed for one knowledge base.")
+    if knowledge_base_id is not None:
+        await guard.knowledge_base(knowledge_base_id)
+    entries = await playground.history(
+        actor,
+        everyone=everyone,
+        knowledge_base_id=knowledge_base_id,
+        before=before,
+        limit=limit,
+    )
+    names = await playground.usernames(entries)
+    return [_history_read(e, actor, names) for e in entries]
+
+
+async def _visible_entry(
+    playground: PlaygroundService, guard: ScopeGuard, actor: User, entry_id: uuid.UUID
+) -> RetrievalQuery:
+    entry = await playground.entry(entry_id, actor, may_see_all=_manager(actor))
+    if entry.user_id != actor.id:
+        # Another person's question only through a base the manager can see.
+        for value in entry.knowledge_base_ids:
+            await guard.knowledge_base(uuid.UUID(value))
+    return entry
+
+
+@router.get(
+    "/retrieval/history/{entry_id}",
+    response_model=HistoryDetail,
+    summary="Get a saved playground question",
+)
+async def get_history_entry(
+    playground: PlaygroundServiceDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
+    entry_id: uuid.UUID = Path(...),
+) -> HistoryDetail:
+    entry = await _visible_entry(playground, guard, actor, entry_id)
+    return _history_detail(entry, actor, await playground.usernames([entry]))
+
+
+@router.post(
+    "/retrieval/history/{entry_id}/replay",
+    response_model=ReplayResponse,
+    summary="Ask a saved question again",
+)
+async def replay_history_entry(
+    knowledge: KnowledgeServiceDep,
+    playground: PlaygroundServiceDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
+    entry_id: uuid.UUID = Path(...),
+) -> ReplayResponse:
+    """The same question, settings and models against today's documents, under your own
+    document access. Saved as a new question linked to the old one; ``changes`` lists the
+    documents gained and lost and the faithfulness before and after."""
+    entry = await _visible_entry(playground, guard, actor, entry_id)
+    ask = await playground.replay_ask(entry)
+    for base in ask.bases:
+        await guard.knowledge_base(base.id)
+    await _check_models(guard, ask)
+    outcome = await playground.ask(
+        ask, actor=actor, reader=await knowledge.reader_for(actor), replay_of=entry.id
+    )
+    names = await playground.usernames([entry])
+    return ReplayResponse(
+        previous=_history_detail(entry, actor, names),
+        current=_playground_response(ask, outcome),
+        changes=ReplayChanges(**changes(entry, outcome.entry)) if outcome.entry else None,
+    )
+
+
+@router.delete(
+    "/retrieval/history/{entry_id}",
+    response_model=MessageResponse,
+    summary="Delete a saved playground question",
+)
+async def delete_history_entry(
+    playground: PlaygroundServiceDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+    guard: ScopeGuardDep,
+    entry_id: uuid.UUID = Path(...),
+) -> MessageResponse:
+    """Your own question; a knowledge.manage holder may delete anyone's to a base they see."""
+    entry = await _visible_entry(playground, guard, actor, entry_id)
+    await playground.delete(entry, actor, may_see_all=_manager(actor))
+    return MessageResponse(message="Question deleted.")
+
+
+@router.delete(
+    "/retrieval/history",
+    response_model=MessageResponse,
+    summary="Delete all your saved playground questions",
+)
+async def clear_history(
+    playground: PlaygroundServiceDep,
+    actor: Annotated[User, require_permission(Perm.KNOWLEDGE_VIEW)],
+) -> MessageResponse:
+    deleted = await playground.clear(actor)
+    return MessageResponse(message=f"{deleted} question(s) deleted.")
 
 
 # ---------------------------------------------------------------------------
@@ -325,11 +536,19 @@ async def run_eval_set(
     Synchronous, up to 100 questions. Hit rate, recall, precision and MRR are over the
     labelled questions; per-question results, timings and warnings are stored with the run
     so it stays comparable after the documents change.
+
+    E62: ``answer_model`` writes each answer (the first 50 questions), and ``judge_model``
+    scores faithfulness and, against an expected answer, correctness.
     """
     await _scoped_set(service, guard, set_id)
     reranker = _reranker(payload)
-    if reranker not in (None, RERANK_DEFAULT):
-        await guard.model_name(reranker)
+    for name in (
+        reranker if reranker not in (None, RERANK_DEFAULT) else None,
+        payload.answer_model,
+        payload.judge_model,
+    ):
+        if name:
+            await guard.model_name(name)
     run = await service.run(
         set_id,
         RunSettings(
@@ -337,6 +556,8 @@ async def run_eval_set(
             candidates=payload.candidates,
             score_threshold=payload.score_threshold,
             reranker=reranker,
+            answer_model=payload.answer_model,
+            judge_model=payload.judge_model,
         ),
         actor=actor,
     )

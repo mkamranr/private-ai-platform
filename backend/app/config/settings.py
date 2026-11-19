@@ -618,6 +618,10 @@ class KnowledgeSettings(BaseModel):
     #: English identifiers is the normal case here, not an edge one.
     ocr_languages: list[str] = Field(default_factory=lambda: ["en", "ar"])
 
+    #: Days a retrieval-playground question is kept in its asker's history (E62), with its
+    #: passages, answer and verdict. 0: questions are not kept at all. Pruned hourly.
+    query_history_days: int = 30
+
 
 class McpSettings(BaseModel):
     #: Where MCP server manifests live, mounted into the container. Declarative

@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.scope import Scope
 from app.models.agents import Agent
+from app.models.auth import User
 from app.models.knowledge import (
     Conversation,
     ConversationMessage,
@@ -27,6 +28,7 @@ from app.models.knowledge import (
     RagEvalRun,
     RagEvalSet,
     ReindexState,
+    RetrievalQuery,
     StagedChunk,
 )
 from app.repositories.base import BaseRepository
@@ -540,6 +542,52 @@ class RagEvalRunRepository(BaseRepository[RagEvalRun]):
             .limit(limit)
         )
         return (await self.session.execute(stmt)).scalars().all()
+
+
+class RetrievalQueryRepository(BaseRepository[RetrievalQuery]):
+    """Playground query history (E62)."""
+
+    model = RetrievalQuery
+
+    async def list_for(
+        self,
+        *,
+        user_id: uuid.UUID | None = None,
+        knowledge_base_id: uuid.UUID | None = None,
+        before: dt.datetime | None = None,
+        limit: int = 50,
+    ) -> Sequence[RetrievalQuery]:
+        """Newest first. ``user_id``: that person's questions only; ``knowledge_base_id``:
+        questions that searched that base (alone or with others)."""
+        stmt = select(RetrievalQuery)
+        if user_id is not None:
+            stmt = stmt.where(RetrievalQuery.user_id == user_id)
+        if knowledge_base_id is not None:
+            stmt = stmt.where(RetrievalQuery.knowledge_base_ids.contains([str(knowledge_base_id)]))
+        if before is not None:
+            stmt = stmt.where(RetrievalQuery.created_at < before)
+        stmt = stmt.order_by(RetrievalQuery.created_at.desc(), RetrievalQuery.id).limit(limit)
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def usernames(self, user_ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
+        if not user_ids:
+            return {}
+        rows = await self.session.execute(
+            select(User.id, User.username).where(User.id.in_(user_ids))
+        )
+        return {row.id: row.username for row in rows}
+
+    async def delete_for_user(self, user_id: uuid.UUID) -> int:
+        result = await self.session.execute(
+            delete(RetrievalQuery).where(RetrievalQuery.user_id == user_id)
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def prune(self, *, older_than: dt.datetime) -> int:
+        result = await self.session.execute(
+            delete(RetrievalQuery).where(RetrievalQuery.created_at < older_than)
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 class KnowledgeReindexRepository(BaseRepository[KnowledgeReindex]):

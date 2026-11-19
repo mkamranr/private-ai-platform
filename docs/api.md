@@ -689,12 +689,16 @@ Under `/api/v1`, authenticated with the platform JWT. See
 | GET | `/knowledge-bases/{id}/reindex` | `knowledge.view`. The running rebuild, else the latest; `null` if none. `state` (`RUNNING`/`DONE`/`FAILED`/`CANCELLED`), `done_documents`/`total_documents`, `retry_at` and `error` while paused by a budget, `notes`, `previous` settings |
 | DELETE | `/knowledge-bases/{id}/reindex` | `knowledge.manage`. Cancels the running rebuild and deletes what it built; 404 if none |
 | POST | `/documents/{id}/reingest` | `document.upload`. **202**; terminal, current documents only. Clears `retry_at` (when a budget-refused document will be retried by itself) |
-| POST | `/retrieval/playground` | `knowledge.view`. `knowledge_base_ids`, `query`, `top_k`, `candidates`, `score_threshold`, `reranker` (`default`/`none`/`model`), `reranker_model`, `compare` |
+| POST | `/retrieval/playground` | `knowledge.view`. `knowledge_base_ids`, `query`, `top_k`, `candidates`, `score_threshold`, `reranker` (`default`/`none`/`model`), `reranker_model`, `compare`, `answer_model`, `judge_model` (needs `answer_model`). Adds `answer`, `verdict` (faithfulness and claims), `answer_error`, `judge_error`, `history_id` |
+| GET | `/retrieval/history` | `knowledge.view`. Your saved questions; `knowledge_base_id`, `everyone` (`knowledge.manage`, with a base), `before`, `limit` |
+| GET / DELETE | `/retrieval/history/{id}` | `knowledge.view`. Another person's question only for `knowledge.manage`, without its passage text, answer or claims |
+| POST | `/retrieval/history/{id}/replay` | `knowledge.view`. Asks it again; returns `previous`, `current` and `changes` |
+| DELETE | `/retrieval/history` | `knowledge.view`. Deletes all your saved questions |
 | GET / POST | `/knowledge-bases/{id}/eval-sets` | `knowledge.view` / `knowledge.manage` |
 | GET / PATCH / DELETE | `/eval-sets/{id}` | `knowledge.view` / `knowledge.manage` / `knowledge.manage` |
 | POST | `/eval-sets/{id}/cases` | `knowledge.manage` |
 | DELETE | `/eval-sets/{id}/cases/{case_id}` | `knowledge.manage` |
-| GET / POST | `/eval-sets/{id}/runs` | `knowledge.view` / `knowledge.manage`. A run is synchronous, up to 100 questions |
+| GET / POST | `/eval-sets/{id}/runs` | `knowledge.view` / `knowledge.manage`. A run is synchronous, up to 100 questions. `answer_model` and `judge_model` add answers (first 50), faithfulness and correctness |
 | GET | `/eval-runs/{id}` | `knowledge.view` |
 
 Changes to existing routes, all backwards-compatible:

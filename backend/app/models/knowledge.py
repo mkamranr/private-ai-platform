@@ -462,7 +462,7 @@ class RagEvalCase(UUIDPrimaryKeyMixin, Base):
     #: Document *lineages* that answer it, so a case keeps working after a new version of
     #: the document is uploaded. Empty: unlabelled, run but left out of the metrics.
     expected_lineage_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    #: For the reader of a run. Not scored: scoring an answer needs a judge model.
+    #: Shown with a run's results; scored for correctness when a run has a judge (E62).
     expected_answer: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -494,6 +494,48 @@ class RagEvalRun(UUIDPrimaryKeyMixin, Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     started_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
+class RetrievalQuery(UUIDPrimaryKeyMixin, Base):
+    """One question asked in the retrieval playground, kept so it can be read again and
+    replayed (E62).
+
+    Stored as it was answered: the passages (text shortened), the answer and the judge's
+    verdict. A later change of documents or settings shows up as a difference when the
+    question is replayed, rather than rewriting what was seen at the time. Kept for
+    ``knowledge.query_history_days``; the knowledge bases are referenced by id and name,
+    not by foreign key, so deleting a base leaves its history readable until it expires.
+    """
+
+    __tablename__ = "retrieval_queries"
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    knowledge_base_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    knowledge_base_names: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    #: What was asked for: top_k, candidates, score_threshold, reranker, reranker_model,
+    #: compare, answer_model, judge_model.
+    settings: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    #: The final passages, in order, each with its text shortened.
+    results: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    reranker: Mapped[str | None] = mapped_column(String(128))
+    timings_ms: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    warnings: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    answer: Mapped[str | None] = mapped_column(Text)
+    answer_model: Mapped[str | None] = mapped_column(String(128))
+    judge_model: Mapped[str | None] = mapped_column(String(128))
+    #: Supported claims over all claims, 0..1. NULL: not judged, or no claims to judge.
+    faithfulness: Mapped[float | None] = mapped_column(Float)
+    #: The judge's claims, or why judging failed.
+    verdict: Mapped[dict | None] = mapped_column(JSONB)
+    replay_of: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("retrieval_queries.id", ondelete="SET NULL")
     )
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True

@@ -551,6 +551,16 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_zero_downtime_revisions.py` (strategies, handover, failed copy, stuck old container, GPU placement and release, rollouts). Docs: [model-governance.md](../model-governance.md#without-downtime), api.md.
 - [ ] No weighted or gradual traffic shift: the switch happens when the new copy is healthy. Health is the runtime's readiness check, not a canary of real traffic. A rollout runs one copy at a time, never several. External runtimes are not managed, so not revised.
 
+## E62: Answer faithfulness and question history (closes the feature-matrix judge and history gap)
+
+- [x] `services/answer_quality.py`: an answer written from the retrieved passages with the agent's own context block (`retrieval.context_block_for`), and a judge that splits it into claims and checks each against the numbered passages. Faithfulness = supported / claims; no claims gives no score. With a reference answer, correctness agrees/partial/disagrees (1/0.5/0). Calls go through the gateway: scope, budgets, usage rows `retrieval.answer` and `retrieval.judge`.
+- [x] Playground: `answer_model`, `judge_model`; `answer`, `verdict`, `answer_error`, `judge_error`, `history_id`. A failing model is reported beside the passages.
+- [x] Evaluation runs: `answer_model`, `judge_model`; per-question answers and claims; summary `faithfulness`, `correctness`, `answered`, `judged`, `answer_errors`, `with_reference`, `not_answered` (first 50 answered).
+- [x] `retrieval_queries` (migration `f6b8d0a2c4e5`) and `services/retrieval_playground.py`: each question saved with settings, passages, answer and verdict; `GET/DELETE /retrieval/history`, `GET/DELETE /retrieval/history/{id}`, `POST /retrieval/history/{id}/replay` (documents gained/lost by lineage, faithfulness before/after). Personal; `knowledge.manage` lists everyone's questions to a base without their passage text, answer or claims. Runtime setting `knowledge.query_history_days` (30; 0 keeps none), pruned hourly by the scheduler.
+- [x] Console: answer and judge boxes, the answer card with its claims, a History tab with Replay (then and now side by side), faithfulness and correctness columns in evaluation runs.
+- [x] Tests: `tests/api/test_answer_quality.py`. Docs: [rag-evaluation.md](../rag-evaluation.md#the-answer-and-how-faithful-it-is), api.md, settings.md.
+- [ ] The judge isn't validated against human ratings. Live agent answers aren't scored. Evaluation runs stay synchronous.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and
