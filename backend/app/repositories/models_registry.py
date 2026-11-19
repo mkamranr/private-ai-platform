@@ -15,12 +15,14 @@ from app.models.models_registry import (
     ApiClient,
     ApiKey,
     DeploymentRevision,
+    DeploymentRollout,
     DeploymentState,
     Model,
     ModelAlias,
     ModelApprovalStatus,
     ModelDeployment,
     ModelFile,
+    RolloutState,
     UsageRecord,
 )
 from app.repositories.base import BaseRepository
@@ -141,6 +143,21 @@ class ModelDeploymentRepository(BaseRepository[ModelDeployment]):
                 ModelDeployment.state.notin_([DeploymentState.STOPPED, DeploymentState.FAILED]),
             )
             .options(selectinload(ModelDeployment.model))
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def successors_of(self, deployment_id: uuid.UUID) -> Sequence[ModelDeployment]:
+        """E61: new copies taking over from ``deployment_id``."""
+        stmt = select(ModelDeployment).where(ModelDeployment.replaces_id == deployment_id)
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def finished_successors(self) -> Sequence[ModelDeployment]:
+        """E61: new copies that are healthy, or failed: their handover can be finished."""
+        stmt = select(ModelDeployment).where(
+            ModelDeployment.replaces_id.is_not(None),
+            ModelDeployment.state.in_(
+                [DeploymentState.RUNNING, DeploymentState.FAILED, DeploymentState.STOPPED]
+            ),
         )
         return (await self.session.execute(stmt)).scalars().all()
 
@@ -517,3 +534,37 @@ class UsageRepository(BaseRepository[UsageRecord]):
     async def recent(self, *, limit: int = 50) -> Sequence[UsageRecord]:
         stmt = select(UsageRecord).order_by(UsageRecord.recorded_at.desc()).limit(limit)
         return (await self.session.execute(stmt)).scalars().all()
+
+
+class DeploymentRolloutRepository(BaseRepository[DeploymentRollout]):
+    """Model-wide rollouts (E61)."""
+
+    model = DeploymentRollout
+
+    async def running(self) -> Sequence[DeploymentRollout]:
+        stmt = (
+            select(DeploymentRollout)
+            .where(DeploymentRollout.state == RolloutState.RUNNING)
+            .order_by(DeploymentRollout.created_at)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def running_for_model(self, model_id: uuid.UUID) -> DeploymentRollout | None:
+        stmt = select(DeploymentRollout).where(
+            DeploymentRollout.model_id == model_id,
+            DeploymentRollout.state == RolloutState.RUNNING,
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
+    async def latest_for_model(self, model_id: uuid.UUID) -> DeploymentRollout | None:
+        """The running rollout, else the most recent one."""
+        running = await self.running_for_model(model_id)
+        if running is not None:
+            return running
+        stmt = (
+            select(DeploymentRollout)
+            .where(DeploymentRollout.model_id == model_id)
+            .order_by(DeploymentRollout.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalars().first()

@@ -112,9 +112,6 @@ class DeploymentWorker:
         try:
             async with self._session_factory() as session:
                 pending = await ModelDeploymentRepository(session).list_pending()
-                if not pending:
-                    return
-
                 service = self._service(session)
                 for deployment in pending:
                     key = str(deployment.id)
@@ -147,6 +144,12 @@ class DeploymentWorker:
                         and str(before) != DeploymentState.FAILED
                     ):
                         await self._alert_failed(session, deployment)
+
+                # E61: a new copy that came up hands over to the deployment it replaces
+                # (or is removed if it failed), then each rollout moves to its next copy.
+                # In the same pass, so a handover is seen by the rollout waiting on it.
+                await service.complete_handovers()
+                await service.rollouts().step()
 
                 await session.commit()
         except Exception:

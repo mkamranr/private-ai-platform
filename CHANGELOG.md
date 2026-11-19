@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Change a model without taking it down
+- **No downtime by default.** Changing a deployment's settings (engine image, context length, memory) no longer takes the model offline. If another copy is running, it keeps serving while this one restarts. If this is the only copy, a new copy starts on free GPUs and takes over once it's healthy. If there's no room for a second copy, the old behaviour applies, and you're told the model will be down while it loads.
+- **Every copy in one go.** Tick *Every copy, one at a time* in the Revisions dialog to change all copies of a model. Each waits for the one before to be healthy again; if one fails, the rest keep their old settings.
+- A new copy that fails to start is removed, and the running one carries on. You can still choose *Restart in place*, or insist on a new copy.
+- **Upgrade.** Migration `e5a7c9b1d3f4` adds a table and two columns.
+
 ### Restore brings back documents and search too
 - **A complete restore.** Restoring a backup now also brings back the stored original documents and the vector collections, not only the database. Search works straight after a restore, with no re-embedding.
 - **Or just some of it.** The restore dialog has a checkbox for *Database*, *Stored files* and *Vectors*; `scripts/backup.py restore` takes `--parts`. A backup taken under another encryption key can still restore its files and vectors.

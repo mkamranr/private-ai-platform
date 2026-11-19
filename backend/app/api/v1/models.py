@@ -61,10 +61,17 @@ from app.schemas.models_registry import (
     ModelRegisterRequest,
     ModelUpdateRequest,
     OllamaImportResponse,
+    RolloutRead,
+    RolloutRequest,
     UsageSummaryResponse,
     UsageSummaryRow,
 )
-from app.services.deployment import DeploymentRequestSpec, RevisionChange, follow_logs
+from app.services.deployment import (
+    DeploymentRequestSpec,
+    RevisionChange,
+    RevisionOutcome,
+    follow_logs,
+)
 from app.services.model_registry import UNSET
 
 router = APIRouter(tags=["models"], route_class=CommittingRoute)
@@ -649,13 +656,14 @@ async def create_deployment_revision(
 ) -> DeploymentRevisionRead:
     """Append a revision and roll it out. **Returns 202**, like a deploy.
 
-    The container is recreated with the new settings on the same GPUs, which stay
-    reserved throughout. The model is unavailable while the new container loads; calls
-    through an alias with a fallback go to the fallback meanwhile. Poll the deployment
-    for RUNNING or FAILED, and roll back if it fails.
+    How (E61, ``strategy``): with another copy of the model running, this one restarts
+    on its GPUs while the others serve. As the only copy, a new copy starts on free GPUs
+    and takes over once healthy, so the model stays up; without free GPUs it restarts in
+    place and is unavailable while it loads. The response's ``strategy``, ``downtime`` and
+    ``message`` say which. Poll the deployment for RUNNING or FAILED.
     """
     await guard.deployment(deployment_id)
-    _, revision = await service.revise_deployment(
+    outcome = await service.revise_deployment(
         deployment_id,
         RevisionChange(
             image=payload.image,
@@ -665,10 +673,9 @@ async def create_deployment_revision(
             change_note=payload.change_note,
         ),
         actor=actor,
+        strategy=payload.strategy,
     )
-    row = DeploymentRevisionRead.model_validate(revision)
-    row.current = True
-    return row
+    return _outcome_read(outcome)
 
 
 @router.post(
@@ -687,12 +694,88 @@ async def rollback_deployment(
     """Restore an earlier revision's configuration. History is never rewritten: this
     appends a new revision that copies the old one and records which it restored."""
     await guard.deployment(deployment_id)
-    _, revision = await service.rollback_deployment(
-        deployment_id, payload.revision, note=payload.change_note, actor=actor
+    outcome = await service.rollback_deployment(
+        deployment_id,
+        payload.revision,
+        note=payload.change_note,
+        actor=actor,
+        strategy=payload.strategy,
     )
-    row = DeploymentRevisionRead.model_validate(revision)
-    row.current = True
+    return _outcome_read(outcome)
+
+
+def _outcome_read(outcome: RevisionOutcome) -> DeploymentRevisionRead:
+    row = DeploymentRevisionRead.model_validate(outcome.revision)
+    # A blue/green revision is applied only when its new copy takes over.
+    row.current = outcome.strategy == "in_place"
+    row.strategy = outcome.strategy
+    row.downtime = outcome.downtime
+    row.message = outcome.message
+    row.successor_id = outcome.successor_id
     return row
+
+
+# ---------------------------------------------------------------------------
+# Rollouts across a model's copies (E61)
+# ---------------------------------------------------------------------------
+@router.post(
+    "/models/{model_id}/rollout",
+    response_model=RolloutRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Apply a change to every running copy of a model, one at a time",
+)
+async def start_rollout(
+    payload: RolloutRequest,
+    service: DeploymentServiceDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
+    model_id: uuid.UUID = Path(...),
+) -> RolloutRead:
+    """Each copy is revised once the one before it is healthy again, so the others keep
+    serving. One that fails stops the rollout; copies not reached keep their settings."""
+    for copy in await service.list_deployments(model_id=model_id):
+        await guard.deployment(copy.id)
+    rollout = await service.rollouts().start(
+        model_id,
+        RevisionChange(
+            image=payload.image,
+            tensor_parallel_size=payload.tensor_parallel_size,
+            max_model_len=payload.max_model_len,
+            gpu_memory_utilization=payload.gpu_memory_utilization,
+            change_note=payload.change_note,
+        ),
+        actor=actor,
+    )
+    return RolloutRead.model_validate(rollout)
+
+
+@router.get(
+    "/models/{model_id}/rollout",
+    response_model=RolloutRead | None,
+    summary="The running or latest rollout of a model",
+)
+async def get_rollout(
+    service: DeploymentServiceDep,
+    _actor: Annotated[User, require_permission(Perm.MODEL_VIEW)],
+    model_id: uuid.UUID = Path(...),
+) -> RolloutRead | None:
+    rollout = await service.rollouts().latest(model_id)
+    return RolloutRead.model_validate(rollout) if rollout else None
+
+
+@router.delete(
+    "/models/{model_id}/rollout",
+    response_model=RolloutRead,
+    summary="Cancel a rollout before its next copy",
+)
+async def cancel_rollout(
+    service: DeploymentServiceDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    model_id: uuid.UUID = Path(...),
+) -> RolloutRead:
+    """The copy being revised finishes its own revision; no further copy is started."""
+    rollout = await service.rollouts().cancel(model_id, actor=actor)
+    return RolloutRead.model_validate(rollout)
 
 
 # ---------------------------------------------------------------------------

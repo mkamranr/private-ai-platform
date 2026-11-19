@@ -25,7 +25,7 @@ import datetime as dt
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.config.settings import EXTERNAL_RUNTIMES, Settings, external_key_for
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -64,6 +64,9 @@ from app.services.infrastructure import GpuService
 from app.services.llm_provider import wait_until_serving
 from app.services.scheduler import SimpleGpuScheduler, gpu_resources_for
 
+if TYPE_CHECKING:
+    from app.services.deployment_rollout import RolloutService
+
 #: Builds the ComputeBackend for a node. Typed against the §28 interface rather than
 #: the Docker implementation, so §23's Kubernetes backend is a new factory, not an edit
 #: to everything that touches one.
@@ -100,6 +103,53 @@ class RevisionChange:
     max_model_len: int | None = None
     gpu_memory_utilization: float | None = None
     change_note: str | None = None
+
+
+def change_target(change: RevisionChange) -> dict[str, Any]:
+    """The settings ``change`` sets, without the ones it leaves alone."""
+    target = {
+        "image": change.image,
+        "tensor_parallel_size": change.tensor_parallel_size,
+        "max_model_len": change.max_model_len,
+        "gpu_memory_utilization": change.gpu_memory_utilization,
+    }
+    return {key: value for key, value in target.items() if value is not None}
+
+
+#: E61: how a revision is rolled out. See ``DeploymentService._choose_strategy``.
+REVISION_STRATEGIES = ("auto", "in_place", "blue_green")
+
+#: E61: what moves from a healthy new copy into the original row at a handover (and the
+#: other way, so the old container can then be stopped from the copy's row).
+_HANDOVER_FIELDS = (
+    "node_id",
+    "gpu_indices",
+    "reservation_id",
+    "container_id",
+    "container_name",
+    "internal_url",
+    "image",
+    "tensor_parallel_size",
+    "max_model_len",
+    "gpu_memory_utilization",
+    "started_at",
+    "healthy_at",
+)
+
+
+@dataclass(slots=True)
+class RevisionOutcome:
+    """How a revision is being rolled out (E61)."""
+
+    deployment: ModelDeployment
+    revision: DeploymentRevision
+    #: ``in_place`` or ``blue_green``.
+    strategy: str
+    #: Whether the model is unavailable while the revision loads.
+    downtime: bool
+    message: str
+    #: The new copy taking over, for ``blue_green``.
+    successor_id: uuid.UUID | None = None
 
 
 #: Fields of a deployment that make up its runtime configuration. Revisions record and
@@ -259,6 +309,23 @@ class DeploymentService:
         if deployment is None:
             raise NotFoundError(f"No deployment with id {deployment_id}.")
         return deployment
+
+    def rollouts(self) -> RolloutService:
+        """Model-wide rollouts (E61), sharing this service's session."""
+        from app.repositories.models_registry import DeploymentRolloutRepository
+        from app.services.deployment_rollout import RolloutService
+
+        return RolloutService(
+            self, DeploymentRolloutRepository(self._deployments.session), self._audit
+        )
+
+    async def find_deployment(self, deployment_id: uuid.UUID) -> ModelDeployment | None:
+        """Like ``get_deployment``, without raising for a missing one."""
+        return await self._deployments.get_with_model(deployment_id)
+
+    async def has_successor(self, deployment_id: uuid.UUID) -> bool:
+        """E61: whether a new copy is taking over from this deployment."""
+        return bool(await self._deployments.successors_of(deployment_id))
 
     # -- creation ----------------------------------------------------------
     async def request_deployment(
@@ -450,7 +517,7 @@ class DeploymentService:
         number: int,
         *,
         note: str | None,
-        actor: User,
+        actor: User | None,
         rolled_back_from: int | None = None,
     ) -> DeploymentRevision:
         revision = DeploymentRevision(
@@ -459,7 +526,7 @@ class DeploymentService:
             config=revision_config(deployment),
             change_note=note,
             rolled_back_from=rolled_back_from,
-            created_by=actor.id,
+            created_by=actor.id if actor else None,
         )
         self._revisions.add(revision)
         return revision
@@ -647,31 +714,40 @@ class DeploymentService:
         return list(await self._revisions.for_deployment(deployment_id))
 
     async def revise_deployment(
-        self, deployment_id: uuid.UUID, change: RevisionChange, *, actor: User
-    ) -> tuple[ModelDeployment, DeploymentRevision]:
-        """Append a revision with ``change`` applied, and roll it out."""
+        self,
+        deployment_id: uuid.UUID,
+        change: RevisionChange,
+        *,
+        actor: User | None,
+        strategy: str = "auto",
+    ) -> RevisionOutcome:
+        """Append a revision with ``change`` applied, and roll it out (E4, E61).
+
+        ``strategy`` is ``auto`` (the default), ``in_place`` or ``blue_green``; see
+        ``_choose_strategy``. ``actor`` is None for a model-wide rollout's later copies,
+        which the deployment worker revises.
+        """
         deployment = await self.get_deployment(deployment_id)
-        target = {
-            "image": change.image,
-            "tensor_parallel_size": change.tensor_parallel_size,
-            "max_model_len": change.max_model_len,
-            "gpu_memory_utilization": change.gpu_memory_utilization,
-        }
-        target = {key: value for key, value in target.items() if value is not None}
+        target = change_target(change)
         if not target:
             raise ValidationError("Nothing to change: give at least one setting.")
-        revision = await self._apply_revision(
-            deployment, target, note=change.change_note, actor=actor
+        outcome = await self._apply_revision(
+            deployment, target, note=change.change_note, actor=actor, strategy=strategy
         )
         await self._audit.record(
             AuditAction.DEPLOYMENT_REVISED,
-            user_id=actor.id,
-            username=actor.username,
+            user_id=actor.id if actor else None,
+            username=actor.username if actor else WORKER_ACTOR,
             resource_type="deployment",
             resource_id=str(deployment.id),
-            metadata={"revision": revision.revision, "changes": target},
+            metadata={
+                "revision": outcome.revision.revision,
+                "changes": target,
+                "strategy": outcome.strategy,
+                "downtime": outcome.downtime,
+            },
         )
-        return deployment, revision
+        return outcome
 
     async def rollback_deployment(
         self,
@@ -680,7 +756,8 @@ class DeploymentService:
         *,
         note: str | None,
         actor: User,
-    ) -> tuple[ModelDeployment, DeploymentRevision]:
+        strategy: str = "auto",
+    ) -> RevisionOutcome:
         """Restore an earlier revision's configuration, as a new revision."""
         deployment = await self.get_deployment(deployment_id)
         old = await self._revisions.get_revision(deployment_id, to_revision)
@@ -688,18 +765,22 @@ class DeploymentService:
             raise NotFoundError(f"Deployment has no revision {to_revision}.")
         if to_revision == deployment.current_revision:
             raise ConflictError(f"Revision {to_revision} is already the one applied.")
-        if list(old.config.get("gpu_indices") or []) != list(deployment.gpu_indices):
+        # The GPU *count* is what a configuration depends on (tensor parallelism); since
+        # E61 a copy that took over may hold different devices of the same count.
+        if len(old.config.get("gpu_indices") or []) != len(deployment.gpu_indices):
             raise ConflictError(
-                f"Revision {to_revision} ran on different GPUs. Rolling back keeps the "
-                "current GPUs, so create a new deployment for that configuration instead."
+                f"Revision {to_revision} ran on a different number of GPUs. Rolling back "
+                "keeps the current GPU count, so create a new deployment for that "
+                "configuration instead."
             )
         target = {key: old.config[key] for key in _REVISION_FIELDS if key in old.config}
-        revision = await self._apply_revision(
+        outcome = await self._apply_revision(
             deployment,
             target,
             note=note or f"Rolled back to revision {to_revision}",
             actor=actor,
             rolled_back_from=to_revision,
+            strategy=strategy,
         )
         await self._audit.record(
             AuditAction.DEPLOYMENT_ROLLED_BACK,
@@ -707,26 +788,17 @@ class DeploymentService:
             username=actor.username,
             resource_type="deployment",
             resource_id=str(deployment.id),
-            metadata={"revision": revision.revision, "restored": to_revision},
+            metadata={
+                "revision": outcome.revision.revision,
+                "restored": to_revision,
+                "strategy": outcome.strategy,
+            },
         )
-        return deployment, revision
+        return outcome
 
-    async def _apply_revision(
-        self,
-        deployment: ModelDeployment,
-        target: dict[str, Any],
-        *,
-        note: str | None,
-        actor: User,
-        rolled_back_from: int | None = None,
-    ) -> DeploymentRevision:
-        """Validate ``target``, record it as the next revision and recreate the container.
-
-        The GPU reservation is kept across the change (or retaken on the same devices if
-        a failure or a stop released it), so nothing else can claim the GPUs while the new
-        container starts. The deployment then goes back through the worker from
-        SCHEDULING, exactly like a fresh deploy — including its health check.
-        """
+    async def check_revision(self, deployment: ModelDeployment, target: dict[str, Any]) -> None:
+        """Raise if ``target`` cannot be applied to ``deployment`` (E61: a rollout checks
+        every copy before it starts)."""
         if deployment.node_id is None:
             raise ConflictError(
                 "This deployment is attached to an external runtime. The platform does not "
@@ -736,6 +808,11 @@ class DeploymentService:
             raise ConflictError(
                 f"The deployment is {deployment.state}. Wait until it is RUNNING, FAILED or "
                 "STOPPED, then try again."
+            )
+        if await self._deployments.successors_of(deployment.id):
+            raise ConflictError(
+                "A new copy of this deployment is already starting with another revision. "
+                "Wait until it has taken over or failed."
             )
         model = await self._models.get(deployment.model_id)
         if model is not None and model.approval_status == ModelApprovalStatus.BLOCKED:
@@ -758,6 +835,232 @@ class DeploymentService:
                 details={"field": "tensor_parallel_size"},
             )
 
+    async def _apply_revision(
+        self,
+        deployment: ModelDeployment,
+        target: dict[str, Any],
+        *,
+        note: str | None,
+        actor: User | None,
+        rolled_back_from: int | None = None,
+        strategy: str = "auto",
+    ) -> RevisionOutcome:
+        if strategy not in REVISION_STRATEGIES:
+            raise ValidationError(
+                f"strategy must be one of {', '.join(REVISION_STRATEGIES)}.",
+                details={"field": "strategy"},
+            )
+        await self.check_revision(deployment, target)
+        model = await self._models.get(deployment.model_id)
+        chosen, downtime, message, placement = await self._choose_strategy(
+            deployment, model, strategy
+        )
+        if chosen == "blue_green" and placement is not None:
+            successor, revision = await self._start_successor(
+                deployment,
+                model,
+                target,
+                placement,
+                note=note,
+                actor=actor,
+                rolled_back_from=rolled_back_from,
+            )
+            return RevisionOutcome(
+                deployment, revision, chosen, False, message, successor_id=successor.id
+            )
+        revision = await self._apply_in_place(
+            deployment, model, target, note=note, actor=actor, rolled_back_from=rolled_back_from
+        )
+        return RevisionOutcome(deployment, revision, "in_place", downtime, message)
+
+    async def _choose_strategy(
+        self, deployment: ModelDeployment, model: Model | None, strategy: str
+    ) -> tuple[str, bool, str, Placement | None]:
+        """How to roll a revision out, as ``(strategy, downtime, message, placement)``.
+
+        * Not serving now (FAILED, STOPPED): in place; there is nothing to keep up.
+        * Another copy of the model is running: in place. The gateway sends calls to the
+          other copies meanwhile (E58), so a model-wide rollout is copies one at a time.
+        * The only copy: a new copy on free GPUs takes over once healthy (blue/green).
+        * No free GPUs for it: in place, with downtime, and the caller is told so.
+        """
+        serving = deployment.state == DeploymentState.RUNNING
+        others = [
+            d
+            for d in await self._deployments.list_deployments(
+                model_id=deployment.model_id, states=[DeploymentState.RUNNING]
+            )
+            if d.id != deployment.id and d.replaces_id is None
+        ]
+        if strategy == "in_place":
+            alone = serving and not others
+            return (
+                "in_place",
+                alone,
+                "Restarting in place on the same GPUs; the model is unavailable while it loads."
+                if alone
+                else "Restarting in place on the same GPUs.",
+                None,
+            )
+        if strategy == "auto":
+            if not serving:
+                return "in_place", False, "Not serving now, so applied in place.", None
+            if others:
+                return (
+                    "in_place",
+                    False,
+                    f"Applied in place; the model's other {len(others)} running "
+                    f"cop{'y' if len(others) == 1 else 'ies'} serve meanwhile.",
+                    None,
+                )
+        elif not serving:
+            raise ConflictError(
+                "Only a RUNNING deployment can hand over to a new copy. Revise it in place."
+            )
+        placement = await self._placement_for_copy(deployment, model)
+        if placement is not None:
+            return (
+                "blue_green",
+                False,
+                "A new copy is starting with the new settings; it takes over once healthy, "
+                "and this copy keeps serving until then.",
+                placement,
+            )
+        if strategy == "blue_green":
+            raise ConflictError(
+                f"No free GPUs for a second copy ({len(deployment.gpu_indices)} needed). "
+                "Free some, or revise in place."
+            )
+        return (
+            "in_place",
+            True,
+            "No free GPUs for a second copy, so this copy restarts in place and the model is "
+            "unavailable while it loads.",
+            None,
+        )
+
+    async def _placement_for_copy(
+        self, deployment: ModelDeployment, model: Model | None
+    ) -> Placement | None:
+        """Where a second copy of ``deployment`` could run, or None without capacity."""
+        if not deployment.gpu_indices:
+            # No GPUs to find (the mock runtime, a CPU runtime): beside the original.
+            node = await self._node_for(deployment)
+            if node is None or node.status != NodeStatus.ONLINE:
+                return None
+            return Placement(
+                node_id=str(node.id),
+                gpu_indices=(),
+                reservation_id="",
+                rationale="no GPUs required",
+            )
+        node_ids = [n.id for n in await self._nodes.list_pollable()]
+        resources = await gpu_resources_for(self._gpus, node_ids)
+        outcome = await self._scheduler.plan(
+            PlacementRequest(
+                model_id=str(deployment.model_id),
+                gpu_count=len(deployment.gpu_indices),
+                required_memory_mib_per_gpu=(model.required_gpu_memory_mib or 0) if model else 0,
+            ),
+            resources,
+        )
+        return None if isinstance(outcome, PlacementFailure) else outcome
+
+    async def _start_successor(
+        self,
+        deployment: ModelDeployment,
+        model: Model | None,
+        target: dict[str, Any],
+        placement: Placement,
+        *,
+        note: str | None,
+        actor: User | None,
+        rolled_back_from: int | None,
+    ) -> tuple[ModelDeployment, DeploymentRevision]:
+        """Start a new copy with ``target`` applied. The original keeps serving; the
+        worker hands over when the copy is healthy (``complete_handovers``)."""
+        reserved = placement
+        if placement.gpu_indices:
+            reserved = await self._scheduler.reserve(
+                PlacementRequest(
+                    model_id=str(deployment.model_id),
+                    gpu_count=len(placement.gpu_indices),
+                    required_memory_mib_per_gpu=(model.required_gpu_memory_mib or 0)
+                    if model
+                    else 0,
+                    node_id=placement.node_id,
+                    gpu_indices=placement.gpu_indices,
+                ),
+                placement,
+            )
+        number = await self._revisions.latest_number(deployment.id) + 1
+        successor = ModelDeployment(
+            model_id=deployment.model_id,
+            node_id=uuid.UUID(reserved.node_id),
+            state=DeploymentState.SCHEDULING,
+            state_detail=f"New copy for revision {number}; takes over once healthy.",
+            gpu_indices=list(reserved.gpu_indices),
+            reservation_id=uuid.UUID(reserved.reservation_id) if reserved.reservation_id else None,
+            runtime=deployment.runtime,
+            image=target.get("image", deployment.image),
+            internal_port=deployment.internal_port,
+            tensor_parallel_size=target.get(
+                "tensor_parallel_size", deployment.tensor_parallel_size
+            ),
+            max_model_len=target.get("max_model_len", deployment.max_model_len),
+            gpu_memory_utilization=target.get(
+                "gpu_memory_utilization", deployment.gpu_memory_utilization
+            ),
+            command=list(deployment.command or []),
+            environment=dict(deployment.environment or {}),
+            requested_by=actor.id if actor else deployment.requested_by,
+            current_revision=number,
+            replaces_id=deployment.id,
+            handover={"revision": number},
+        )
+        self._deployments.add(successor)
+        await self._deployments.flush()
+        # Recorded on the original, which keeps the history; the configuration is the new
+        # copy's, as that is what will run once it takes over.
+        revision = DeploymentRevision(
+            deployment_id=deployment.id,
+            revision=number,
+            config=revision_config(successor),
+            change_note=note,
+            rolled_back_from=rolled_back_from,
+            created_by=actor.id if actor else None,
+        )
+        self._revisions.add(revision)
+        deployment.state_detail = (
+            f"Revision {number} is starting on a new copy; this copy keeps serving until it is "
+            "healthy."
+        )
+        await self._deployments.flush()
+        log.info(
+            "deployment_handover_started",
+            deployment=str(deployment.id),
+            successor=str(successor.id),
+            revision=number,
+        )
+        return successor, revision
+
+    async def _apply_in_place(
+        self,
+        deployment: ModelDeployment,
+        model: Model | None,
+        target: dict[str, Any],
+        *,
+        note: str | None,
+        actor: User | None,
+        rolled_back_from: int | None = None,
+    ) -> DeploymentRevision:
+        """Record ``target`` as the next revision and recreate the container.
+
+        The GPU reservation is kept across the change (or retaken on the same devices if
+        a failure or a stop released it), so nothing else can claim the GPUs while the new
+        container starts. The deployment then goes back through the worker from
+        SCHEDULING, exactly like a fresh deploy — including its health check.
+        """
         node = await self._node_for(deployment)
         if node is None:
             raise ConflictError("The node this deployment ran on no longer exists.")
@@ -818,6 +1121,115 @@ class DeploymentService:
             rolled_back_from=rolled_back_from,
         )
         return revision
+
+    # -- handover (E61) ----------------------------------------------------
+    async def complete_handovers(self) -> int:
+        """Finish every handover whose new copy is healthy or has failed. The worker
+        calls this each pass; returns how many it finished."""
+        finished = 0
+        for successor in await self._deployments.finished_successors():
+            if successor.state == DeploymentState.RUNNING:
+                await self._take_over(successor)
+            else:
+                await self._abandon_handover(successor)
+            finished += 1
+        return finished
+
+    async def _take_over(self, successor: ModelDeployment) -> None:
+        """Move the healthy new copy's container into the original row, which keeps its
+        id and history, then stop the container the original was running."""
+        original = (
+            await self._deployments.get(successor.replaces_id) if successor.replaces_id else None
+        )
+        number = int((successor.handover or {}).get("revision") or successor.current_revision)
+        if original is None:  # pragma: no cover - the FK cascade removes the copy too
+            successor.replaces_id = None
+            successor.handover = None
+            return
+        previous = {field: getattr(original, field) for field in _HANDOVER_FIELDS}
+        for field in _HANDOVER_FIELDS:
+            setattr(original, field, getattr(successor, field))
+        for field, value in previous.items():
+            setattr(successor, field, value)
+        original.current_revision = number
+        original.state = DeploymentState.RUNNING
+        original.error_message = None
+        original.stopped_at = None
+        original.state_detail = f"Revision {number} took over from a new copy without downtime."
+        await self._deployments.flush()
+        retired = await self._retire(successor)
+        await self._audit.record(
+            AuditAction.DEPLOYMENT_HANDOVER,
+            username=WORKER_ACTOR,
+            resource_type="deployment",
+            resource_id=str(original.id),
+            metadata={"revision": number, "outcome": "took over", "old_copy_stopped": retired},
+        )
+        log.info("deployment_handover_done", deployment=str(original.id), revision=number)
+
+    async def _abandon_handover(self, successor: ModelDeployment) -> None:
+        """The new copy failed: the original kept serving, and the copy goes."""
+        original = (
+            await self._deployments.get(successor.replaces_id) if successor.replaces_id else None
+        )
+        number = int((successor.handover or {}).get("revision") or successor.current_revision)
+        reason = (successor.error_message or successor.state_detail or "it did not start")[:300]
+        if original is not None:
+            revision = await self._revisions.get_revision(original.id, number)
+            if revision is not None:
+                revision.change_note = (
+                    f"{revision.change_note or ''} [Not applied: the new copy failed: {reason}]"
+                ).strip()
+            original.state_detail = (
+                f"Revision {number} failed to start on a new copy, so this copy kept serving "
+                f"revision {original.current_revision}. {reason}"
+            )[:500]
+        await self._retire(successor)
+        await self._audit.record(
+            AuditAction.DEPLOYMENT_HANDOVER,
+            username=WORKER_ACTOR,
+            resource_type="deployment",
+            resource_id=str(original.id if original else successor.id),
+            metadata={"revision": number, "outcome": "failed", "error": reason},
+        )
+        log.warning("deployment_handover_failed", successor=str(successor.id), reason=reason)
+
+    async def _retire(self, row: ModelDeployment) -> bool:
+        """Stop a handover row's container, release its GPUs and remove the row.
+
+        A container that cannot be stopped (its node unreachable) keeps the row, FAILED and
+        still holding its GPUs, so nothing is placed on them; deleting the deployment once
+        the node is back stops it. Returns whether it was stopped.
+        """
+        node = await self._node_for(row)
+        if node is not None and row.container_id:
+            try:
+                await self._backend(node).stop_model(
+                    DeploymentHandle(
+                        deployment_id=str(row.id),
+                        state=BackendState.STOPPING,
+                        backend_ref=row.container_id,
+                        internal_url=row.internal_url,
+                    )
+                )
+            except Exception as exc:
+                row.state = DeploymentState.FAILED
+                row.internal_url = None
+                row.replaces_id = None
+                row.handover = None
+                row.error_message = (
+                    f"A copy left over from a revision handover could not be stopped "
+                    f"({type(exc).__name__}: {str(exc)[:200]}). Delete this deployment once "
+                    "its node is reachable."
+                )
+                row.state_detail = row.error_message[:500]
+                log.warning("handover_copy_stop_failed", deployment=str(row.id))
+                return False
+        if row.reservation_id:
+            await self._gpus.release(row.reservation_id)
+            row.reservation_id = None
+        await self._deployments.delete(row)
+        return True
 
     # -- state machine -----------------------------------------------------
     async def advance(self, deployment: ModelDeployment) -> DeploymentState:
@@ -936,6 +1348,10 @@ class DeploymentService:
     ) -> ModelDeployment:
         """Stop a deployment. ``actor`` None is the deployment worker (E28)."""
         deployment = await self.get_deployment(deployment_id)
+        # E61: a new copy taking over would otherwise come up and replace a deployment
+        # someone has just stopped.
+        for successor in await self._deployments.successors_of(deployment.id):
+            await self._retire(successor)
         if deployment.state in {DeploymentState.STOPPED, DeploymentState.FAILED}:
             return deployment
 

@@ -374,7 +374,13 @@ class TestRevisions:
         revised = await client.post(
             f"/api/v1/deployments/{deployment.id}/revisions",
             headers=headers,
-            json={"max_model_len": 2048, "change_note": "Halve context to fit"},
+            # E61: one copy alone would hand over to a new copy; this test is about the
+            # in-place path.
+            json={
+                "max_model_len": 2048,
+                "change_note": "Halve context to fit",
+                "strategy": "in_place",
+            },
         )
         assert revised.status_code == 202, revised.text
         assert revised.json()["revision"] == 2

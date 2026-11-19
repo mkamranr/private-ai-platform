@@ -141,15 +141,18 @@ POST /api/v1/deployments/{id}/rollback                     # model.deploy → 20
 1. Validation:
    - `image` must be the runtime's configured image or one listed in
      `MODELS__RUNTIME_IMAGE_ALLOWLIST`. Nothing outside those lists is ever started.
-   - `tensor_parallel_size` cannot exceed the GPUs the deployment holds. **The GPU set
-     never changes in a revision**: a different GPU count is a new deployment, and a
-     rollback to a revision that ran on other GPUs is refused.
-2. The old container is stopped and removed. The GPU reservation is **kept**, so
-   nothing else can take the devices meanwhile. A failed or stopped deployment had
-   already released its GPUs; the same devices are reserved again, or the request is
-   refused with 409 if something else holds them now.
-3. The deployment returns to `SCHEDULING`, and the worker recreates the container. It
-   then goes through the normal health check, exactly like a fresh deploy.
+   - `tensor_parallel_size` cannot exceed the GPUs the deployment holds. **The GPU count
+     never changes in a revision**: a different count is a new deployment, and a
+     rollback to a revision that ran on a different number of GPUs is refused.
+2. A strategy is chosen (see [Without downtime](#without-downtime)).
+3. **In place:** the old container is stopped and removed. The GPU reservation is
+   **kept**, so nothing else can take the devices meanwhile. A failed or stopped
+   deployment had already released its GPUs; the same devices are reserved again, or the
+   request is refused with 409 if something else holds them now. The deployment returns
+   to `SCHEDULING`, and the worker recreates the container. It then goes through the
+   normal health check, exactly like a fresh deploy.
+4. **New copy (blue/green):** a second deployment row starts with the new settings on
+   free GPUs, marked `replaces_id`. The original keeps serving. See below.
 
 Revisions are refused:
 
@@ -160,18 +163,69 @@ Revisions are refused:
 They are audited as `DEPLOYMENT_REVISED` (with the changed fields) and
 `DEPLOYMENT_ROLLED_BACK`.
 
-**This is not zero-downtime.** One deployment is one container. While the replacement
-loads, calls through an alias with a fallback go to the fallback; other calls get
-503. If the new revision fails its health check, roll back to the previous one.
+### Without downtime
 
-To roll out a newer engine image to one deployment at a time:
+A revision's `strategy` decides how the new configuration replaces the running one:
+
+| `strategy` | What happens |
+|---|---|
+| `auto` (default) | Not serving now (FAILED, STOPPED): in place. Another copy of the model running: in place, while the gateway sends calls to the other copies (E58). The only copy: a new copy on free GPUs takes over once healthy. No free GPUs for it: in place, with downtime |
+| `in_place` | Restart on the same GPUs. The model is down while it loads if this is its only copy |
+| `blue_green` | A new copy on free GPUs takes over once healthy. 409 if there's no room, or the deployment isn't RUNNING |
+
+The response's `strategy`, `downtime` and `message` say what was chosen, and the console
+shows the message, as a warning when it means downtime.
+
+**The handover.** The deployment worker drives the new copy through the usual lifecycle.
+
+* **Healthy:** its container moves into the original row in one transaction. The row
+  keeps its id, its revision history and its place in aliases and metrics. Then the old
+  container is stopped and its GPUs released, and the copy's row is removed. Both copies
+  serve for that moment, so no call finds the model missing.
+* **Failed:** the copy is removed, and the original keeps serving its old revision. The
+  revision stays in the history, marked *Not applied* with the reason.
+* An old container that can't be stopped (node unreachable) stays visible as a FAILED
+  deployment that still holds its GPUs. Delete it once the node is back.
+* Stopping or deleting the original also removes a copy that was taking over. A second
+  revision is refused (409) while a copy is starting.
+* Audited as `DEPLOYMENT_HANDOVER`, with the outcome.
+
+A blue/green revision needs free GPUs for one more copy, briefly: the same count the
+deployment holds, anywhere in the cluster that fits the model.
+
+### Every copy of a model, one at a time
+
+```http
+POST   /api/v1/models/{id}/rollout     # model.deploy -> 202; image, tensor_parallel_size, ...
+GET    /api/v1/models/{id}/rollout     # model.view; the running or latest rollout
+DELETE /api/v1/models/{id}/rollout     # model.deploy; cancel before the next copy
+```
+
+A rollout applies one change to every running copy the platform manages. It revises
+each copy with `auto` once the one before it is healthy again, so the others keep
+serving, and a single-copy model gets a new copy that takes over.
+
+* Every copy is checked before anything starts. A setting one copy can't take (too much
+  tensor parallelism for its GPUs, say) refuses the whole rollout with 422.
+* **A copy that fails stops the rollout.** The copies not yet reached keep their old
+  configuration. Roll the failed one back from its revisions.
+* A copy stopped or deleted before its turn is skipped.
+* Cancel stops before the next copy; the copy being revised finishes its own revision.
+* Driven by the deployment worker with its state in `deployment_rollouts`, so a
+  control-plane restart resumes it. Audited as `DEPLOYMENT_ROLLOUT_STARTED` and
+  `DEPLOYMENT_ROLLOUT_FINISHED`.
+
+In the console, the Revisions dialog has a strategy choice and *Every copy, one at a
+time*, and shows a running rollout's progress with *Cancel*.
+
+To roll out a newer engine image:
 
 1. Load the image on the nodes.
 2. List it in the allowlist:
    ```env
    MODELS__RUNTIME_IMAGE_ALLOWLIST='{"vllm": ["vllm/vllm-openai:v0.12.0"]}'
    ```
-3. Create a revision with `image` set to it.
+3. Create a revision with `image` set to it, or a rollout for every copy.
 4. Roll back if it misbehaves.
 
 ## Following logs
