@@ -392,8 +392,11 @@ class OpsService:
         reason: str,
         actor: User,
         parts: Sequence[str] | None = None,
+        knowledge_base_ids: Sequence[uuid.UUID] | None = None,
+        team_id: uuid.UUID | None = None,
     ) -> OpsJob:
-        """Queue a restore of the whole backup, or (E60) only ``parts`` of it."""
+        """Queue a restore of the whole backup, or (E60) only ``parts`` of it, or (E64)
+        only some knowledge bases."""
         backup = await self._backup(name)
         self._check_confirm(confirm, name)
         if not backup.complete:
@@ -407,6 +410,11 @@ class OpsService:
                     f"{', '.join(backup.parts) or 'nothing restorable'}.",
                     details={"field": "parts", "available": backup.parts},
                 )
+        scoped = bool(knowledge_base_ids) or team_id is not None
+        if scoped:
+            return await self._request_scoped_restore(
+                backup, chosen, knowledge_base_ids or [], team_id, actor=actor, reason=reason
+            )
         if (chosen is None or "database" in chosen) and backup.key_matches is False:
             # backup.py refuses this too; failing here saves a stopped platform. Files and
             # vectors are not encrypted with the key, so restoring only those is allowed.
@@ -418,6 +426,54 @@ class OpsService:
         params: dict[str, Any] = {"backup": name}
         if chosen is not None and chosen != (backup.parts or list(RESTORE_PARTS)):
             params["parts"] = chosen
+        return await self._request(JobKind.BACKUP_RESTORE, params, actor=actor, reason=reason)
+
+    async def _request_scoped_restore(
+        self,
+        backup: InventoryBackup,
+        chosen: list[str] | None,
+        knowledge_base_ids: Sequence[uuid.UUID],
+        team_id: uuid.UUID | None,
+        *,
+        actor: User,
+        reason: str,
+    ) -> OpsJob:
+        """E64: some knowledge bases. No key check: their tables hold nothing encrypted.
+
+        The dump is needed whatever the parts, as that is where the bases are looked up.
+        Checked against the backup's catalogue when it has one; backup.py checks the
+        dump itself either way.
+        """
+        if backup.parts is not None and "database" not in backup.parts:
+            raise ValidationError(
+                "Restoring single knowledge bases needs the backup's database dump, and "
+                "this backup has none."
+            )
+        if backup.catalogued:
+            if team_id is not None:
+                if team_id not in {t.id for t in backup.teams}:
+                    raise ValidationError(
+                        "That team is not in this backup.", details={"field": "team_id"}
+                    )
+                if not any(b.team_id == team_id for b in backup.knowledge_bases):
+                    raise ValidationError(
+                        "That team owned no knowledge bases when this backup was taken.",
+                        details={"field": "team_id"},
+                    )
+            known = {b.id for b in backup.knowledge_bases}
+            unknown = [str(i) for i in knowledge_base_ids if i not in known]
+            if unknown:
+                raise ValidationError(
+                    "This backup holds no knowledge base with id " + ", ".join(unknown) + ".",
+                    details={"field": "knowledge_base_ids"},
+                )
+        params: dict[str, Any] = {"backup": backup.name}
+        if chosen is not None and chosen != (backup.parts or list(RESTORE_PARTS)):
+            params["parts"] = chosen
+        if team_id is not None:
+            params["team"] = str(team_id)
+        else:
+            params["knowledge_bases"] = sorted({str(i) for i in knowledge_base_ids})
         return await self._request(JobKind.BACKUP_RESTORE, params, actor=actor, reason=reason)
 
     # -- bundle signing keys (E63) ----------------------------------------------------

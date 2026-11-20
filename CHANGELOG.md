@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Restore one knowledge base from a backup
+- **Bring back one knowledge base, or one team's knowledge bases**, without rolling back the rest of the platform. Its documents, search index, stored files, document access and evaluation sets return as they were when the backup was taken. A knowledge base deleted by mistake comes back, and agents that used it find it again.
+- On the Backup & Restore page, *Restore* now asks what to restore: the whole platform, some knowledge bases, or one team's. On the host: `backup.py restore <backup> --knowledge-base <name>` or `--team <name>`. The API keeps running throughout.
+- Backups taken from now on list their knowledge bases, so the console can offer them. Older backups can still be restored this way on the host, by name. See "Restoring single knowledge bases" in docs/backup.md.
+- **Upgrade.** Update the ops runner on the host as well. No migration.
+
 ### Change or withdraw the key that signs offline bundles
 - **Several signing keys.** A site can trust more than one key, so the build site can move to a new key without breaking any site.
 - **Rotation without visiting sites.** The build site issues a small *trust update*, signed by the current key, that adds the new one. It ships inside the next bundle, and each site picks it up when it upgrades. See "Changing the signing key" in docs/operations.md.

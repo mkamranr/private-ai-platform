@@ -571,6 +571,13 @@ matrix still listed as missing.
 - [x] Tests: `tests/unit/test_signing_key_rotation.py`, `tests/api/test_ops.py::TestTrustChange`. Docs: [operations.md](../operations.md#changing-the-signing-key), threat model #9.
 - [ ] No offline root key or key expiry. A compromised key is accepted until its revocation reaches a site. A first install still runs the bundle's own checks.
 
+## E64: Restore single knowledge bases (closes the feature-matrix single-restore gap)
+
+- [x] `scripts/backup.py restore --knowledge-base NAME_OR_ID ... | --team NAME_OR_ID`, with `--parts` as before. The dump is loaded into a scratch database (`<db>_scoped_<time>`, always dropped); the bases are looked up there. `database`: their rows (base, documents, chunks, document access, evaluation sets, cases and runs) are exported as CSV and swapped in one psql transaction through staging tables. Columns are matched by name, chunk ids are fresh, and nullable references to rows gone since (users) are cleared. Refused for a team gone since, a name taken since, or a missing name or id. `files`: the bases' `documents/<id>/` objects merged back with MinIO stopped, the current ones moved aside. `vectors`: each base's collection recovered from its snapshot; a collection left unused by the swap is deleted. The API keeps running; no key check.
+- [x] `create` records `catalogue` (knowledge bases and teams) in the manifest. Runner: the inventory reports `knowledge_bases`, `teams` and `catalogued`; `backup.restore` passes `--knowledge-base` / `--team`, ids only. API: `RestoreRequest.knowledge_base_ids` / `team_id`, checked against the catalogue. Console: a *Scope* choice in the restore dialog.
+- [x] Tests: `tests/unit/test_scoped_restore.py`, `tests/api/test_scoped_restore_sql.py` (the generated SQL on a real database), `tests/api/test_ops.py::TestScopedRestore`. Docs: [backup.md](../backup.md#restoring-single-knowledge-bases), api.md.
+- [ ] A team's agents, workflows, keys and quotas are not restored. Question history is not restored. Needs disk for a second copy of the database while it runs. The MinIO merge relies on MinIO's one-directory-per-object layout and is not exercised against a live MinIO in CI.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

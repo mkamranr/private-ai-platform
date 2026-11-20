@@ -528,6 +528,144 @@ class TestPartialRestore:
         assert r.status_code == 422
 
 
+class TestScopedRestore:
+    """E64: restoring only some knowledge bases, or one team's."""
+
+    KB_A = "11111111-1111-4111-8111-111111111111"
+    KB_B = "22222222-2222-4222-8222-222222222222"
+    TEAM = "33333333-3333-4333-8333-333333333333"
+    OTHER_KEY = "20260901T020000Z"
+    OLD = "20260801T020000Z"
+
+    def _backups(self) -> list[dict[str, Any]]:
+        catalogue = {
+            "knowledge_bases": [
+                {
+                    "id": self.KB_A,
+                    "name": "policies",
+                    "display_name": "Policies",
+                    "team_id": self.TEAM,
+                },
+                {"id": self.KB_B, "name": "faq", "display_name": "FAQ", "team_id": None},
+            ],
+            "teams": [{"id": self.TEAM, "name": "legal"}],
+            "catalogued": True,
+        }
+        whole = {"artifacts": ["minio.tar", "postgres.dump", "qdrant"], "complete": True}
+        return [
+            {
+                **whole,
+                "name": BACKUP,
+                "parts": ["database", "files", "vectors"],
+                "key_matches": True,
+                **catalogue,
+            },
+            {
+                **whole,
+                "name": self.OTHER_KEY,
+                "parts": ["database", "files", "vectors"],
+                "key_matches": False,
+                **catalogue,
+            },
+            # Taken before E64: no catalogue, so the ids can't be checked here.
+            {**whole, "name": self.OLD, "parts": ["database", "files"], "key_matches": True},
+        ]
+
+    async def _restore(self, client, tokens, operator, name: str, **body: Any):
+        return await client.post(
+            f"/api/v1/ops/backups/{name}/restore",
+            json={"confirm": name, "reason": "deleted by mistake", **body},
+            headers=auth_header(tokens, operator),
+        )
+
+    async def test_the_catalogue_is_listed(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        r = await client.get("/api/v1/ops/backups", headers=auth_header(tokens, operator))
+        assert r.status_code == 200, r.text
+        item = next(b for b in r.json()["items"] if b["name"] == BACKUP)
+        assert item["catalogued"] is True
+        assert [b["name"] for b in item["knowledge_bases"]] == ["policies", "faq"]
+        assert item["teams"][0]["name"] == "legal"
+        old = next(b for b in r.json()["items"] if b["name"] == self.OLD)
+        assert old["catalogued"] is False and old["knowledge_bases"] == []
+
+    async def test_knowledge_bases_reach_the_runner(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(
+            client,
+            tokens,
+            operator,
+            BACKUP,
+            knowledge_base_ids=[self.KB_B, self.KB_A],
+            parts=["database", "vectors"],
+        )
+        assert r.status_code == 202, r.text
+        spec = (await claim(client, runner_headers)).json()
+        assert spec["params"] == {
+            "backup": BACKUP,
+            "parts": ["database", "vectors"],
+            "knowledge_bases": sorted([self.KB_A, self.KB_B]),
+        }
+
+    async def test_a_team_reaches_the_runner(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(client, tokens, operator, BACKUP, team_id=self.TEAM)
+        assert r.status_code == 202, r.text
+        spec = (await claim(client, runner_headers)).json()
+        assert spec["params"] == {"backup": BACKUP, "team": self.TEAM}
+
+    async def test_unknown_ids_are_refused(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        stranger = "44444444-4444-4444-8444-444444444444"
+        r = await self._restore(client, tokens, operator, BACKUP, knowledge_base_ids=[stranger])
+        assert r.status_code == 422 and "no knowledge base" in r.text
+        r = await self._restore(client, tokens, operator, BACKUP, team_id=stranger)
+        assert r.status_code == 422 and "team is not in this backup" in r.text
+
+    async def test_bases_and_a_team_together_are_refused(
+        self, client, operator, tokens, runner_headers
+    ):
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(
+            client, tokens, operator, BACKUP, knowledge_base_ids=[self.KB_A], team_id=self.TEAM
+        )
+        assert r.status_code == 422
+
+    async def test_another_key_is_fine_for_a_scoped_restore(
+        self, client, operator, tokens, runner_headers
+    ):
+        """The knowledge base tables hold nothing encrypted with the key."""
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(
+            client, tokens, operator, self.OTHER_KEY, knowledge_base_ids=[self.KB_A]
+        )
+        assert r.status_code == 202, r.text
+
+    async def test_an_uncatalogued_backup_is_left_to_the_runner(
+        self, client, operator, tokens, runner_headers
+    ):
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(client, tokens, operator, self.OLD, knowledge_base_ids=[self.KB_A])
+        assert r.status_code == 202, r.text
+
+    async def test_needs_the_dump(self, client, operator, tokens, runner_headers):
+        backups = self._backups()
+        backups[0]["parts"] = ["files", "vectors"]
+        await beat(client, runner_headers, backups=backups)
+        r = await self._restore(
+            client, tokens, operator, BACKUP, knowledge_base_ids=[self.KB_A], parts=["files"]
+        )
+        assert r.status_code == 422 and "database dump" in r.text
+
+    async def test_needs_backup_restore(
+        self, client, tokens, runner_headers, session, settings, ops_env
+    ):
+        await beat(client, runner_headers, backups=self._backups())
+        viewer = await _user_with(session, settings, [Perm.BACKUP_MANAGE], name="viewer")
+        r = await self._restore(client, tokens, viewer, BACKUP, knowledge_base_ids=[self.KB_A])
+        assert r.status_code == 403
+
+
 class TestTrustChange:
     """E63: retiring or revoking a bundle signing key from the console."""
 

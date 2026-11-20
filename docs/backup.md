@@ -83,6 +83,56 @@ On the Backup & Restore page, *Restore* has a checkbox per part.
   stored originals*, see [rag.md](rag.md#rebuilding-a-whole-base)) to re-embed from the
   restored text. Backups taken before snapshots were captured need this.
 
+## Restoring single knowledge bases
+
+When one knowledge base was deleted or damaged, restore just that one (or every knowledge
+base one team owns). Every other base, user, key and setting is left as it is, and the API
+keeps running.
+
+```
+python3 scripts/backup.py restore backups/20261110T020000Z --knowledge-base policies
+python3 scripts/backup.py restore backups/20261110T020000Z --knowledge-base policies --knowledge-base faq
+python3 scripts/backup.py restore backups/20261110T020000Z --team legal --parts database,vectors
+```
+
+`--knowledge-base` takes a name or an id and can be repeated; `--team` takes a team name or
+id. `--parts` works as for a whole restore.
+
+On the Backup & Restore page, *Restore* has a *Scope* choice: the whole platform, some
+knowledge bases (ticked from those the backup holds), or one team's knowledge bases. Backups
+record their knowledge bases and teams in `manifest.json` for this. A backup taken before
+that can still be restored this way on the host, by name.
+
+How it works:
+
+1. **The backup's dump is loaded into a scratch database** beside the live one
+   (`<database>_scoped_<time>`), so the rows can be read without touching the platform. It
+   is dropped afterwards, whatever happened. This needs room for a second copy of the
+   database for a while.
+2. **`database`**: the bases' rows replace the live ones in one transaction: the base, its
+   documents and chunks, document access, and evaluation sets and runs. A base deleted since
+   comes back with its old id, so agents that still list it find it again. Question history
+   is not restored.
+3. **`files`**: their stored originals (`documents/<base id>/` in the bucket) are put back.
+   MinIO is stopped meanwhile. The base's current objects are moved to
+   `data/minio.before-restore-<time>`, not deleted. Other bases' files are not touched.
+4. **`vectors`**: each base's collection is recovered from its snapshot. If the base was
+   reindexed since, the collection it used is deleted once the rows point at the restored one.
+   Restoring vectors alone recovers into the collection the live base uses.
+
+It refuses, and changes nothing, when:
+
+* a name or id isn't in the backup, or the team owned no knowledge bases then;
+* **the team that owned a base no longer exists**: the base would otherwise come back
+  shared with everyone;
+* another knowledge base has taken the name since;
+* the backup has no database dump (it is where the bases are looked up).
+
+A user deleted since is cleared from the rows that named them (uploader, owner), as
+deleting the user did. Files or vectors asked for without the database part are skipped
+for a base that isn't on the platform any more. There is no encryption key check: these
+tables hold nothing encrypted.
+
 ## A trap worth knowing
 
 `pg_restore` cannot read a custom-format dump from a **pipe** — it fails with "input file
@@ -194,4 +244,5 @@ OPS__BACKUP_COPY_S3_CA_FILE=/etc/ssl/certs/backup-store-ca.pem   # a private CA
 * No other remote protocols (SFTP, rsync): mount them as a directory instead.
 * Scheduling runs through the ops runner. Without the runner, use cron with `make backup`.
 * No incremental backups; every run is full.
-* No way to recover a single tenant or knowledge base: a restore replaces whole parts.
+* A team's agents, workflows, keys and quotas can't be restored on their own: a team
+  restore brings back its knowledge bases only.

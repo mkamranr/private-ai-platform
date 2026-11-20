@@ -4,7 +4,12 @@
     python3 scripts/backup.py create  [--output DIR]
     python3 scripts/backup.py verify  PATH
     python3 scripts/backup.py restore PATH [--yes] [--parts database,files,vectors]
+                                     [--knowledge-base NAME_OR_ID ... | --team NAME_OR_ID]
     python3 scripts/backup.py list    [--output DIR]
+
+``--knowledge-base`` and ``--team`` (E64) restore only those knowledge bases (or every
+knowledge base the team owns): their rows, stored files and vectors. Everything else is
+left as it is; see ``restore_scoped``.
 
 **Host-side, like check_airgap.py.** ``pg_dump`` lives in the postgres image and Rule 4
 forbids apt-get at build time, so the control plane cannot dump its own database — it
@@ -41,6 +46,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -203,6 +209,12 @@ def create(output_root: Path) -> int:
         "database": {"user": user, "name": database},
         "artifacts": artifacts,
     }
+    # E64: which knowledge bases and teams it holds, so the console can offer them for a
+    # scoped restore without reading the dump. Taken just after the dump; a restore looks
+    # them up in the dump itself, so a base created in between is simply not offered.
+    catalogue = _catalogue(user, database)
+    if catalogue is not None:
+        manifest["catalogue"] = catalogue
     (target / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     print(f"\nDone. Schema revision {manifest['schema_revision']}.")
@@ -213,6 +225,46 @@ def create(output_root: Path) -> int:
         "already keeps secrets — a restore without the matching key is refused."
     )
     return 0
+
+
+CATALOGUE_SQL = (
+    "SELECT json_build_object("
+    "'knowledge_bases', coalesce((SELECT json_agg(json_build_object("
+    "'id', k.id, 'name', k.name, 'display_name', k.display_name, 'team_id', k.team_id"
+    ") ORDER BY k.name) FROM knowledge_bases k), '[]'::json), "
+    "'teams', coalesce((SELECT json_agg(json_build_object('id', t.id, 'name', t.name) "
+    "ORDER BY t.name) FROM teams t), '[]'::json))"
+)
+
+
+def _catalogue(user: str, database: str):
+    """The knowledge bases and teams in the database, or None if it can't be read."""
+    result = _psql(user, database, CATALOGUE_SQL)
+    for line in reversed((result.stdout or "").splitlines()):
+        if line.strip().startswith("{"):
+            try:
+                return json.loads(line)
+            except ValueError:
+                return None
+    return None
+
+
+def _psql(user: str, database: str, sql: str = "", *, script: str | None = None):
+    """Run SQL with psql inside the postgres container; unaligned, tuples only.
+
+    ``script`` goes on stdin as one transaction and stops at the first error, which is
+    what the scoped restore's apply step relies on.
+    """
+    command = ["docker", "compose", "-f", str(REPO_ROOT / "docker-compose.yml"),
+               "exec", "-T", "postgres", "psql", "-U", user, "-d", database,
+               "-v", "ON_ERROR_STOP=1", "-X", "-q", "-At"]
+    if script is None:
+        command += ["-c", sql]
+    else:
+        command += ["--single-transaction", "-f", "-"]
+    return subprocess.run(  # noqa: S603
+        command, cwd=REPO_ROOT, input=script, capture_output=True, text=True, check=False,
+    )
 
 
 def _qdrant_collections() -> list:
@@ -370,7 +422,7 @@ def parse_parts(raw):
     return [p for p in PARTS if p in wanted]
 
 
-def restore(path: Path, assume_yes: bool, parts=None) -> int:
+def restore(path: Path, assume_yes: bool, parts=None, *, knowledge_bases=None, team=None) -> int:
     if verify(path) != 0:
         print("\nRefusing to restore a backup that does not verify.", file=sys.stderr)
         return 1
@@ -390,6 +442,12 @@ def restore(path: Path, assume_yes: bool, parts=None) -> int:
     if not chosen:
         print("\nNothing to restore.", file=sys.stderr)
         return 1
+    if knowledge_bases or team:
+        # No key check: the knowledge base tables hold no encrypted values.
+        return restore_scoped(
+            path, manifest, env, chosen, assume_yes,
+            knowledge_bases=list(knowledge_bases or []), team=team,
+        )
 
     # The key protects only what is inside the database dump. Files and vectors are not
     # encrypted with it, so restoring only those is allowed under another key.
@@ -569,6 +627,21 @@ def _wait_for_backend(seconds: int = 120) -> bool:
     return False
 
 
+def _recover_snapshot(snapshot: Path, collection: str) -> bool:
+    """Recover ``collection`` from a snapshot file, replacing what it holds now. The
+    collection is created if missing; its name need not match the snapshot's."""
+    staged = f"{QDRANT_STAGING}/{snapshot.name}"
+    copied = _compose("cp", str(snapshot), f"qdrant:{staged}", capture=True, check=False)
+    ok = copied.returncode == 0 and _qdrant_request(
+        "PUT",
+        f"/collections/{collection}/snapshots/recover",
+        # priority=snapshot: the snapshot's points win over anything already there.
+        {"location": f"file://{staged}", "priority": "snapshot"},
+    )
+    _compose("exec", "-T", "qdrant", "rm", "-f", staged, capture=True, check=False)
+    return ok
+
+
 def _restore_vectors(path: Path, manifest: dict, *, prune: bool) -> list:
     """Recover every collection from its snapshot, replacing what Qdrant holds now.
 
@@ -584,15 +657,7 @@ def _restore_vectors(path: Path, manifest: dict, *, prune: bool) -> list:
     _compose("exec", "-T", "qdrant", "mkdir", "-p", QDRANT_STAGING, capture=True, check=False)
     for snapshot in snapshots:
         collection = snapshot.stem
-        staged = f"{QDRANT_STAGING}/{snapshot.name}"
-        copied = _compose("cp", str(snapshot), f"qdrant:{staged}", capture=True, check=False)
-        ok = copied.returncode == 0 and _qdrant_request(
-            "PUT",
-            f"/collections/{collection}/snapshots/recover",
-            # priority=snapshot: the snapshot's points win over anything already there.
-            {"location": f"file://{staged}", "priority": "snapshot"},
-        )
-        _compose("exec", "-T", "qdrant", "rm", "-f", staged, capture=True, check=False)
+        ok = _recover_snapshot(snapshot, collection)
         print(f"    {collection}: {'restored' if ok else 'FAILED'}")
         if not ok:
             errors.append(f"vectors: {collection} could not be recovered")
@@ -605,6 +670,460 @@ def _restore_vectors(path: Path, manifest: dict, *, prune: bool) -> list:
                 state = "deleted, not in the backup" if deleted else "could not be deleted"
                 print(f"    {collection}: {state}")
     return errors
+
+
+# ---------------------------------------------------------------------------
+# scoped restore (E64): some knowledge bases, not the whole platform
+# ---------------------------------------------------------------------------
+#: The tables a scoped restore copies, in insert order, and how each one's rows are
+#: picked from the backup. ``{ids}`` is the list of knowledge base ids.
+SCOPED_TABLES = (
+    ("knowledge_bases", "id IN ({ids})"),
+    ("documents", "knowledge_base_id IN ({ids})"),
+    ("document_chunks",
+     "document_id IN (SELECT id FROM public.documents WHERE knowledge_base_id IN ({ids}))"),
+    ("document_access",
+     "lineage_id IN (SELECT lineage_id FROM public.documents WHERE knowledge_base_id IN ({ids}))"),
+    ("rag_eval_sets", "knowledge_base_id IN ({ids})"),
+    ("rag_eval_cases",
+     "eval_set_id IN (SELECT id FROM public.rag_eval_sets WHERE knowledge_base_id IN ({ids}))"),
+    ("rag_eval_runs",
+     "eval_set_id IN (SELECT id FROM public.rag_eval_sets WHERE knowledge_base_id IN ({ids}))"),
+)
+SCOPED_NAMES = tuple(table for table, _ in SCOPED_TABLES)
+#: Columns given a fresh value instead of the backup's. Chunk ids come from a sequence
+#: that other chunks may have used since; nothing refers to a chunk by its id.
+FRESH_COLUMNS = {"document_chunks": {"id"}}
+#: Where the rows are staged as CSV, inside the postgres container.
+SCOPED_STAGING = "/tmp/aip-scoped"
+#: Marks the apply step's own refusals in psql's error output.
+REFUSED_MARK = "SCOPED-REFUSED"
+SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _literal(value) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _ids_sql(ids) -> str:
+    return ", ".join(f"{_literal(i)}::uuid" for i in ids)
+
+
+def _rows(result) -> list:
+    """psql -At output as lists of fields."""
+    return [line.split("|") for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def common_columns(live: dict, backup: dict) -> dict:
+    """Per table in both databases, the columns to copy: those both have, in the live
+    order, less the ones given fresh values. A newer column keeps its default."""
+    out = {}
+    for table in SCOPED_NAMES:
+        if table in live and table in backup:
+            fresh = FRESH_COLUMNS.get(table, set())
+            out[table] = [c for c in live[table] if c in backup[table] and c not in fresh]
+    return out
+
+
+def _refuse_if(query: str, message: str) -> str:
+    text = f"{REFUSED_MARK}: {message}".replace("'", "''").replace("%", " percent")
+    return f"DO $$ BEGIN IF EXISTS ({query}) THEN RAISE EXCEPTION '{text}'; END IF; END $$"
+
+
+def stage_sql(columns: dict) -> list:
+    """A temporary table per copied table, shaped like the live one."""
+    return [
+        f"CREATE TEMP TABLE stage_{table} (LIKE public.{table} INCLUDING DEFAULTS) ON COMMIT DROP"
+        for table in SCOPED_NAMES if table in columns
+    ]
+
+
+def apply_sql(ids, columns: dict, foreign_keys, live_tables) -> list:
+    """Replace the live rows of these knowledge bases with the staged ones.
+
+    Run as one transaction after the staging tables are filled, so a refusal or a failed
+    insert leaves the platform exactly as it was. ``foreign_keys`` is (table, column,
+    referenced table, referenced column, nullable) for the live copied tables.
+    """
+    ids_sql = _ids_sql(ids)
+    out = []
+    if "knowledge_bases" in columns:
+        # A base's team gone: restoring it teamless would share it with everyone.
+        out.append(_refuse_if(
+            "SELECT 1 FROM stage_knowledge_bases s WHERE s.team_id IS NOT NULL AND NOT EXISTS "
+            "(SELECT 1 FROM public.teams t WHERE t.id = s.team_id)",
+            "the team that owned a knowledge base being restored no longer exists. Without it "
+            "the base would be shared with everyone, so nothing was restored.",
+        ))
+        out.append(_refuse_if(
+            "SELECT 1 FROM stage_knowledge_bases s JOIN public.knowledge_bases k "
+            "ON k.id <> s.id AND (k.name = s.name OR k.collection = s.collection)",
+            "another knowledge base now has the name of one being restored. Rename or delete "
+            "it first; nothing was restored.",
+        ))
+    for table, column, ref_table, ref_column, nullable in foreign_keys:
+        if table not in columns or column not in columns[table] or ref_table in SCOPED_NAMES:
+            continue
+        if ref_table == "teams":
+            continue  # refused above
+        missing = (
+            f'stage_{table}.{_ident(column)} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM '
+            f'public.{ref_table} r WHERE r.{_ident(ref_column)} = stage_{table}.{_ident(column)})'
+        )
+        if nullable:
+            # A user deleted since: the row stays, with nobody named, as a deletion leaves it.
+            out.append(f"UPDATE stage_{table} SET {_ident(column)} = NULL WHERE {missing}")
+        else:
+            out.append(_refuse_if(
+                f"SELECT 1 FROM stage_{table} WHERE {missing}",
+                f"{table}.{column} names a {ref_table} row that no longer exists; nothing was "
+                "restored.",
+            ))
+    if "document_access" in live_tables:
+        # Keyed by lineage, without a foreign key, so the cascade below does not reach it.
+        out.append(
+            "DELETE FROM public.document_access WHERE lineage_id IN (SELECT lineage_id FROM "
+            f"public.documents WHERE knowledge_base_id IN ({ids_sql}))"
+        )
+    # Cascades to documents, chunks, evaluation sets and reindexes.
+    out.append(f"DELETE FROM public.knowledge_bases WHERE id IN ({ids_sql})")
+    for table in SCOPED_NAMES:
+        if table in columns:
+            cols = ", ".join(_ident(c) for c in columns[table])
+            out.append(f"INSERT INTO public.{table} ({cols}) SELECT {cols} FROM stage_{table}")
+    return out
+
+
+def _copy_out(ids, columns: dict) -> str:
+    ids_sql = _ids_sql(ids)
+    lines = []
+    for table, where in SCOPED_TABLES:
+        if table in columns:
+            cols = ", ".join(_ident(c) for c in columns[table])
+            lines.append(
+                f"\\copy (SELECT {cols} FROM public.{table} WHERE {where.format(ids=ids_sql)}) "
+                f"TO '{SCOPED_STAGING}/{table}.csv' WITH (FORMAT csv)"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def apply_script(ids, columns: dict, foreign_keys, live_tables) -> str:
+    """The psql script for the live database: stage, load the CSV files, apply."""
+    lines = [f"{s};" for s in stage_sql(columns)]
+    for table in SCOPED_NAMES:
+        if table in columns:
+            cols = ", ".join(_ident(c) for c in columns[table])
+            lines.append(
+                f"\\copy stage_{table} ({cols}) FROM '{SCOPED_STAGING}/{table}.csv' "
+                "WITH (FORMAT csv)"
+            )
+    lines += [f"{s};" for s in apply_sql(ids, columns, foreign_keys, live_tables)]
+    return "\n".join(lines) + "\n"
+
+
+COLUMNS_SQL = (
+    "SELECT table_name, string_agg(column_name, ',' ORDER BY ordinal_position) "
+    "FROM information_schema.columns WHERE table_schema = 'public' "
+    "AND table_name IN ({names}) GROUP BY table_name"
+)
+FOREIGN_KEYS_SQL = (
+    "SELECT c.conrelid::regclass::text, a.attname, c.confrelid::regclass::text, af.attname, "
+    "(NOT a.attnotnull)::text FROM pg_constraint c "
+    "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1] "
+    "JOIN pg_attribute af ON af.attrelid = c.confrelid AND af.attnum = c.confkey[1] "
+    "WHERE c.contype = 'f' AND c.conrelid::regclass::text IN ({names})"
+)
+
+
+def _columns(user: str, database: str) -> dict:
+    names = ", ".join(_literal(t) for t in SCOPED_NAMES)
+    rows = _rows(_psql(user, database, COLUMNS_SQL.format(names=names)))
+    return {row[0]: row[1].split(",") for row in rows if len(row) == 2}
+
+
+def _foreign_keys(user: str, database: str) -> list:
+    names = ", ".join(_literal(t) for t in SCOPED_NAMES)
+    rows = _rows(_psql(user, database, FOREIGN_KEYS_SQL.format(names=names)))
+    return [(r[0], r[1], r[2], r[3], r[4] == "true") for r in rows if len(r) == 5]
+
+
+def resolve_scope_sql(knowledge_bases, team) -> str:
+    """The backup's knowledge bases matching the names or ids asked for."""
+    select = (
+        "SELECT k.id, k.name, k.collection, coalesce(k.team_id::text, '') "
+        "FROM public.knowledge_bases k"
+    )
+    if team:
+        value = _literal(team)
+        return (
+            f"{select} JOIN public.teams t ON t.id = k.team_id "
+            f"WHERE t.id::text = {value} OR t.name = {value} ORDER BY k.name"
+        )
+    values = ", ".join(_literal(v) for v in knowledge_bases)
+    return f"{select} WHERE k.id::text IN ({values}) OR k.name IN ({values}) ORDER BY k.name"
+
+
+def _resolve_scope(user: str, scratch: str, knowledge_bases, team) -> list:
+    rows = _rows(_psql(user, scratch, resolve_scope_sql(knowledge_bases, team)))
+    bases = [
+        {"id": r[0], "name": r[1], "collection": r[2], "team_id": r[3] or None}
+        for r in rows if len(r) == 4
+    ]
+    if team and not bases:
+        raise ValueError(f"the backup has no knowledge bases owned by team {team!r}")
+    found = {b["id"] for b in bases} | {b["name"] for b in bases}
+    unknown = [v for v in knowledge_bases if v not in found]
+    if unknown:
+        raise ValueError(f"the backup has no knowledge base {', '.join(map(repr, unknown))}")
+    for base in bases:
+        if not SAFE_NAME.match(base["collection"]):
+            raise ValueError(f"unexpected collection name {base['collection']!r}")
+    return bases
+
+
+def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bool,
+                   *, knowledge_bases, team) -> int:
+    """Restore only some knowledge bases, leaving every other row, file and vector alone.
+
+    1. The backup's dump goes into a scratch database beside the live one, which is how
+       the bases' rows can be read without touching the platform.
+    2. ``database``: their rows (base, documents, chunks, document access, evaluation
+       sets) replace the live ones in one transaction. A base deleted since comes back
+       with its old id, so agents that still list it find it again.
+    3. ``files``: their stored originals are merged back; the current ones are moved
+       aside, not deleted.
+    4. ``vectors``: their collections are recovered from the snapshots.
+
+    The scratch database is dropped afterwards, whatever happened.
+    """
+    if "database" not in available_parts(path, manifest):
+        print("\nREFUSED: a scoped restore needs the backup's database dump, to find the "
+              "knowledge bases in it.", file=sys.stderr)
+        return 1
+    user = manifest.get("database", {}).get("user", "ai_platform")
+    database = manifest.get("database", {}).get("name", "ai_platform")
+    stamp = time.strftime("%Y%m%dt%H%M%Sz", time.gmtime())
+    scratch = f"{database}_scoped_{stamp}"
+    if not SAFE_NAME.match(scratch):
+        print(f"\nREFUSED: unexpected database name {database!r}.", file=sys.stderr)
+        return 1
+
+    errors: list = []
+    try:
+        print(f"  loading the backup's database into {scratch} … ", end="", flush=True)
+        if not _load_scratch(path, user, scratch):
+            print("FAILED")
+            print("\nThe backup's dump could not be loaded into a scratch database.",
+                  file=sys.stderr)
+            return 1
+        print("done")
+        try:
+            bases = _resolve_scope(user, scratch, knowledge_bases, team)
+        except ValueError as exc:
+            print(f"\nREFUSED: {exc}.", file=sys.stderr)
+            return 1
+
+        ids = [b["id"] for b in bases]
+        live = {r[0]: r[1] for r in _rows(_psql(
+            user, database,
+            f"SELECT id, collection FROM public.knowledge_bases WHERE id IN ({_ids_sql(ids)})",
+        )) if len(r) == 2}
+        described = {"database": "their rows (documents, chunks, access, evaluation sets)",
+                     "files": "their stored original documents", "vectors": "their vectors"}
+        print(f"\nAbout to REPLACE, with the backup from {manifest['created_at']}, "
+              f"{len(bases)} knowledge base(s):")
+        for base in bases:
+            state = "exists here, will be replaced" if base["id"] in live else "not here, will be recreated"
+            print(f"  - {base['name']} ({base['id']}; {state})")
+        for part in chosen:
+            print(f"  · {described[part]}")
+        print("Every other knowledge base, and the rest of the platform, is left as it is.")
+        if not assume_yes and input("Type the word 'replace' to continue: ").strip() != "replace":
+            print("Cancelled.")
+            return 1
+
+        database_done = False
+        if "database" in chosen:
+            problem = _apply_scoped_rows(user, database, scratch, ids)
+            if problem:
+                print(f"\nREFUSED: {problem}", file=sys.stderr)
+                return 1
+            database_done = True
+        here = set(live) | (set(ids) if database_done else set())
+        absent = [b["name"] for b in bases if b["id"] not in here]
+        if absent and ("files" in chosen or "vectors" in chosen):
+            print(f"  skipped for {', '.join(absent)}: not on this platform. Restore the "
+                  "database part too to bring the base back.")
+        kept = [b for b in bases if b["id"] in here]
+        if "files" in chosen and kept:
+            errors += _restore_scoped_files(path, env, [b["id"] for b in kept])
+        if "vectors" in chosen and kept:
+            errors += _restore_scoped_vectors(path, kept, live, database=database_done)
+        if database_done:
+            _drop_replaced_collections(bases, live)
+            if "vectors" not in chosen:
+                print("\n  Vectors were not restored. Rebuild each restored knowledge base "
+                      "(Rebuild index) so searches match its documents.")
+    finally:
+        _compose("exec", "-T", "postgres", "rm", "-rf", SCOPED_STAGING, capture=True, check=False)
+        _compose("exec", "-T", "postgres", "dropdb", "-U", user, "--if-exists", scratch,
+                 capture=True, check=False)
+
+    if errors:
+        print(f"\nRestore finished with {len(errors)} error(s):", file=sys.stderr)
+        for line in errors[:20]:
+            print(f"  - {line}", file=sys.stderr)
+        return 1
+    names = ", ".join(b["name"] for b in bases)
+    print(f"\nRestored {', '.join(chosen)} of {names} from {manifest['created_at']}.")
+    return 0
+
+
+def _load_scratch(path: Path, user: str, scratch: str) -> bool:
+    created = _compose("exec", "-T", "postgres", "createdb", "-U", user, scratch,
+                       capture=True, check=False)
+    if created.returncode != 0:
+        return False
+    with (path / "postgres.dump").open("rb") as handle:
+        # Staged, as in verify(): the custom format is not readable from a pipe. Errors
+        # are tolerated (pg_restore reports notices that way); the table check decides.
+        subprocess.run(  # noqa: S603
+            ["docker", "compose", "-f", str(REPO_ROOT / "docker-compose.yml"),
+             "exec", "-T", "postgres", "sh", "-c",
+             f"cat > /tmp/scoped.dump && pg_restore -U {user} -d {scratch} --no-owner "
+             "--no-privileges /tmp/scoped.dump; rc=$?; rm -f /tmp/scoped.dump; exit $rc"],
+            cwd=REPO_ROOT, stdin=handle, capture_output=True, check=False,
+        )
+    return "knowledge_bases" in _columns(user, scratch)
+
+
+def _apply_scoped_rows(user: str, database: str, scratch: str, ids) -> str | None:
+    """Copy the bases' rows out of the scratch database and swap them in. Returns why it
+    was refused or failed, or None."""
+    columns = common_columns(_columns(user, database), _columns(user, scratch))
+    if "knowledge_bases" not in columns:
+        return "the knowledge base tables could not be read."
+    print("  copying their rows … ", end="", flush=True)
+    _compose("exec", "-T", "postgres", "sh", "-c",
+             f"rm -rf {SCOPED_STAGING} && mkdir -p {SCOPED_STAGING}", capture=True, check=False)
+    exported = _psql(user, scratch, script=_copy_out(ids, columns))
+    if exported.returncode != 0:
+        print("FAILED")
+        return f"the rows could not be read from the backup: {exported.stderr.strip()[-400:]}"
+    live_tables = set(_columns(user, database))
+    script = apply_script(ids, columns, _foreign_keys(user, database), live_tables)
+    applied = _psql(user, database, script=script)
+    if applied.returncode != 0:
+        print("FAILED")
+        message = applied.stderr.strip()
+        if REFUSED_MARK in message:
+            return message.split(f"{REFUSED_MARK}:", 1)[1].strip().splitlines()[0]
+        return f"the rows could not be restored, and nothing was changed: {message[-400:]}"
+    counts = _rows(_psql(
+        user, database,
+        "SELECT k.name, (SELECT count(*) FROM public.documents d WHERE d.knowledge_base_id = k.id) "
+        f"FROM public.knowledge_bases k WHERE k.id IN ({_ids_sql(ids)}) ORDER BY k.name",
+    ))
+    print("done")
+    for row in counts:
+        if len(row) == 2:
+            print(f"    {row[0]}: {row[1]} document(s)")
+    return None
+
+
+def in_scope(member_name: str, ids) -> bool:
+    """Whether a minio.tar member is a stored original of one of these knowledge bases.
+
+    Objects are stored under ``documents/<knowledge base id>/`` in the bucket, and MinIO
+    keeps each object as a directory of that name: ``minio/<bucket>/documents/<id>/...``.
+    """
+    parts = Path(member_name.replace("\\", "/")).parts
+    return len(parts) >= 5 and parts[0] == "minio" and parts[2] == "documents" and parts[3] in ids
+
+
+def _restore_scoped_files(path: Path, env: dict, ids) -> list:
+    """Put back these bases' stored originals. MinIO is stopped meanwhile (it keeps each
+    object as files on disk); their current objects are moved aside, not deleted."""
+    if not (path / "minio.tar").exists():
+        return ["files: this backup holds no stored files"]
+    data_root = Path(env.get("PLATFORM_DATA_ROOT", str(REPO_ROOT / "data")))
+    target = data_root / "minio"
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    aside_root = data_root / f"minio.before-restore-{stamp}"
+    print("  restoring their stored files … ", end="", flush=True)
+    moved: list = []
+    stopped = False
+    try:
+        with tarfile.open(path / "minio.tar") as archive:
+            members = [m for m in _safe_members(archive, "minio") if in_scope(m.name, ids)]
+            if not members:
+                print("none in the backup")
+                return []
+            _compose("stop", "minio", capture=True, check=False)
+            stopped = True
+            buckets = [b for b in target.iterdir() if b.is_dir()] if target.is_dir() else []
+            for bucket in buckets:
+                for kb in ids:
+                    current = bucket / "documents" / kb
+                    if current.exists():
+                        aside = aside_root / bucket.name / "documents" / kb
+                        aside.parent.mkdir(parents=True, exist_ok=True)
+                        current.rename(aside)
+                        moved.append((aside, current))
+            extra = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+            archive.extractall(data_root, members=members, **extra)  # noqa: S202 - members checked
+    except (OSError, ValueError, tarfile.TarError) as exc:
+        print("FAILED")
+        for aside, current in moved:
+            if not current.exists():
+                aside.rename(current)  # put the previous files back
+        if stopped:
+            _compose("start", "minio", capture=True, check=False)
+        return [f"files: {exc}"]
+    _compose("start", "minio", capture=True, check=False)
+    print(f"done ({len(members)} entries)")
+    if moved:
+        print(f"    Their previous files are kept in {aside_root}; delete it once satisfied.")
+    return []
+
+
+def _restore_scoped_vectors(path: Path, bases, live: dict, *, database: bool) -> list:
+    """Recover each base's collection from its snapshot. With the rows restored, into the
+    collection the backup's row names; otherwise into the one the live base uses."""
+    print(f"  restoring their vectors ({len(bases)} collection(s)) …", flush=True)
+    if not _wait_for_backend():
+        return ["vectors: the backend is not running, so Qdrant could not be reached"]
+    _compose("exec", "-T", "qdrant", "mkdir", "-p", QDRANT_STAGING, capture=True, check=False)
+    errors = []
+    for base in bases:
+        snapshot = path / "qdrant" / f"{base['collection']}.snapshot"
+        target = base["collection"] if database else live.get(base["id"], base["collection"])
+        if not SAFE_NAME.match(target):
+            errors.append(f"vectors: unexpected collection name {target!r}")
+            continue
+        if not snapshot.exists():
+            print(f"    {base['name']}: no snapshot in the backup. Rebuild its index to "
+                  "re-embed it.")
+            continue
+        ok = _recover_snapshot(snapshot, target)
+        print(f"    {base['name']}: {'restored' if ok else 'FAILED'}")
+        if not ok:
+            errors.append(f"vectors: {base['name']} could not be recovered")
+    return errors
+
+
+def _drop_replaced_collections(bases, live: dict) -> None:
+    """After the rows are swapped, a replaced base whose live collection differs from the
+    restored one (it was reindexed since) leaves that collection unused: delete it."""
+    restored = {b["id"]: b["collection"] for b in bases}
+    for base_id, collection in live.items():
+        if collection != restored.get(base_id) and SAFE_NAME.match(collection):
+            if _qdrant_request("DELETE", f"/collections/{collection}"):
+                print(f"    {collection}: deleted, no longer used")
 
 
 def list_backups(output_root: Path) -> int:
@@ -644,6 +1163,15 @@ def main() -> int:
         "--parts",
         help=f"Comma-separated, from {', '.join(PARTS)}. Default: everything the backup holds.",
     )
+    scope = restore_parser.add_mutually_exclusive_group()
+    scope.add_argument(
+        "--knowledge-base", action="append", metavar="NAME_OR_ID",
+        help="Restore only this knowledge base (repeatable); everything else is left alone.",
+    )
+    scope.add_argument(
+        "--team", metavar="NAME_OR_ID",
+        help="Restore only the knowledge bases this team owns in the backup.",
+    )
 
     list_parser = sub.add_parser("list", help="List backups.")
     list_parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -658,7 +1186,8 @@ def main() -> int:
             parts = parse_parts(options.parts)
         except ValueError as exc:
             parser.error(str(exc))
-        return restore(options.path, options.yes, parts)
+        return restore(options.path, options.yes, parts,
+                       knowledge_bases=options.knowledge_base, team=options.team)
     return list_backups(options.output)
 
 
