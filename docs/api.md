@@ -762,7 +762,7 @@ rollback, gets 409. See [operations.md](operations.md).
 | GET / POST | `/ops/backups` | `backup.manage`. POST body: `reason` |
 | GET | `/ops/backups/schedule` | `backup.manage`. `enabled`, `interval_hours`, `keep`, `next_due_at`, `overdue`, `runner_online`, `last_job`, `prune_candidates`, `note` |
 | POST | `/ops/backups/{name}/verify` | `backup.manage` |
-| POST | `/ops/backups/{name}/restore` | `backup.restore`. `confirm` (the name), `reason`, optional `parts` (`database`, `files`, `vectors`; default all the backup holds). A part the backup lacks is a 422; restoring the database of a backup under another encryption key is refused |
+| POST | `/ops/backups/{name}/restore` | `backup.restore`. `confirm` (the name), `reason`, optional `parts` (`database`, `files`, `vectors`; default all the backup holds). A part the backup lacks is a 422; restoring the database of a backup under another encryption key is refused. Optional `knowledge_base_ids` (up to 50) or `team_id` restores only those knowledge bases, or the team's, and leaves everything else; checked against the backup's `knowledge_bases` and `teams` when it lists them (`catalogued`), and allowed under another key |
 | GET | `/ops/bundles` | `system.upgrade` |
 | POST | `/ops/bundles/{name}/verify` | `system.upgrade` |
 | GET | `/ops/bundles/{name}/preflight` | `system.upgrade`. `ok`, `checks[]` (pass/warn/fail) |

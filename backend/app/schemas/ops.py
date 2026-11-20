@@ -6,7 +6,7 @@ import datetime as dt
 import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: Backup, bundle and rollback point names are timestamps (``20261111T101500Z``) in
 #: practice. Anything outside this pattern is refused before it reaches a shell.
@@ -14,6 +14,24 @@ NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$"
 
 
 # -- runner inventory (what the host runner reports) ---------------------------
+class CatalogueBase(BaseModel):
+    """E64: a knowledge base a backup holds, as recorded when it was taken."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: uuid.UUID
+    name: str
+    display_name: str | None = None
+    team_id: uuid.UUID | None = None
+
+
+class CatalogueTeam(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: uuid.UUID
+    name: str
+
+
 class InventoryBackup(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -32,6 +50,11 @@ class InventoryBackup(BaseModel):
     #: E60: what a restore of it can bring back (``database``, ``files``, ``vectors``).
     #: None from a runner older than E60.
     parts: list[str] | None = None
+    #: E64: the knowledge bases and teams it holds, for a scoped restore. ``catalogued``
+    #: is False for a backup taken before E64 (restore its bases by name on the host).
+    knowledge_bases: list[CatalogueBase] = Field(default_factory=list)
+    teams: list[CatalogueTeam] = Field(default_factory=list)
+    catalogued: bool = False
 
 
 class InventoryBackupCopy(BaseModel):
@@ -203,9 +226,21 @@ RESTORE_PARTS: tuple[str, ...] = ("database", "files", "vectors")
 
 
 class RestoreRequest(ConfirmedJobRequest):
-    """E60: ``parts`` restores only some of a backup; omitted, everything it holds."""
+    """E60: ``parts`` restores only some of a backup; omitted, everything it holds.
+
+    E64: ``knowledge_base_ids`` or ``team_id`` restores only those knowledge bases (or the
+    ones the team owns in the backup), leaving the rest of the platform as it is.
+    """
 
     parts: list[RestorePart] | None = Field(default=None, min_length=1)
+    knowledge_base_ids: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=50)
+    team_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _one_scope(self) -> RestoreRequest:
+        if self.knowledge_base_ids and self.team_id:
+            raise ValueError("Choose knowledge bases or a team, not both.")
+        return self
 
 
 FINGERPRINT_PATTERN = r"^sha256:[0-9a-f]{64}$"

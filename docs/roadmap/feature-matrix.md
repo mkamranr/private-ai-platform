@@ -23,7 +23,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 15 | Agent builder | P1 | Existing | `services/agent_registry.py`, `agent_runtime.py`, `agent_runs.py`, `agents/*.yaml` | ~~Global kill switch~~ (E55) |
 | 16 | Human approval | P1 | Existing (E6) | `agent_runs` approval state, `workflow_approvals`, Approvals page (agent and workflow steps) | none |
 | 17 | Usage quotas | P1 | Existing (E2, E3) | `gateway_quotas`, `services/gateway_policy.py`, Usage & Quotas page, `services/budgets.py` | ~~Soft warnings at a budget threshold~~ (alerts since E12; per-quota share, `X-Quota-Warning` and page status since E53) |
-| 18 | Backup / restore | P1 | Existing (E7) | `scripts/backup.py`, `services/ops.py`, `scripts/ops_runner.py`, `services/backup_schedule.py`, Backup & Restore page | Restore of one team or knowledge base (scheduling and retention: E12, E23; files, vectors and parts restored: E60) |
+| 18 | Backup / restore | P1 | Existing (E7) | `scripts/backup.py`, `services/ops.py`, `scripts/ops_runner.py`, `services/backup_schedule.py`, Backup & Restore page | A team's agents, workflows and keys can't be restored on their own (scheduling and retention: E12, E23; files, vectors and parts restored: E60; single knowledge bases and a team's knowledge bases: E64) |
 | 19 | Workflow visual builder | P2 | Existing (E6) | `services/workflow_engine.py`, `services/workflows.py`, `workers/workflows.py`, Workflows page | Drag-and-drop canvas, typed node schemas, parallel branches |
 | 20 | OIDC / LDAP / AD | P2 | Existing | `services/auth_providers.py`, `fixtures/oidc` | none |
 | 21 | Multi-host management | P2 | Existing | node enrollment, `services/node_enrollment.py` | none |

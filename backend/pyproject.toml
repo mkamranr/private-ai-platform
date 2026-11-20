@@ -51,6 +51,8 @@ ignore = [
 "tests/api/test_approval_reminders.py" = ["F811"]
 "tests/api/test_platform_quota_enforcement.py" = ["F811"]
 "tests/api/test_directory_lockout.py" = ["F811"]
+# Runs backup.py's generated SQL (E64), built from table names and uuids the test made.
+"tests/api/test_scoped_restore_sql.py" = ["S608"]
 "tests/api/test_block_stops_deployments.py" = ["F811"]
 "tests/api/test_voice_attribution.py" = ["F811"]
 "tests/api/test_passkey_signin.py" = ["F811"]

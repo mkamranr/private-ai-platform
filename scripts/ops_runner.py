@@ -16,6 +16,7 @@ claims it and runs **the same scripts an operator runs by hand**:
     backup.prune    delete the named backups, and their off-host copies
     backup.verify   scripts/backup.py verify <backups/NAME>
     backup.restore  scripts/backup.py restore <backups/NAME> --yes
+                    [--parts ...] [--knowledge-base ID ... | --team ID]  (E60, E64)
     bundle.verify   signature check + offline/lib.sh verify_bundle <updates/NAME>
     trust.change    retire or revoke a bundle signing key in .trust/ (E63; never adds one)
     upgrade         offline/upgrade.sh <updates/NAME> <root>  [+ alembic upgrade head]
@@ -78,6 +79,8 @@ import s3_copy  # noqa: E402 - sibling stdlib module (E31)
 
 VERSION = "1.0"
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$")
+#: E64: knowledge base and team ids, the only scope a console restore can name.
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 FINGERPRINT = re.compile(r"^sha256:[0-9a-f]{64}$")
 TERMINAL = {"SUCCEEDED", "FAILED"}
 REPORT_EVERY = 2.0
@@ -137,6 +140,40 @@ def restorable_parts(manifest: dict) -> list[str]:
     if int((artifacts.get("qdrant") or {}).get("snapshots") or 0) > 0:
         parts.append("vectors")
     return parts
+
+
+def restore_catalogue(manifest: dict) -> dict:
+    """E64: the knowledge bases and teams a backup holds, as backup.py recorded them.
+    Empty lists for a backup taken before E64 (it can still be restored by hand)."""
+    catalogue = manifest.get("catalogue") or {}
+    bases = [
+        {
+            "id": str(b.get("id")),
+            "name": str(b.get("name") or ""),
+            "display_name": str(b.get("display_name") or b.get("name") or ""),
+            "team_id": str(b["team_id"]) if b.get("team_id") else None,
+        }
+        for b in catalogue.get("knowledge_bases") or []
+        if isinstance(b, dict) and UUID.match(str(b.get("id")))
+    ]
+    teams = [
+        {"id": str(t.get("id")), "name": str(t.get("name") or "")}
+        for t in catalogue.get("teams") or []
+        if isinstance(t, dict) and UUID.match(str(t.get("id")))
+    ]
+    return {"knowledge_bases": bases, "teams": teams, "catalogued": "catalogue" in manifest}
+
+
+def restore_scope(params: dict) -> list[str]:
+    """E64: the backup.py arguments for a scoped restore. Only ids reach the command line."""
+    team = str(params.get("team") or "")
+    if team:
+        return ["--team", team] if UUID.match(team) else []
+    out: list[str] = []
+    for value in params.get("knowledge_bases") or []:
+        if UUID.match(str(value)):
+            out += ["--knowledge-base", str(value)]
+    return out
 
 
 class Inventory:
@@ -200,6 +237,7 @@ class Inventory:
                     "size_bytes": self._cached_size(path),
                     "artifacts": sorted((manifest.get("artifacts") or {}).keys()),
                     "parts": restorable_parts(manifest),
+                    **restore_catalogue(manifest),
                     "key_matches": (recorded == current) if recorded and current else None,
                     "complete": True,
                     "copied": self.copied(path.name),
@@ -667,8 +705,17 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
         parts = [p for p in (params.get("parts") or []) if p in RESTORE_PARTS]
         if parts:
             command += ["--parts", ",".join(parts)]
+        # E64: only some knowledge bases, or one team's.
+        scope = restore_scope(params)
+        if (params.get("team") or params.get("knowledge_bases")) and not scope:
+            return "FAILED", "The knowledge bases to restore were not valid ids."
+        command += scope
         ok = run_command(command, reporter, cwd=root) == 0
         reporter.result = {"backup": path.name, "parts": parts or "all"}
+        if scope:
+            reporter.result["scope"] = {
+                "team": params.get("team"), "knowledge_bases": params.get("knowledge_bases"),
+            }
         return ("SUCCEEDED", None) if ok else ("FAILED", "backup.py restore reported errors.")
 
     if kind == "bundle.verify":

@@ -366,10 +366,38 @@ async function renderBackups() {
         const why = !has ? 'not in this backup' : blocked ? 'different encryption key' : '';
         return `<div class="form-check form-check-inline mb-0">
           <input class="form-check-input" type="checkbox" id="rp-${part}" data-restore-part="${part}"
-                 ${blocked ? 'disabled' : 'checked'}>
+                 data-key-blocked="${has && blocked ? '1' : ''}" ${blocked ? 'disabled' : 'checked'}>
           <label class="form-check-label" for="rp-${part}">${labels[part]}${why
-            ? ` <span class="text-secondary small">(${why})</span>` : ''}</label></div>`;
+            ? ` <span class="text-secondary small" data-part-why>(${why})</span>` : ''}</label></div>`;
       }).join('');
+      // E64: only some knowledge bases, or one team's. Offered when the backup lists them.
+      const bases = backup.knowledge_bases || [];
+      const teams = (backup.teams || []).filter((t) => bases.some((b) => b.team_id === t.id));
+      const scoped = backup.catalogued && bases.length && available.includes('database');
+      const scopeHtml = scoped ? `
+          <dt>Scope</dt><dd>
+            <select class="form-select form-select-sm mb-2" id="rp-scope">
+              <option value="all">The whole platform</option>
+              <option value="bases">Only some knowledge bases</option>
+              ${teams.length ? '<option value="team">Only one team&rsquo;s knowledge bases</option>' : ''}
+            </select>
+            <div id="rp-bases" class="d-none border rounded p-2 small" style="max-height:12rem;overflow:auto">
+              ${bases.map((b) => `<div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="rp-kb-${esc(b.id)}" data-restore-kb="${esc(b.id)}">
+                <label class="form-check-label" for="rp-kb-${esc(b.id)}">${esc(b.display_name || b.name)}
+                  <span class="text-secondary font-monospace">${esc(b.name)}</span></label></div>`).join('')}
+            </div>
+            <select class="form-select form-select-sm d-none" id="rp-team">
+              ${teams.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
+            </select></dd>` : '';
+      const wholeWarning = `${icon('i-alerts')} <b>The ticked parts are replaced</b> with the backup's. Restoring the
+          database loses everything changed since ${esc(stampText(backup.name))}, including users, keys and
+          audit records; restore the files and vectors with it, so documents and search match. The API
+          stops while it runs. backup.py verifies the backup again before touching anything.`;
+      const scopedWarning = `${icon('i-alerts')} <b>The chosen knowledge bases are replaced</b> with the backup's:
+          their documents, chunks, document access and evaluation sets, and (if ticked) their stored files and
+          vectors. Changes to them since ${esc(stampText(backup.name))} are lost. Every other knowledge base,
+          user and setting is left as it is, and the API keeps running. A base deleted since comes back.`;
       confirmOps({
         title: 'Restore backup',
         expected: backup.name,
@@ -379,19 +407,41 @@ async function renderBackups() {
           <dt>Taken</dt><dd>${esc(stampText(backup.name))} (${esc(stampAgo(backup.name))})</dd>
           <dt>Schema</dt><dd class="font-monospace">${esc(backup.schema_revision || '—')}</dd>
           <dt>Verified</dt><dd>${verified ? 'Yes' : '<span class="text-danger">No, verify it first</span>'}</dd>
+          ${scopeHtml}
           <dt>Restore</dt><dd>${partBoxes}</dd></dl>`,
-        warning: `${icon('i-alerts')} <b>The ticked parts are replaced</b> with the backup's. Restoring the
-          database loses everything changed since ${esc(stampText(backup.name))}, including users, keys and
-          audit records; restore the files and vectors with it, so documents and search match. The API
-          stops while it runs. backup.py verifies the backup again before touching anything.`,
+        warning: wholeWarning,
         submit: (reason, confirm) => {
           const parts = [...document.querySelectorAll('[data-restore-part]:checked')]
             .map((box) => box.dataset.restorePart);
           if (!parts.length) throw new Error('Tick at least one part to restore.');
+          const body = { reason, confirm, parts };
+          const scope = document.getElementById('rp-scope')?.value || 'all';
+          if (scope === 'bases') {
+            body.knowledge_base_ids = [...document.querySelectorAll('[data-restore-kb]:checked')]
+              .map((box) => box.dataset.restoreKb);
+            if (!body.knowledge_base_ids.length) throw new Error('Tick at least one knowledge base.');
+          } else if (scope === 'team') {
+            body.team_id = document.getElementById('rp-team').value;
+          }
           return api(`/ops/backups/${encodeURIComponent(backup.name)}/restore`,
-            { method: 'POST', body: JSON.stringify({ reason, confirm, parts }) });
+            { method: 'POST', body: JSON.stringify(body) });
         },
       });
+      const scopeSelect = document.getElementById('rp-scope');
+      if (scopeSelect) {
+        scopeSelect.onchange = () => {
+          const value = scopeSelect.value;
+          document.getElementById('rp-bases').classList.toggle('d-none', value !== 'bases');
+          document.getElementById('rp-team').classList.toggle('d-none', value !== 'team');
+          document.getElementById('ops-confirm-warning').innerHTML = value === 'all' ? wholeWarning : scopedWarning;
+          // A different key blocks only a whole-database restore: these tables hold nothing encrypted.
+          document.querySelectorAll('[data-key-blocked="1"]').forEach((box) => {
+            box.disabled = value === 'all';
+            box.checked = value !== 'all';
+            box.parentElement.querySelector('[data-part-why]')?.classList.toggle('d-none', value !== 'all');
+          });
+        };
+      }
     };
   });
 }

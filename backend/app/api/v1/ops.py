@@ -291,7 +291,7 @@ async def verify_backup(
     "/backups/{name}/restore",
     response_model=OpsJobRead,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Restore a backup, or some of it (database, files, vectors)",
+    summary="Restore a backup, some of it, or only some knowledge bases",
 )
 async def restore_backup(
     body: RestoreRequest,
@@ -300,7 +300,13 @@ async def restore_backup(
     name: NamePath,
 ) -> OpsJobRead:
     job = await service.request_restore(
-        name, confirm=body.confirm, reason=body.reason, actor=actor, parts=body.parts
+        name,
+        confirm=body.confirm,
+        reason=body.reason,
+        actor=actor,
+        parts=body.parts,
+        knowledge_base_ids=body.knowledge_base_ids,
+        team_id=body.team_id,
     )
     await service.commit()
     return _read(job)
