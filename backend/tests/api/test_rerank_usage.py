@@ -10,8 +10,10 @@ import uuid
 from typing import Any
 
 import pytest
+from sqlalchemy import update as sa_update
 
 from app.core.interfaces.llm import RerankResult, TokenUsage
+from app.models.models_registry import Model
 from app.models.teams import Team
 from app.repositories.models_registry import (
     ApiKeyRepository,
@@ -45,6 +47,8 @@ def provider() -> RerankingProvider:
 
 async def _rerank_for_real(app, settings, database, model: str, **kwargs: Any) -> list[float]:
     async with database.sessionmaker() as s:
+        # E65: only an RERANKER model may be asked for this. Never committed.
+        await s.execute(sa_update(Model).where(Model.name == model).values(type="RERANKER"))
         gateway = GatewayService(
             settings,
             ModelRepository(s),

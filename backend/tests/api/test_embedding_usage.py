@@ -16,12 +16,13 @@ from typing import Any
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_embedder, get_knowledge_service
 from app.models.auth import User
 from app.models.knowledge import KnowledgeBase
-from app.models.models_registry import UsageRecord
+from app.models.models_registry import Model, UsageRecord
 from app.models.teams import Team
 from app.repositories.audit import AuditRepository
 from app.repositories.knowledge import (
@@ -229,6 +230,8 @@ class TestMemoryCharges:
 # ---------------------------------------------------------------------------
 async def _embed_for_real(app, settings, database, model: str, **kwargs: Any):
     async with database.sessionmaker() as s:
+        # E65: only an EMBEDDING model may be asked for this. Never committed.
+        await s.execute(sa_update(Model).where(Model.name == model).values(type="EMBEDDING"))
         gateway = GatewayService(
             settings,
             ModelRepository(s),

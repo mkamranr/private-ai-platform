@@ -358,6 +358,7 @@ class ModelRegistryService:
             "publisher",
             "family",
             "tags",
+            "capabilities",  # E65
         }
         unknown = set(changes) - allowed
         if unknown:

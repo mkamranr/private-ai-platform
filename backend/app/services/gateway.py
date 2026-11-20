@@ -32,7 +32,7 @@ import json
 import math
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -41,6 +41,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import Settings, external_key_for
+from app.core import capabilities as caps
 from app.core import metrics
 from app.core.errors import (
     AgentsStoppedError,
@@ -49,6 +50,7 @@ from app.core.errors import (
     NotFoundError,
     PermissionDeniedError,
     RateLimitError,
+    UnsupportedCapabilityError,
     ValidationError,
 )
 from app.core.interfaces.llm import ChatMessage
@@ -111,6 +113,49 @@ class ResolvedTarget:
     #: E58: this call counted against its copy's in-flight load (streams only; buffered
     #: calls hold one for the length of each attempt).
     lease: ReplicaLease | None = None
+
+
+def _image_parts(content: list[Any]) -> bool:
+    return any(isinstance(p, dict) and p.get("type", "text") != "text" for p in content)
+
+
+def has_images(body: dict[str, Any]) -> bool:
+    """Whether any chat message carries a non-text content part (an image)."""
+    return any(
+        isinstance(m, dict) and isinstance(m.get("content"), list) and _image_parts(m["content"])
+        for m in body.get("messages") or []
+    )
+
+
+def chat_needs(body: dict[str, Any]) -> frozenset[caps.Capability]:
+    """E65: what a chat completion request asks of the model."""
+    needs = {caps.Capability.CHAT}
+    if body.get("stream"):
+        needs.add(caps.Capability.STREAMING)
+    if body.get("tools"):
+        needs.add(caps.Capability.TOOLS)
+    if has_images(body):
+        needs.add(caps.Capability.VISION)
+    return frozenset(needs)
+
+
+def require_capabilities(target: ResolvedTarget, needs: Iterable[caps.Capability]) -> None:
+    """E65: refuse, before anything is admitted or sent, a request the model can't serve.
+
+    Names the model as the caller asked for it, never the runtime behind it (§13).
+    """
+    missing = [c for c in needs if c not in target.model.effective_capabilities]
+    if not missing:
+        return
+    what = ", ".join(caps.DESCRIPTIONS[c] for c in sorted(missing))
+    raise UnsupportedCapabilityError(
+        f"Model {target.requested_model!r} does not support {what}.",
+        details={
+            "model": target.requested_model,
+            "unsupported": caps.ordered(missing),
+            "supported": caps.ordered(target.model.effective_capabilities),
+        },
+    )
 
 
 class ModelBlockedError(PermissionDeniedError):
@@ -201,6 +246,9 @@ class GatewayContext:
     #: The team a keyless call is made for (E19): the team of the agent or workflow
     #: behind one of the platform's own model calls.
     owner_team_id: uuid.UUID | None = None
+
+    #: E65: what the call asks of the model. A fallback that can't serve it is skipped.
+    needs: frozenset[caps.Capability] = frozenset()
 
     @property
     def team_id(self) -> uuid.UUID | None:
@@ -700,6 +748,8 @@ class GatewayService:
         alias = await self._aliases.get_enabled(target.fallback_alias_id)
         if alias is None or not self._visible(context.scope, alias) or _blocked(alias.model):
             return None
+        if not context.needs <= alias.model.effective_capabilities:
+            return None  # E65: it would only fail differently
         try:
             fallback = await self._target(target.requested_model, alias.model, None)
             # The model that failed is neither charged nor kept busy; the fallback must
@@ -786,6 +836,8 @@ class GatewayService:
                     # repointing the alias then breaks them — which is precisely what §13
                     # exists to prevent. Operators see the mapping in the admin UI.
                     "context_length": alias.model.context_length,
+                    # E65: what callers may ask of it. Not the runtime, for the same reason.
+                    "capabilities": caps.ordered(alias.model.effective_capabilities),
                 }
             )
             seen.add(alias.alias)
@@ -805,6 +857,7 @@ class GatewayService:
                     "created": int(deployment.created_at.timestamp()),
                     "owned_by": "ai-platform",
                     "context_length": deployment.model.context_length,
+                    "capabilities": caps.ordered(deployment.model.effective_capabilities),
                 }
             )
             seen.add(name)
@@ -812,7 +865,9 @@ class GatewayService:
         return sorted(entries, key=lambda e: e["id"])
 
     # -- inference ---------------------------------------------------------
-    async def provider_for_model(self, model: str) -> tuple[VLLMProvider, str]:
+    async def provider_for_model(
+        self, model: str, *, needs: Iterable[caps.Capability] = ()
+    ) -> tuple[VLLMProvider, str]:
         """Resolve a model name to a provider **and the name the runtime answers to**.
 
         The agent runtime uses this, so an agent reaches a model by exactly the same route
@@ -830,6 +885,7 @@ class GatewayService:
         Same shape as `ocr_engine_for_model` for the same reason.
         """
         target = await self.resolve(model)
+        require_capabilities(target, needs)
         return self._provider(target), target.served_model_name
 
     def _provider(self, target: ResolvedTarget) -> VLLMProvider:
@@ -968,13 +1024,17 @@ class GatewayService:
         return speech.audio, speech.audio_format
 
     @staticmethod
-    def _messages(payload: list[dict[str, Any]]) -> list[ChatMessage]:
+    def _messages(payload: list[dict[str, Any]], *, vision: bool = False) -> list[ChatMessage]:
         messages = []
         for raw in payload:
             content = raw.get("content")
+            parts: tuple[dict[str, Any], ...] = ()
             if isinstance(content, list):
-                # Multimodal content parts. Flattened to text for now; Phase 9's vision
-                # work is what makes the parts meaningful.
+                # Content parts. Image parts reach here only for a model that declares
+                # vision (E65; the capability check refused the rest), and are forwarded
+                # as sent. Text-only parts are joined, which every runtime accepts.
+                if vision and _image_parts(content):
+                    parts = tuple(p for p in content if isinstance(p, dict))
                 content = " ".join(
                     part.get("text", "") for part in content if isinstance(part, dict)
                 )
@@ -985,6 +1045,7 @@ class GatewayService:
                     name=raw.get("name"),
                     tool_call_id=raw.get("tool_call_id"),
                     tool_calls=tuple(raw.get("tool_calls") or ()),
+                    parts=parts,
                 )
             )
         return messages
@@ -1008,7 +1069,11 @@ class GatewayService:
         """Non-streaming chat completion."""
         self.attribute(context, body)
         target = await self.resolve(body.get("model", ""), context.scope)
-        messages = self._messages(body.get("messages") or [])
+        context.needs = chat_needs(body)
+        require_capabilities(target, context.needs)
+        messages = self._messages(
+            body.get("messages") or [], vision=caps.Capability.VISION in context.needs
+        )
         if not messages:
             raise ValidationError("'messages' must contain at least one message.")
 
@@ -1087,7 +1152,10 @@ class GatewayService:
         target = await self.resolve(
             body.get("model", ""), context.scope if context is not None else None
         )
+        needs = chat_needs(body)
+        require_capabilities(target, needs)
         if context is not None:
+            context.needs = needs
             await self._admit(context, target)
             # E58: counted against the copy's load until `finalise_stream`.
             target.lease = await self._balancer.acquire(target.deployment.id)
@@ -1110,7 +1178,7 @@ class GatewayService:
         while True:
             try:
                 async for chunk in self._provider(target).chat_stream(
-                    messages=self._messages(body.get("messages") or []),
+                    messages=self._messages(body.get("messages") or [], vision=has_images(body)),
                     model=target.served_model_name,
                     temperature=body.get("temperature"),
                     max_tokens=body.get("max_tokens"),
@@ -1234,6 +1302,8 @@ class GatewayService:
     async def embeddings(self, body: dict[str, Any], context: GatewayContext) -> dict[str, Any]:
         self.attribute(context, body)
         target = await self.resolve(body.get("model", ""), context.scope)
+        context.needs = frozenset({caps.Capability.EMBEDDINGS})
+        require_capabilities(target, context.needs)
         raw = body.get("input")
         if raw is None:
             raise ValidationError("'input' is required.")

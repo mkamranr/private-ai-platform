@@ -244,6 +244,7 @@ into a 503.
 | Unknown model or alias | 404, listing available names | — |
 | Known model, not deployed | **503**, not 404 | 404 sends an operator looking for a registration problem that is not there |
 | Runtime unreachable | 503 `dependency_unavailable` | The platform is fine; its dependency is not |
+| The model can't serve this kind of request (tools, images, streaming, embeddings) | **400** `capability_unsupported`, naming the model and what is missing | The request is valid, just not for this model; see [Capabilities](#capabilities) |
 
 ---
 
@@ -292,6 +293,43 @@ managed one would invite an operator to press stop and wonder why nothing happen
 `sglang`, `tgi` and `llamacpp` images are configured but **not verified on GPU hardware
 here** — this machine has none. Their entries are upstream tag names for a connected build
 machine to pull and pin.
+
+## Capabilities
+
+The gateway speaks one OpenAI API to every runtime, but the runtimes differ. Each one
+**declares** what it can be asked to do, and the model's type narrows that:
+
+| Runtime | chat | streaming | tools | vision | embeddings | rerank |
+|---|---|---|---|---|---|---|
+| `vllm`, `external`, `mock` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `sglang` | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| `tgi` | ✓ | ✓ | ✓ | ✓ | | |
+| `llamacpp` | ✓ | ✓ | | | ✓ | ✓ |
+| `ollama` | ✓ | ✓ | ✓ | ✓ | ✓ | |
+
+| Model type | Allows |
+|---|---|
+| `LLM` | chat, streaming, tools |
+| `VISION`, `MULTIMODAL` | chat, streaming, tools, vision |
+| `EMBEDDING` | embeddings |
+| `RERANKER` | rerank |
+
+So a text model on vLLM can't take images, and an embedding model can't chat.
+
+A request outside what the model declares is refused **before** it is admitted or sent,
+with a 400 `capability_unsupported` that names the model as the caller asked for it and
+lists what is missing and what is supported. Previously these failed oddly: a runtime
+error, tool definitions ignored, or an image dropped (the gateway flattened image parts
+to their text). A model that declares vision now receives the image parts as sent. An
+alias's fallback that can't serve the request is skipped. The platform's own calls check
+too: a knowledge base's embedding model must declare embeddings, its reranker rerank.
+
+`GET /v1/models` lists each entry's `capabilities`.
+
+**The declaration is a default, not a probe.** llama.cpp started with `--jinja` does call
+tools; an external endpoint may do less than everything. Declare the model's capabilities
+exactly on the model's *Edit* dialog (or `PATCH /api/v1/models/{id}` with
+`capabilities`). A declaration replaces the default; `null` goes back to it.
 
 ## Using an Ollama you already have
 

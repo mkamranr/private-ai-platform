@@ -1643,6 +1643,34 @@ async function guard(button, action) {
   }
 }
 
+/* E65: what callers may ask of a model. Its own declaration, or the runtime's. */
+const CAPABILITIES = [
+  ['chat', 'Chat'], ['streaming', 'Streaming'], ['tools', 'Tool calls'],
+  ['vision', 'Image input'], ['embeddings', 'Embeddings'], ['rerank', 'Reranking'],
+];
+
+function showCapabilities(model) {
+  const declared = model.capabilities;
+  const effective = model.effective_capabilities || [];
+  const useDefault = declared === null || declared === undefined;
+  const toggle = document.getElementById('edit-caps-default');
+  toggle.checked = useDefault;
+  document.getElementById('edit-caps-runtime').textContent = `(${model.runtime}, ${model.type})`;
+  document.getElementById('edit-caps-boxes').innerHTML = CAPABILITIES.map(([value, label]) => `
+    <div class="form-check form-check-inline mb-0">
+      <input class="form-check-input" type="checkbox" id="edit-cap-${value}" data-capability="${value}"
+             ${effective.includes(value) ? 'checked' : ''} ${useDefault ? 'disabled' : ''}>
+      <label class="form-check-label small" for="edit-cap-${value}">${label}</label></div>`).join('');
+  toggle.onchange = () => {
+    document.querySelectorAll('[data-capability]').forEach((box) => { box.disabled = toggle.checked; });
+  };
+}
+
+function chosenCapabilities() {
+  if (document.getElementById('edit-caps-default').checked) return null;
+  return [...document.querySelectorAll('[data-capability]:checked')].map((box) => box.dataset.capability);
+}
+
 /** Metadata and, for holders of model.approve, the approval status (E4). */
 function openModelEdit(modelId) {
   const model = modelCache.find((m) => m.id === modelId);
@@ -1662,6 +1690,7 @@ function openModelEdit(modelId) {
   set('edit-description', model.description);
   set('edit-approval', model.approval_status);
   set('edit-approval-note', model.approval_note);
+  showCapabilities(model);
   document.getElementById('edit-stop-deployments').checked = true;
   showStopRow(model);
   document.getElementById('edit-governance').classList.toggle('d-none', !can('model.approve'));
@@ -1700,6 +1729,7 @@ onModalSubmit('model-edit-form', 'model-edit-error', async (form) => {
       source_reference: text('edit-source'),
       tags: field('edit-tags').split(',').map((t) => t.trim()).filter(Boolean),
       description: text('edit-description'),
+      capabilities: chosenCapabilities(),
     }),
   });
   const status = field('edit-approval');

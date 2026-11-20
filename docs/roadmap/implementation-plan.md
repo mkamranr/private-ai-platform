@@ -578,6 +578,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/unit/test_scoped_restore.py`, `tests/api/test_scoped_restore_sql.py` (the generated SQL on a real database), `tests/api/test_ops.py::TestScopedRestore`. Docs: [backup.md](../backup.md#restoring-single-knowledge-bases), api.md.
 - [ ] A team's agents, workflows, keys and quotas are not restored. Question history is not restored. Needs disk for a second copy of the database while it runs. The MinIO merge relies on MinIO's one-directory-per-object layout and is not exercised against a live MinIO in CI.
 
+## E65: Declared capabilities per runtime (closes the feature-matrix adapter-contract gap)
+
+- [x] `app/core/capabilities.py`: `chat`, `streaming`, `tools`, `vision`, `embeddings`, `rerank`. Each runtime declares a set; the model type narrows it; `models.capabilities` (migration `b8d0f2a4c6e7`) replaces it per model.
+- [x] Gateway: chat (buffered and streamed) and embeddings refuse a request needing a missing capability with a 400 `capability_unsupported`, before admission, naming the requested model, never the runtime. Image parts are forwarded to a vision model instead of flattened. A runtime fallback lacking the capability is skipped. Internal embedding and rerank calls check too. `/v1/models` lists `capabilities`.
+- [x] Admin: `ModelRead.capabilities` and `effective_capabilities`; `PATCH /models/{id}` takes `capabilities` (audited as a model update). Console: capability checkboxes in the model's Edit dialog.
+- [x] Tests: `tests/api/test_model_capabilities.py`. Docs: [models.md](../models.md#capabilities), api.md.
+- [ ] The declarations are defaults, not probed from the runtime; JSON mode and other request options are not part of the contract (the gateway doesn't forward them).
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

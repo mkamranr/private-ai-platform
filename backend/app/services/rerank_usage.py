@@ -24,6 +24,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Protocol
 
+from app.core.capabilities import Capability
 from app.core.logging import get_logger
 from app.services.embedding_usage import EmbeddingCharge
 
@@ -60,7 +61,7 @@ async def rerank_with(
     """Score ``passages`` against ``query`` with ``model`` and account for it."""
     await gateway.check_internal_budget(model, charge.team_id if charge else None)
     started = time.perf_counter()
-    provider, served_model = await gateway.provider_for_model(model)
+    provider, served_model = await gateway.provider_for_model(model, needs=(Capability.RERANK,))
     result = await provider.rerank_scored(query, passages, model=served_model)
     if result.usage is None:
         log.info("rerank_tokens_not_reported", model=model)

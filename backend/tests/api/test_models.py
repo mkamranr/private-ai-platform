@@ -625,8 +625,11 @@ class TestGateway:
         client: AsyncClient,
         api_key_pair: tuple[ApiKey, str],
         serving_deployment: ModelDeployment,
+        session: AsyncSession,
     ) -> None:
         _, secret = api_key_pair
+        serving_deployment.model.type = "EMBEDDING"  # E65: only these embed
+        await session.flush()
         response = await client.post(
             "/v1/embeddings",
             headers={"Authorization": f"Bearer {secret}"},

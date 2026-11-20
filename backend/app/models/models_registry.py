@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID  # noqa: N811
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core import capabilities as caps
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
@@ -214,6 +215,10 @@ class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: Within a family, `version` and `quantization` tell the variants apart.
     family: Mapped[str | None] = mapped_column(String(128), index=True)
     tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    #: E65: what this model can be asked to do (``app.core.capabilities``), declared by
+    #: an administrator. Null: the runtime's declaration narrowed by the model's type.
+    #: Set for a deployment launched with other flags, or an external endpoint.
+    capabilities: Mapped[list | None] = mapped_column(JSONB)
 
     # Runtime arguments from the manifest, e.g. extra vLLM flags.
     metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
@@ -222,6 +227,11 @@ class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="model", cascade="all, delete-orphan"
     )
     deployments: Mapped[list[ModelDeployment]] = relationship(back_populates="model")
+
+    @property
+    def effective_capabilities(self) -> frozenset[caps.Capability]:
+        """E65: what the gateway lets callers ask of this model."""
+        return caps.effective(self.runtime, self.type, self.capabilities)
 
     def __repr__(self) -> str:
         return f"<Model {self.name} {self.status}>"

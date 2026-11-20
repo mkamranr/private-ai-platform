@@ -26,6 +26,9 @@ class ChatMessage:
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: tuple[dict[str, Any], ...] = ()
+    #: E65: OpenAI content parts (text and images), sent instead of ``content`` when set.
+    #: Only for a model that declares vision; ``content`` keeps the text for logging.
+    parts: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
