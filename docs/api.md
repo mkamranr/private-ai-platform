@@ -325,7 +325,9 @@ client.chat.completions.create(
 ```
 
 `GET /v1/models` lists only what is actually serving. A catalogue containing undeployed
-models would send every developer's first call into a 503.
+models would send every developer's first call into a 503. Each entry has `capabilities`
+(`chat`, `streaming`, `tools`, `vision`, `embeddings`, `rerank`); a request needing one the
+model lacks is a **400** `capability_unsupported`. See [models.md](models.md#capabilities).
 
 `stream=True` returns SSE, forwarded without buffering. The gateway always requests
 `stream_options.include_usage` from the runtime and intercepts the final usage chunk, so

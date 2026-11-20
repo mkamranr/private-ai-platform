@@ -6,8 +6,9 @@ import datetime as dt
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from app.core import capabilities as caps
 from app.schemas.common import ORMModel
 
 
@@ -106,6 +107,21 @@ class ModelUpdateRequest(BaseModel):
     tags: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(
         default=None, max_length=32
     )
+    capabilities: list[str] | None = Field(
+        default=None,
+        max_length=16,
+        description=(
+            "E65: what callers may ask of the model (chat, streaming, tools, vision, "
+            "embeddings, rerank). Replaces the runtime's declaration; null goes back to it."
+        ),
+    )
+
+    @field_validator("capabilities")
+    @classmethod
+    def _known_capabilities(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return caps.ordered(caps.parse(value))
 
 
 class ModelApprovalRequest(BaseModel):
@@ -163,7 +179,17 @@ class ModelRead(ORMModel):
     publisher: str | None = None
     family: str | None = None
     tags: list[str] = Field(default_factory=list)
+    #: E65: the administrator's declaration, or null for the runtime's.
+    capabilities: list[str] | None = None
+    #: E65: what the gateway lets callers ask of it: the declaration, else the runtime's
+    #: narrowed by the model's type.
+    effective_capabilities: list[str] = Field(default_factory=list)
     created_at: dt.datetime
+
+    @field_validator("effective_capabilities", mode="before")
+    @classmethod
+    def _in_order(cls, value: Any) -> list[str]:
+        return caps.ordered(caps.parse(value or []))
 
 
 class ModelApprovalResult(ModelRead):

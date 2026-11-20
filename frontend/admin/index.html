@@ -2290,6 +2290,18 @@
               <textarea class="form-control" id="edit-description" rows="2"></textarea>
             </div>
           </div>
+          <div class="mt-3" id="edit-capabilities">
+            <div class="fw-semibold small mb-1">Capabilities</div>
+            <div class="form-check form-switch mb-1">
+              <input class="form-check-input" type="checkbox" id="edit-caps-default">
+              <label class="form-check-label small" for="edit-caps-default">Use what the runtime declares
+                <span id="edit-caps-runtime" class="text-secondary"></span></label>
+            </div>
+            <div id="edit-caps-boxes"></div>
+            <div class="form-text small">What callers may ask of this model. The gateway refuses anything
+              else with a 400 naming what is missing. Declare them for a deployment launched with other
+              flags, or an external endpoint.</div>
+          </div>
           <div id="edit-governance" class="governance mt-3">
             <div class="d-flex align-items-center gap-2 mb-2">
               <span class="fw-semibold small">Approval</span>

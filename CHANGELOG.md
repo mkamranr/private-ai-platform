@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Clear errors for requests a model can't serve
+- **Each runtime declares what it supports**: chat, streaming, tool calls, image input, embeddings and reranking. The model's type narrows that, so a text model doesn't take images and an embedding model doesn't chat.
+- **The gateway refuses anything else up front** with a 400 that names the model and what's missing, instead of a confusing runtime error or a silently ignored request. An alias's fallback that can't serve the request is skipped.
+- **Images now reach vision models.** Before, image parts in a chat message were dropped and only the text was sent.
+- **Override per model** in the model's Edit dialog, for a deployment launched with other flags or an external endpoint. `/v1/models` lists each model's capabilities. See "Capabilities" in docs/models.md.
+- **Upgrade.** Migration `b8d0f2a4c6e7`. Check that embedding and reranker models are registered with type EMBEDDING or RERANKER: a model with the wrong type is now refused for embeddings or reranking. Fix its type, or declare its capabilities.
+
 ### Restore one knowledge base from a backup
 - **Bring back one knowledge base, or one team's knowledge bases**, without rolling back the rest of the platform. Its documents, search index, stored files, document access and evaluation sets return as they were when the backup was taken. A knowledge base deleted by mistake comes back, and agents that used it find it again.
 - On the Backup & Restore page, *Restore* now asks what to restore: the whole platform, some knowledge bases, or one team's. On the host: `backup.py restore <backup> --knowledge-base <name>` or `--team <name>`. The API keeps running throughout.

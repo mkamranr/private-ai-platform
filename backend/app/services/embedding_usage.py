@@ -26,6 +26,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from app.core.capabilities import Capability
+
 if TYPE_CHECKING:
     from app.services.gateway import GatewayService
 
@@ -66,7 +68,7 @@ async def embed_with(
     await gateway.check_internal_budget(model, charge.team_id if charge else None)
     started = time.perf_counter()
     # Served name, not the alias the caller passed: upstream has never heard of it.
-    provider, served_model = await gateway.provider_for_model(model)
+    provider, served_model = await gateway.provider_for_model(model, needs=(Capability.EMBEDDINGS,))
     result = await provider.embeddings(list(texts), model=served_model)
     await gateway.record_internal_usage(
         endpoint=charge.endpoint if charge else UNATTRIBUTED,

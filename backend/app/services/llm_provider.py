@@ -78,7 +78,9 @@ def _usage(payload: dict[str, Any] | None) -> TokenUsage:
 
 def _message_payload(message: ChatMessage) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": message.role}
-    if message.content is not None:
+    if message.parts:
+        payload["content"] = list(message.parts)
+    elif message.content is not None:
         payload["content"] = message.content
     if message.name:
         payload["name"] = message.name

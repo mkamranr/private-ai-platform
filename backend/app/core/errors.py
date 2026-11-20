@@ -110,6 +110,15 @@ class RateLimitError(AppError):
     message = "Rate limit exceeded."
 
 
+class UnsupportedCapabilityError(AppError):
+    """E65: the request needs something the model's runtime doesn't declare (tools, image
+    input, embeddings...). 400: the request is fine, but not for this model."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "capability_unsupported"
+    message = "The model cannot serve this kind of request."
+
+
 # --- 5xx / dependency ------------------------------------------------------
 class DependencyUnavailableError(AppError):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE

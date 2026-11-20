@@ -200,7 +200,7 @@ class FakeGateway:
         self.check_internal_budget = check
         self.embedded = False
 
-    async def provider_for_model(self, model: str) -> Any:
+    async def provider_for_model(self, model: str, **_: Any) -> Any:
         self.embedded = True
         raise AssertionError("the model must not be called")
 
