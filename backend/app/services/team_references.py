@@ -35,6 +35,7 @@ class TeamReferences:
         models: Iterable[str] = (),
         knowledge_bases: Iterable[str] = (),
         tools: Iterable[uuid.UUID | str] = (),
+        workflows: Iterable[uuid.UUID | str] = (),
     ) -> list[str]:
         """The references ``team_id`` may not use, described for a person, or ``[]``."""
         scope = Scope.for_team(team_id)
@@ -67,6 +68,18 @@ class TeamReferences:
         for _ident, (name, owner) in sorted(found.items(), key=lambda kv: kv[1][0]):
             if not scope.can_see(owner):
                 problems.append(f"tool {name!r}")
+        # E71: workflows run by a workflow's sub-workflow and foreach steps.
+        workflow_ids: set[uuid.UUID] = set()
+        for workflow_ref in workflows:
+            try:
+                workflow_ids.add(uuid.UUID(str(workflow_ref)))
+            except ValueError:
+                continue
+        if workflow_ids:
+            teams = await self._lookups.workflow_teams(workflow_ids)
+            for ident in sorted(teams, key=str):
+                if not scope.can_see(teams[ident]):
+                    problems.append(f"workflow {ident}")
         return problems
 
 

@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Workflows: sub-workflows and loops
+- **A workflow can run another.** A *Sub-workflow* step runs a published workflow as a run of its own and passes its output on. A *For each* step runs one once for each item of a list (`{{ item }}` and `{{ index }}` in its input), one item at a time, up to 100 items.
+- A sub-workflow that waits for an approval or a delay leaves its step waiting, and the parent carries on when it finishes. A failed sub-workflow fails the step, which can follow its error branch. Cancelling a run cancels its sub-workflow runs.
+- Sub-workflows nest at most three deep, must be published first, and must be shared or in the same team. A run links to its sub-workflow runs and back.
+- **Upgrade.** Migration `e3b5d7f9a1c2`.
+
 ### Per-node GPU alert levels, and live agent answers scored
 - **A node can have its own GPU alert levels**: its own warning and critical temperatures and memory level, for a hot room or cards rated for more. *Alert levels* on the Nodes page; empty fields use the platform's.
 - **Agent answers can be judged for faithfulness.** Set a share (`agents.answer_scoring_percent`) and a judge model (`agents.answer_judge_model`) on the Settings page, and that share of answers drawn from knowledge bases is checked against the passages they were given, in the background. *Quality* on the Agents page shows the average and each answer's unsupported claims. Each judged answer is one more model call, charged to the agent's team. The passages are deleted once judged.

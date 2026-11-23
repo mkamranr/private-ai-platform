@@ -626,6 +626,15 @@ matrix still listed as missing.
 - [x] Tests: `TestNodeLevels` in `tests/api/test_gpu_alerts.py`, `tests/api/test_answer_scoring.py`. Both console views checked in Chromium. Docs: [gpu.md](../gpu.md#a-nodes-own-levels), [agents.md](../agents.md#answer-quality), api.md, settings.md.
 - [ ] Levels are per node, not per GPU. Runs that paused for an approval aren't scored (their passages aren't kept across the pause); a failed judge call isn't retried; there is no alert on falling faithfulness.
 
+## E71: Sub-workflows and loops (closes the feature-matrix workflow-builder gap)
+
+- [x] `workflow` and `foreach` node types in `NODE_SCHEMAS` (`workflow` field kind; `{{ item }}` / `{{ index }}` allowed only in a foreach's `input`; `referenced_workflows`). `MAX_ITEMS` 100 (default 20), `MAX_DEPTH` 3.
+- [x] `workflow_runs.parent_run_id`, `parent_node_id`, `depth` and trigger `workflow` (migration `e3b5d7f9a1c2`). `WorkflowEngine._start_child` creates the child from the target's published version (the parent's starter and permissions, checked against the parent workflow's team) and advances it inline; a paused child leaves the step waiting (`wait: "workflow"`, run `WAITING` with no `resume_at`). `advance` calls `child_finished` when a child ends, which records its result in the parent's `state["children"]` and re-runs the step; a foreach continues with the next item. Child-run steps run once and untimed.
+- [x] Service: publish and test runs refuse a sub-workflow that is missing, unpublished or the workflow itself; saving checks the caller can see it and `TeamReferences` (new `workflows`) that the workflow's team may use it, also on a team move. Cancelling a run cancels its unfinished children; cancelling a child continues (fails) its parent's step.
+- [x] Console: both step types in the palette with a workflow picker, canvas summaries, a run's links to its child runs and the child's link back. Checked in Chromium.
+- [x] Tests: `tests/api/test_workflow_children.py` (definition, inline and paused children, failure and error branches, nesting limit, publish checks, team scope, foreach order, limits and paused items, cancellation). Docs: [workflows.md](../workflows.md#sub-workflows-and-loops), api.md.
+- [ ] Items run one at a time; no parallel foreach, no carrying on past a failed item, no edges back.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

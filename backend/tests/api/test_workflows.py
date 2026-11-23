@@ -148,6 +148,8 @@ async def wf(app, session: AsyncSession, settings) -> SimpleNamespace:
             tools=ToolRepository(session),
             tool_executors={ToolType.REST: ns.executor},
             http_transport=httpx.MockTransport(lambda r: ns.http(r)),
+            runs=WorkflowRunRepository(session),
+            versions=WorkflowVersionRepository(session),
         )
         return WorkflowService(
             settings,

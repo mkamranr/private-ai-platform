@@ -216,6 +216,10 @@ class RunRead(ORMModel):
     started_at: dt.datetime | None = None
     finished_at: dt.datetime | None = None
     created_at: dt.datetime
+    #: E71: set for a run started by another run's workflow or foreach step.
+    parent_run_id: uuid.UUID | None = None
+    parent_node_id: str | None = None
+    depth: int = 0
 
 
 class RunDetail(RunRead):

@@ -42,7 +42,8 @@ const WF_OPERATORS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'not_con
 const WF_TIMED = new Set(['llm', 'retrieval', 'tool', 'http']);
 const WF_TYPE_LABEL = {
   start: 'Start', llm: 'Model', retrieval: 'Retrieval', tool: 'Tool', http: 'HTTP',
-  condition: 'Condition', transform: 'Transform', approval: 'Approval', delay: 'Delay', end: 'End',
+  condition: 'Condition', transform: 'Transform', approval: 'Approval', delay: 'Delay',
+  workflow: 'Sub-workflow', foreach: 'For each', end: 'End',
 };
 const WF_BRANCHES = { condition: ['true', 'false'], approval: ['approved', 'rejected'] };
 
@@ -94,6 +95,18 @@ const WF_FIELDS = {
   ],
   delay: [
     { k: 'seconds', label: 'Wait (seconds)', kind: 'number', half: true, help: 'Up to a week.' },
+  ],
+  workflow: [
+    { k: 'workflow_id', label: 'Workflow', kind: 'workflow' },
+    { k: 'input', label: 'Input (JSON)', kind: 'json', rows: 4,
+      help: 'The sub-workflow\'s run input. Values may be templates.' },
+  ],
+  foreach: [
+    { k: 'items', label: 'Items', kind: 'jsonish', rows: 1, placeholder: '{{ nodes.search.passages }}' },
+    { k: 'workflow_id', label: 'Workflow', kind: 'workflow' },
+    { k: 'input', label: 'Input for each item (JSON)', kind: 'json', rows: 4,
+      help: 'Values may use {{ item }} and {{ index }}.' },
+    { k: 'max_items', label: 'Most items', kind: 'number', half: true },
   ],
   end: [
     { k: 'output', label: 'Run output', kind: 'jsonish', rows: 5,
@@ -181,9 +194,10 @@ async function loadDetail() {
 
 async function loadRefs() {
   const safe = (p) => p.catch(() => null);
-  const [models, aliases, bases, tools, types] = await Promise.all([
+  const [models, aliases, bases, tools, types, workflows] = await Promise.all([
     safe(api('/models?limit=200')), safe(api('/model-aliases')),
     safe(api('/knowledge-bases')), safe(api('/tools')), safe(api('/workflows/node-types')),
+    safe(api('/workflows')),
   ]);
   wf.nodeTypes = types || [];
   wf.refs = {
@@ -193,6 +207,7 @@ async function loadRefs() {
     ])],
     bases: bases || [],
     tools: tools || [],
+    workflows: workflows || [],
   };
 }
 
@@ -407,9 +422,16 @@ function nodeSummary(n) {
     case 'condition': return `${c.left ?? '?'} ${c.operator || '?'} ${c.right ?? ''}`;
     case 'approval': return c.message || 'no message';
     case 'delay': return `${c.seconds || 0}s`;
+    case 'workflow': return c.workflow_id ? `runs ${workflowName(c.workflow_id)}` : 'no workflow chosen';
+    case 'foreach': return c.workflow_id ? `${workflowName(c.workflow_id)} per item` : 'no workflow chosen';
     case 'end': return c.output ? 'custom output' : 'last step\'s output';
     default: return '';
   }
+}
+
+function workflowName(id) {
+  const found = (wf.refs?.workflows || []).find((w) => w.id === id);
+  return found ? found.display_name : 'an unknown workflow';
 }
 
 function wfNodeRow(n, edit) {
@@ -907,7 +929,7 @@ function wireCanvas(edit) {
 const WF_SCHEMA_KIND = {
   text: 'text', template: 'textarea', integer: 'number', number: 'number', boolean: 'check',
   enum: 'select', string_list: 'list', object: 'json', json: 'jsonish', model: 'model',
-  tool: 'tool', knowledge_bases: 'bases',
+  tool: 'tool', knowledge_bases: 'bases', workflow: 'workflow',
 };
 
 /** The form fields for a node type, from its served schema (WF_FIELDS as the fallback,
@@ -1090,6 +1112,13 @@ function fieldHtml(f, value) {
         `<option value="${esc(t.id)}" ${t.id === value ? 'selected' : ''}>${esc(t.name)} · ${esc(t.type)} · ${esc(t.risk_level)}${t.enabled ? '' : ' (disabled)'}</option>`).join('')}</select>
         <div class="form-text small">The tool runs with the permissions of whoever started the run.</div></div>`;
     }
+    case 'workflow': {
+      // E71: any workflow but this one; a sub-workflow runs its published version.
+      const choices = (wf.refs?.workflows || []).filter((w) => w.id !== wf.detail?.id);
+      return `<div class="${col}">${label}<select class="form-select" id="${id}"><option value="">Choose a workflow…</option>${choices.map((w) =>
+        `<option value="${esc(w.id)}" ${w.id === value ? 'selected' : ''}>${esc(w.display_name)} · ${esc(w.name)}${w.status === 'PUBLISHED' ? '' : ` (${esc(w.status.toLowerCase())})`}</option>`).join('')}</select>
+        ${help || '<div class="form-text small">Runs its published version as a run of its own.</div>'}</div>`;
+    }
     default:
       return `<div class="${col}">${label}<input class="form-control" id="${id}" value="${esc(value ?? '')}" placeholder="${esc(f.placeholder || '')}">${help}</div>`;
   }
@@ -1271,7 +1300,12 @@ function showWorkflowRun(run) {
           <div class="stat-label">${esc(label)}</div>
         </div></div>`).join('')}
     </div>
+    ${run.parent_run_id ? `<div class="alert alert-light border py-2 small">Started by step
+      <span class="mono">${esc(run.parent_node_id || '')}</span> of
+      <a href="#" data-wf-child="${esc(run.parent_run_id)}">another run</a>.</div>` : ''}
     ${run.error ? `<div class="alert alert-danger py-2 small">${esc(run.error)}</div>` : ''}
+    ${run.status === 'WAITING' && !run.resume_at && (run.steps || []).some((s) => s.status === 'WAITING' && ['workflow', 'foreach'].includes(s.node_type)) ? `
+      <div class="alert alert-info py-2 small">Waiting for a sub-workflow run; it continues when that run finishes.</div>` : ''}
     ${run.status === 'WAITING' && run.resume_at ? `<div class="alert alert-info py-2 small">Waiting until
       ${esc(new Date(run.resume_at).toLocaleString())}; the worker continues it then.</div>` : ''}
     ${pending.map((a) => `<div class="alert alert-warning py-2 small d-flex flex-wrap gap-2 align-items-center">
@@ -1299,6 +1333,8 @@ function showWorkflowRun(run) {
         </summary>
         <div class="wf-step-body">
           ${s.error ? `<div class="alert alert-danger py-1 px-2 small mb-2">${esc(s.error)}</div>` : ''}
+          ${childRuns(s).length ? `<div class="small mb-2">Sub-workflow run${childRuns(s).length > 1 ? 's' : ''}:
+            ${childRuns(s).map((id, i) => `<a href="#" class="mono me-2" data-wf-child="${esc(id)}">${childRuns(s).length > 1 ? `#${i} ` : ''}${esc(id.slice(0, 8))}</a>`).join('')}</div>` : ''}
           <div class="row g-2">
             <div class="col-lg-6"><div class="small text-secondary">Input</div>${jsonBlock(s.input)}</div>
             <div class="col-lg-6"><div class="small text-secondary">Output</div>${jsonBlock(s.output)}</div>
@@ -1314,6 +1350,12 @@ function showWorkflowRun(run) {
     ${!WF_TERMINAL.has(run.status) && can('workflow.execute') ? `
       <div class="mt-3 text-end"><button class="btn btn-sm btn-outline-danger" id="wf-run-cancel">Cancel run</button></div>` : ''}`;
 
+  body.querySelectorAll('[data-wf-child]').forEach((a) => {
+    a.onclick = (event) => {
+      event.preventDefault();
+      guard(a, async () => showWorkflowRun(await api(`/workflow-runs/${a.dataset.wfChild}`)));
+    };
+  });
   body.querySelectorAll('[data-wf-decide]').forEach((b) => {
     b.onclick = () => guard(b, async () => {
       const updated = await decideWorkflowApproval(b.dataset.id, b.dataset.wfDecide === 'yes');
@@ -1328,6 +1370,17 @@ function showWorkflowRun(run) {
   });
   const modal = document.getElementById('wf-run-modal');
   bootstrap.Modal.getOrCreateInstance(modal).show();
+}
+
+/** E71: the child runs a workflow or foreach step started, from its output. */
+function childRuns(step) {
+  if (!['workflow', 'foreach'].includes(step.node_type) || !step.output) return [];
+  const out = step.output;
+  // While waiting, results are the finished items' {run_id, status, ...}; once done, the
+  // children's own outputs, and run_ids lists the runs.
+  const waiting = step.status === 'WAITING' ? (out.results || []).map((r) => r && r.run_id) : [];
+  return [...new Set([...(out.run_ids || []), ...waiting, ...(out.run_id ? [out.run_id] : [])])]
+    .filter((id) => typeof id === 'string');
 }
 
 async function decideWorkflowApproval(id, approved) {

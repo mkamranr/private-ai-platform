@@ -14,6 +14,12 @@ A definition is ``{"nodes": [...], "edges": [...]}``:
 waiting to happen, and every step here is a persisted row; a DAG also gives the engine a
 single, deterministic execution order (see `execution_order`).
 
+**Sub-workflows and loops (E71) keep it that way.** A ``workflow`` step runs another
+published workflow as a run of its own; a ``foreach`` step runs one once per item of a
+list (``{{ item }}`` and ``{{ index }}`` in its input), one item at a time, up to
+`MAX_ITEMS`. Repetition is a bounded step, not an edge back, and nesting stops at
+`MAX_DEPTH`, so a workflow that calls itself fails rather than runs forever.
+
 **Each node type has a schema** (E69, `NODE_SCHEMAS`): its config fields with their kind,
 range and options, and the outputs later steps can read. Validation is driven by it
 (unknown settings, wrong types, values out of range, and templates that read a step that
@@ -30,6 +36,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -48,6 +55,8 @@ NODE_TYPES: Final[dict[str, str]] = {
     "transform": "Build a new value from earlier outputs.",
     "approval": "Pause until someone approves or rejects.",
     "delay": "Pause for a number of seconds.",
+    "workflow": "Run another published workflow and use its output.",
+    "foreach": "Run a published workflow once for each item of a list.",
     "end": "Finish the run and set its output.",
 }
 
@@ -70,6 +79,16 @@ MAX_TIMEOUT_SECONDS: Final = 600
 DEFAULT_TIMEOUT_SECONDS: Final = 60
 #: A week. A longer wait is a schedule, not a delay.
 MAX_DELAY_SECONDS: Final = 7 * 24 * 3600
+#: E71: items one foreach step may run, and the default when it doesn't say.
+MAX_ITEMS: Final = 100
+DEFAULT_MAX_ITEMS: Final = 20
+#: E71: how deeply sub-workflows nest. A run started by a trigger is depth 0.
+MAX_DEPTH: Final = 3
+#: E71: step types that start child runs. Not retried or timed out as a whole: a retry
+#: would start the children again, and their own steps have their own timeouts.
+CHILD_RUN_TYPES: Final = frozenset({"workflow", "foreach"})
+#: What a foreach step's input can read besides the usual roots.
+LOOP_ROOTS: Final = ("item", "index")
 
 #: What a run's ``{{ run.* }}`` templates can read.
 RUN_FIELDS: Final = ("id", "workflow_id", "trigger", "version")
@@ -81,7 +100,8 @@ class ConfigField:
 
     ``kind`` is one of ``text`` (one line), ``template`` (longer text), ``integer``,
     ``number``, ``boolean``, ``enum`` (one of ``options``), ``string_list``, ``object``,
-    ``json`` (any value), ``model``, ``tool`` and ``knowledge_bases``. A text-like field
+    ``json`` (any value), ``model``, ``tool``, ``knowledge_bases`` and (E71)
+    ``workflow``. A text-like field
     always takes templates; a typed field takes a value that is only a template when
     ``templated`` (it is then checked when the run renders it).
     """
@@ -340,6 +360,72 @@ NODE_SCHEMAS: Final[dict[str, NodeSchema]] = {
             outputs=("waited_seconds",),
         ),
         NodeSchema(
+            "workflow",
+            "Sub-workflow",
+            NODE_TYPES["workflow"],
+            (
+                ConfigField(
+                    "workflow_id",
+                    "workflow",
+                    "Workflow",
+                    required=True,
+                    required_label="A workflow",
+                    help="Runs its published version, as a run of its own.",
+                    templated=False,
+                ),
+                ConfigField(
+                    "input",
+                    "object",
+                    "Input",
+                    help="The sub-workflow's run input. Values may be templates.",
+                    templated=False,
+                ),
+            ),
+            outputs=("output", "run_id"),
+        ),
+        NodeSchema(
+            "foreach",
+            "For each",
+            NODE_TYPES["foreach"],
+            (
+                ConfigField(
+                    "items",
+                    "json",
+                    "Items",
+                    required=True,
+                    placeholder="{{ nodes.search.passages }}",
+                    help="A list, usually a template that reads one.",
+                ),
+                ConfigField(
+                    "workflow_id",
+                    "workflow",
+                    "Workflow",
+                    required=True,
+                    required_label="A workflow",
+                    help="Runs its published version once per item, one item at a time.",
+                    templated=False,
+                ),
+                ConfigField(
+                    "input",
+                    "object",
+                    "Input for each item",
+                    help="Values may use {{ item }} and {{ index }}, e.g. "
+                    '{"text": "{{ item.text }}"}.',
+                    templated=False,
+                ),
+                ConfigField(
+                    "max_items",
+                    "integer",
+                    "Most items",
+                    minimum=1,
+                    maximum=MAX_ITEMS,
+                    help=f"A longer list fails the step. {DEFAULT_MAX_ITEMS} when empty.",
+                    templated=False,
+                ),
+            ),
+            outputs=("results", "count", "run_ids"),
+        ),
+        NodeSchema(
             "end",
             "End",
             NODE_TYPES["end"],
@@ -586,12 +672,20 @@ def _reference_problems(definition: Mapping[str, Any]) -> list[Problem]:
     by_id = node_map(definition)
     after = descendants(definition)
     out: list[Problem] = []
+    # E71: {{ item }} and {{ index }} exist only in a foreach step's input.
+    loop_paths = {
+        str(n.get("id")): set(template_paths((n.get("config") or {}).get("input")))
+        for n in nodes_of(definition)
+        if n.get("type") == "foreach"
+    }
     for node in nodes_of(definition):
         node_id = str(node.get("id"))
         for path in sorted(set(template_paths(node.get("config") or {}))):
             parts = path.split(".")
             root = parts[0]
             if root == "input":
+                continue
+            if root in LOOP_ROOTS and path in loop_paths.get(node_id, set()):
                 continue
             if root == "run":
                 if len(parts) < 2 or parts[1] not in RUN_FIELDS:
@@ -600,10 +694,15 @@ def _reference_problems(definition: Mapping[str, Any]) -> list[Problem]:
                     )
                 continue
             if root != "nodes" or len(parts) < 2:
+                where = (
+                    " ({{ item }} and {{ index }} only in a foreach step's input)"
+                    if root in LOOP_ROOTS
+                    else ""
+                )
                 out.append(
                     Problem(
                         f"{{{{ {path} }}}} reads nothing: templates start with input, nodes "
-                        "or run.",
+                        f"or run{where}.",
                         node_id,
                     )
                 )
@@ -739,7 +838,22 @@ def _type_problem(spec: ConfigField, value: Any) -> str | None:
         return None if isinstance(value, Mapping) else f"{spec.key} must be an object."
     if kind == "tool":
         return None if isinstance(value, str) else f"{spec.key} is a tool id."
+    if kind == "workflow":
+        try:
+            uuid.UUID(str(value))
+        except ValueError:
+            return f"{spec.key} is a workflow id."
+        return None
     return None
+
+
+def referenced_workflows(definition: Mapping[str, Any]) -> list[str]:
+    """The workflows a definition's sub-workflow and foreach steps run (E71)."""
+    return [
+        ident
+        for kind in sorted(CHILD_RUN_TYPES)
+        for ident in referenced_ids(definition, kind, "workflow_id")
+    ]
 
 
 def referenced_ids(definition: Mapping[str, Any], kind: str, key: str) -> list[str]:

@@ -180,7 +180,8 @@ class WorkflowRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="status_valid",
         ),
         CheckConstraint(
-            "trigger IN ('manual','api','schedule','webhook','test')", name="trigger_valid"
+            "trigger IN ('manual','api','schedule','webhook','test','workflow')",
+            name="trigger_valid",
         ),
         # The worker's claim query: runs that are ready to advance.
         Index("ix_workflow_runs_due", "status", "resume_at"),
@@ -217,6 +218,14 @@ class WorkflowRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     step_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: E71: the run whose ``workflow`` or ``foreach`` step started this one, and which
+    #: step. The parent continues when this run finishes.
+    parent_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="SET NULL"), index=True
+    )
+    parent_node_id: Mapped[str | None] = mapped_column(String(64))
+    #: E71: 0 for a run started any other way; a child is one deeper than its parent.
+    depth: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     workflow: Mapped[Workflow] = relationship()
     steps: Mapped[list[WorkflowStep]] = relationship(

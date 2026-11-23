@@ -122,11 +122,19 @@ async def _check_references(
         return
     bases = wd.referenced_ids(definition, "retrieval", "knowledge_base_ids")
     models = wd.referenced_ids(definition, "llm", "model")
+    workflows = wd.referenced_workflows(definition)
     await guard.knowledge_base_refs(bases)
     for name in models:
         if "{{" not in name:
             await guard.model_name(name)
-    await guard.require_usable("workflow", team_id, models=models, knowledge_bases=bases)
+    for ref in workflows:  # E71: sub-workflows the caller can see
+        try:
+            await guard.workflow(uuid.UUID(ref))
+        except ValueError:
+            continue  # not an id: validation reports it
+    await guard.require_usable(
+        "workflow", team_id, models=models, knowledge_bases=bases, workflows=workflows
+    )
 
 
 async def _run_detail(service: WorkflowService, run_id: uuid.UUID) -> RunDetail:

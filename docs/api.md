@@ -740,7 +740,7 @@ Under `/api/v1`, authenticated with the platform JWT unless noted. See
 | POST | `/workflows/{id}/runs` | `workflow.execute` (`test` also needs `workflow.edit`). `input`, `trigger` (`manual`/`api`), `test`, `wait` (default true). **201** |
 | GET | `/workflows/{id}/runs` | `workflow.view`. `?status=&limit=` |
 | GET | `/workflow-runs` | `workflow.view`. Recent runs across workflows in scope |
-| GET | `/workflow-runs/{id}` | `workflow.view`. With the frozen definition, steps and approvals |
+| GET | `/workflow-runs/{id}` | `workflow.view`. With the frozen definition, steps and approvals. A run started by a sub-workflow or foreach step has `trigger` `workflow`, `parent_run_id`, `parent_node_id` and `depth` |
 | POST | `/workflow-runs/{id}/cancel` | `workflow.execute` |
 | GET | `/workflow-approvals/pending` | `workflow.approve` |
 | POST | `/workflow-approvals/{id}/decide` | `workflow.approve`. `approved`, `reason`; continues the run and returns it |
