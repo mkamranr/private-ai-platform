@@ -382,6 +382,9 @@ class _VoiceTurnHandler:
         await service.set_state(session, VoiceSessionState.SYNTHESIZING)
         watch = Stopwatch()
         gateway = await _gateway(db, self._ws.app.state)
+        context = await _context(db, session)
+        # E67: the turn's wait, recorded on the speech row as its time to first output.
+        context.waiting_since = timings.started
         try:
             audio, audio_format = await gateway.synthesize(
                 {
@@ -390,7 +393,7 @@ class _VoiceTurnHandler:
                     "voice": session.voice or "alloy",
                     "response_format": "wav",
                 },
-                await _context(db, session),
+                context,
             )
         except Exception as exc:
             timings.tts_ms = watch.ms()

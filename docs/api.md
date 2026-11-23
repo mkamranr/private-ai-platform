@@ -788,9 +788,9 @@ currency; `null` means not priced, never 0. See [chargeback.md](chargeback.md).
 | method | path | permission |
 |---|---|---|
 | GET | `/chargeback/rates` | `cost.view`. Every rate with `status` (`in_force`, `scheduled`, `superseded`) and `superseded_at` |
-| POST | `/chargeback/rates` | `cost.manage`. `model` (name or `*`), `prompt_per_million`, `completion_per_million`, `gpu_hour?`, `effective_from?`, `note?`; 422 for an unknown model, 409 for a duplicate start |
+| POST | `/chargeback/rates` | `cost.manage`. `model` (name, `*`, or `tool:<name>` / `tool:*`), `prompt_per_million?`, `completion_per_million?` (default 0), `gpu_hour?`, `unit_price?` (per audio minute, million characters or tool call), `effective_from?`, `note?`; 422 for an unknown model or tool, or a tool rate with anything but `unit_price`; 409 for a duplicate start |
 | DELETE | `/chargeback/rates/{id}` | `cost.manage`. Body `reason?`; 204 |
-| GET | `/chargeback/report` | `cost.view`. `?group_by=team\|api_key\|user\|end_user\|model&start=&end=` (UTC days, inclusive, max 366). Rows follow team scope; `idle` only with `scope.all` |
+| GET | `/chargeback/report` | `cost.view`. `?group_by=team\|api_key\|user\|end_user\|model&start=&end=` (UTC days, inclusive, max 366). Rows follow team scope; `idle` only with `scope.all`. Rows and totals include `audio_seconds`, `speech_characters`, `speech_cost`, `tool_calls`, `tool_cost`, `unpriced_tool_calls` |
 | POST | `/chargeback/export` | `cost.view`. Same parameters; `text/csv`, every row; audited |
 
 | GET | `/chargeback/budgets` | `cost.view`. `currency`, `month_start`, `items[]` with `spend`, `spend_partial`, `percent`, `status` (`ok`, `warning`, `exceeded`, `unpriced`, `disabled`). Team budgets follow team scope; global and API-key budgets need `scope.all` |

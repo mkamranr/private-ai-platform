@@ -11,11 +11,20 @@ import datetime as dt
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import String, cast, func, or_, select, true
+from sqlalchemy import String, case, cast, func, literal, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.agents import Agent, AgentRun, Tool, ToolExecution
 from app.models.auth import User
-from app.models.chargeback import DEFAULT_RATE_MODEL, CostBudget, CostRate
+from app.models.chargeback import (
+    DEFAULT_RATE_MODEL,
+    DEFAULT_TOOL_RATE,
+    TOOL_RATE_PREFIX,
+    UNIT_BY_ENDPOINT,
+    UNIT_TOKENS,
+    CostBudget,
+    CostRate,
+)
 from app.models.infrastructure import GpuAllocation
 from app.models.models_registry import ApiClient, ApiKey, Model, UsageRecord
 from app.models.teams import Team
@@ -54,6 +63,14 @@ class CostRateRepository(BaseRepository[CostRate]):
             return True
         used = select(UsageRecord.id).where(UsageRecord.model == name).limit(1)
         return (await self.session.execute(used)).first() is not None
+
+    async def tool_is_known(self, name: str) -> bool:
+        """A registered tool, or one an agent has called (E67)."""
+        registered = select(Tool.id).where(Tool.name == name).limit(1)
+        if (await self.session.execute(registered)).first() is not None:
+            return True
+        called = select(ToolExecution.id).where(ToolExecution.tool_name == name).limit(1)
+        return (await self.session.execute(called)).first() is not None
 
 
 class CostBudgetRepository(BaseRepository[CostBudget]):
@@ -95,6 +112,14 @@ class ChargebackRepository:
             .correlate(UsageRecord)
             .scalar_subquery()
         )
+        # E67: what the row counts, so speech is priced by its unit and never as tokens.
+        unit = case(
+            *(
+                (UsageRecord.endpoint == endpoint, literal(u))
+                for endpoint, u in UNIT_BY_ENDPOINT.items()
+            ),
+            else_=literal(UNIT_TOKENS),
+        )
         calls = select(
             UsageRecord.team_id,
             UsageRecord.api_key_id,
@@ -102,6 +127,7 @@ class ChargebackRepository:
             UsageRecord.end_user,
             UsageRecord.end_user_trusted,
             UsageRecord.model,
+            unit.label("unit"),
             UsageRecord.prompt_tokens,
             UsageRecord.completion_tokens,
             UsageRecord.client_disconnected,
@@ -142,6 +168,7 @@ class ChargebackRepository:
             *key_cols,
             *label_cols,
             c.c.model,
+            c.c.unit,
             c.c.rate_id,
             func.count().label("requests"),
             func.coalesce(func.sum(c.c.prompt_tokens), 0).label("prompt_tokens"),
@@ -150,8 +177,80 @@ class ChargebackRepository:
         ).select_from(c)
         for target, condition in joins:
             stmt = stmt.outerjoin(target, condition)
-        stmt = stmt.group_by(*key_cols, *label_cols, c.c.model, c.c.rate_id)
+        stmt = stmt.group_by(*key_cols, *label_cols, c.c.model, c.c.unit, c.c.rate_id)
         return [dict(row._mapping) for row in (await self.session.execute(stmt)).all()]
+
+    async def tool_calls(
+        self, *, group: str, start: dt.datetime, end: dt.datetime, where: Any = None
+    ) -> list[dict[str, Any]]:
+        """Agent tool calls made in ``[start, end)`` by ``group``, tool and rate (E67).
+
+        A call is one that ran (``success`` set), approved or not needed approval;
+        refused and pending ones cost nothing. It belongs to the agent's team and the
+        run's user. Agent runs carry no API key or end user, so those groupings put
+        every call on their "none" row. ``where`` filters on ``Agent.team_id``.
+
+        The rate is chosen per call like :meth:`usage`: the tool's own latest rate that
+        had started, else the latest ``tool:*``. Never the token default ``*``.
+        """
+        name = func.concat(TOOL_RATE_PREFIX, ToolExecution.tool_name)
+        rate_id = (
+            select(CostRate.id)
+            .where(
+                or_(CostRate.model == name, CostRate.model == DEFAULT_TOOL_RATE),
+                CostRate.effective_from <= ToolExecution.requested_at,
+            )
+            .order_by((CostRate.model == DEFAULT_TOOL_RATE).asc(), CostRate.effective_from.desc())
+            .limit(1)
+            .correlate(ToolExecution)
+            .scalar_subquery()
+        )
+        calls = (
+            select(
+                Agent.team_id.label("team_id"),
+                AgentRun.user_id.label("user_id"),
+                name.label("model"),
+                rate_id.label("rate_id"),
+            )
+            .select_from(ToolExecution)
+            .join(AgentRun, AgentRun.id == ToolExecution.run_id)
+            .join(Agent, Agent.id == AgentRun.agent_id)
+            .where(
+                ToolExecution.success.isnot(None),
+                ToolExecution.requested_at >= start,
+                ToolExecution.requested_at < end,
+            )
+        )
+        if where is not None:
+            calls = calls.where(where)
+        c = calls.subquery("tool_calls")
+
+        key_cols: list[Any] = []
+        label_cols: list[Any] = []
+        joins: list[tuple[Any, Any]] = []
+        if group == "team":
+            key_cols = [c.c.team_id]
+            label_cols = [Team.name.label("label"), Team.slug.label("detail")]
+            joins = [(Team, Team.id == c.c.team_id)]
+        elif group == "user":
+            key_cols = [c.c.user_id]
+            label_cols = [User.username.label("label"), User.full_name.label("detail")]
+            joins = [(User, User.id == c.c.user_id)]
+        stmt = select(
+            *key_cols, *label_cols, c.c.model, c.c.rate_id, func.count().label("calls")
+        ).select_from(c)
+        for target, condition in joins:
+            stmt = stmt.outerjoin(target, condition)
+        stmt = stmt.group_by(*key_cols, *label_cols, c.c.model, c.c.rate_id)
+        out = []
+        for row in (await self.session.execute(stmt)).all():
+            values = dict(row._mapping)
+            # The keys a usage row has, so the report files both on the same lines.
+            values.setdefault("team_id", None)
+            values.setdefault("user_id", None)
+            values.update(api_key_id=None, end_user=None, end_user_trusted=False)
+            out.append(values)
+        return out
 
     async def timings(
         self, *, group: str | None, start: dt.datetime, end: dt.datetime, where: Any = None
@@ -175,7 +274,10 @@ class ChargebackRepository:
         else:  # pragma: no cover - the API validates the group
             raise ValueError(group)
         stmt = select(
-            *key_cols, func.avg(UsageRecord.latency_ms).label("avg_latency_ms"), *timing_columns()
+            *key_cols,
+            func.avg(UsageRecord.latency_ms).label("avg_latency_ms"),
+            # E67: per model, only the model's own times to first output.
+            *timing_columns(direct_only=group == "model"),
         ).where(UsageRecord.recorded_at >= start, UsageRecord.recorded_at < end)
         if where is not None:
             stmt = stmt.where(where)

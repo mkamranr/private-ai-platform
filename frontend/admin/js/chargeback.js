@@ -86,6 +86,7 @@ function timingCells(r) {
 function cbRow(r, currency, group) {
   const flags = [];
   if (r.unpriced_requests) flags.push(`<span class="chip" title="Calls with no applicable rate">${fmtInt(r.unpriced_requests)} unpriced</span>`);
+  if (r.unpriced_tool_calls) flags.push(`<span class="chip" title="Tool calls with no tool rate">${fmtInt(r.unpriced_tool_calls)} tool calls unpriced</span>`);
   if (r.partial_requests) flags.push(`<span class="chip" title="Streams the client abandoned: token counts are a lower bound">${fmtInt(r.partial_requests)} partial</span>`);
   if (group === 'end_user' && r.trusted === false) flags.push('<span class="chip" title="Named in the request body; nothing verified it">self-reported</span>');
   const detail = r.detail && !(group === 'end_user' && r.trusted !== null) ? r.detail : '';
@@ -101,9 +102,24 @@ function cbRow(r, currency, group) {
     <td class="text-end">${r.requests ? moneyCell(r.token_cost, currency) : '<span class="text-secondary">—</span>'}</td>
     <td class="text-end">${hoursText(r.gpu_hours)}</td>
     <td class="text-end">${r.gpu_hours ? moneyCell(r.gpu_cost, currency, 'No GPU-hour rate for this model') : '<span class="text-secondary">—</span>'}</td>
+    ${unitCells(r, currency)}
     <td class="text-end fw-medium">${moneyCell(r.total_cost, currency)}</td>
     ${timingCells(r)}
   </tr>`;
+}
+
+// E67: speech in its own units, and agent tool calls.
+function unitCells(r, currency) {
+  const units = [];
+  if (r.audio_seconds) units.push(`${fmtInt(Math.round(r.audio_seconds / 60))} audio min`);
+  if (r.speech_characters) units.push(`${fmtInt(r.speech_characters)} chars`);
+  const speech = units.length
+    ? `${moneyCell(r.speech_cost, currency, 'No unit price for this speech model')}<div class="small text-secondary">${esc(units.join(' · '))}</div>`
+    : '<span class="text-secondary">—</span>';
+  const tools = r.tool_calls
+    ? `${moneyCell(r.tool_cost, currency, 'No tool rate')}<div class="small text-secondary">${fmtInt(r.tool_calls)} calls</div>`
+    : '<span class="text-secondary">—</span>';
+  return `<td class="text-end">${speech}</td><td class="text-end">${tools}</td>`;
 }
 
 function cbReportCard(report) {
@@ -122,13 +138,17 @@ function cbReportCard(report) {
     <td class="text-end">${moneyCell(t.token_cost, c)}</td>
     <td class="text-end">${hoursText(t.gpu_hours)}</td>
     <td class="text-end">${t.gpu_hours ? moneyCell(t.gpu_cost, c) : '—'}</td>
+    ${unitCells(t, c)}
     <td class="text-end">${moneyCell(t.total_cost, c)}</td>
     ${timingCells(t)}
   </tr>`;
   const head = `<th>${esc(CB_GROUP_HEAD[report.group_by])}</th><th class="text-end">Requests</th>
     <th class="text-end">Prompt tokens</th><th class="text-end">Completion tokens</th>
     <th class="text-end">Token cost</th><th class="text-end">GPU time</th>
-    <th class="text-end">GPU cost</th><th class="text-end">Total</th>
+    <th class="text-end">GPU cost</th>
+    <th class="text-end" title="Transcription per audio minute, synthesis per million characters">Speech</th>
+    <th class="text-end" title="Agent tool calls that ran, per call">Tools</th>
+    <th class="text-end">Total</th>
     <th class="text-end" title="95th percentile of request latency">p95 latency</th>
     <th class="text-end" title="Median time to first token, streamed calls only">First token (p50)</th>`;
   return sectionCard(`Cost by ${CB_GROUP_HEAD[report.group_by].toLowerCase()}`,
@@ -142,7 +162,8 @@ function cbRatesCard(rates) {
   const header = `<div class="card-body pb-0 d-flex align-items-start gap-2">
       <div class="me-auto"><h6 class="mb-1">Cost rates</h6>
         <p class="small text-secondary mb-2">Prices in ${esc(rates.currency)} (set on the Settings page).
-          A model's own rate beats the default (<code>*</code>). Rates are never edited: add a new one
+          A model's own rate beats the default (<code>*</code>). Tool calls are priced by
+          <code>tool:&lt;name&gt;</code> rates, else <code>tool:*</code>. Rates are never edited: add a new one
           with a later start to change a price.</p></div>${add}</div>`;
   if (!rates.items.length) {
     return `<div class="card mb-4">${header}<div class="card-body pt-0">${empty(
@@ -156,6 +177,7 @@ function cbRatesCard(rates) {
       <td class="text-end num">${esc(money(r.prompt_per_million, rates.currency))}</td>
       <td class="text-end num">${esc(money(r.completion_per_million, rates.currency))}</td>
       <td class="text-end">${r.gpu_hour === null ? '<span class="text-secondary">not priced</span>' : `<span class="num">${esc(money(r.gpu_hour, rates.currency))}</span>`}</td>
+      <td class="text-end">${r.unit_price === null || r.unit_price === undefined ? '<span class="text-secondary">not priced</span>' : `<span class="num">${esc(money(r.unit_price, rates.currency))}</span>`}</td>
       <td class="small">${esc(new Date(r.effective_from).toLocaleString())}
         ${r.superseded_at ? `<div class="text-secondary">until ${esc(new Date(r.superseded_at).toLocaleString())}</div>` : ''}</td>
       <td>${pill(tone, label)}</td>
@@ -164,7 +186,9 @@ function cbRatesCard(rates) {
   }).join('');
   return `<div class="card mb-4">${header}${tableHtml(
     `<th>Model</th><th class="text-end">1M prompt</th><th class="text-end">1M completion</th>
-     <th class="text-end">GPU-hour</th><th>From</th><th>Status</th><th></th>`, rows)}</div>`;
+     <th class="text-end">GPU-hour</th>
+     <th class="text-end" title="Per audio minute (transcription), per million characters (speech) or per call (tool:)">Per unit</th>
+     <th>From</th><th>Status</th><th></th>`, rows)}</div>`;
 }
 
 const BUDGET_STATUS = {
@@ -386,6 +410,7 @@ onModalSubmit('rate-form', 'rate-error', async () => {
     prompt_per_million: value('rate-prompt') || '0',
     completion_per_million: value('rate-completion') || '0',
     gpu_hour: value('rate-gpu') || null,
+    unit_price: value('rate-unit') || null,
     effective_from: from ? new Date(from).toISOString() : null,
     note: value('rate-note') || null,
   };

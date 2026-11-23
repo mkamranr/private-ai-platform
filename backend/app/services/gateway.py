@@ -251,6 +251,10 @@ class GatewayContext:
 
     #: E65: what the call asks of the model. A fallback that can't serve it is skipped.
     needs: frozenset[caps.Capability] = frozenset()
+    #: E67: `time.perf_counter()` when the person started waiting for this call's output,
+    #: if earlier than the call itself: the end of their utterance, for a voice turn's
+    #: speech. Recorded as the row's time to first output.
+    waiting_since: float | None = None
 
     @property
     def team_id(self) -> uuid.UUID | None:
@@ -702,11 +706,17 @@ class GatewayService:
         completion_tokens: int,
         streamed: bool,
         client_disconnected: bool = False,
+        ttft_ms: float | None = None,
     ) -> None:
         """One usage row for a whole `agent:` run (E17), however many model calls it
         made. `requested_model` is `agent:<slug>`, so agent traffic is reported apart from
-        direct calls to the same model. No timings: an agent's first token comes after its
-        tool calls, and mixing that into the model's TTFT would misstate the model."""
+        direct calls to the same model.
+
+        E67: a streamed run records its time to first output (the first narration or
+        answer the caller saw). An agent's first output comes after its tool calls, so
+        per-model figures leave `agent:` rows out (`timing_columns(direct_only=True)`);
+        totals and per-team, per-key and per-user figures keep them, as what callers
+        waited. No generation time: the answer arrives in one piece."""
         await self._write_usage(
             context,
             requested_model=requested_model,
@@ -717,6 +727,7 @@ class GatewayService:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             client_disconnected=client_disconnected,
+            ttft_ms=ttft_ms,
         )
 
     async def finalise_agent_stream(
@@ -732,6 +743,9 @@ class GatewayService:
             completion_tokens=accounting.completion_tokens,
             streamed=True,
             client_disconnected=accounting.disconnected,
+            ttft_ms=None
+            if getattr(accounting, "first_output_at", None) is None
+            else round((accounting.first_output_at - context.started) * 1000, 2),
         )
 
     async def release(self, context: GatewayContext) -> None:
@@ -1019,8 +1033,20 @@ class GatewayService:
 
         # Characters in, for the same reason seconds are recorded above: it is what TTS
         # engines charge by and the only quantity known before synthesis.
+        # E67: a voice turn's wait, from the end of the person's speech to audio they can
+        # hear. Kept out of the speech model's own figures (see `timing_columns`).
+        waited = (
+            None
+            if context.waiting_since is None
+            else round((time.perf_counter() - context.waiting_since) * 1000, 2)
+        )
         await self._record(
-            context, target, streamed=False, prompt_tokens=len(text), endpoint="audio.speech"
+            context,
+            target,
+            streamed=False,
+            prompt_tokens=len(text),
+            endpoint="audio.speech",
+            ttft_ms=waited,
         )
         metrics.GATEWAY_REQUESTS.labels(target.model.name, "audio.speech", "2xx").inc()
         return speech.audio, speech.audio_format

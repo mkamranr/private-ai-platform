@@ -4,6 +4,12 @@
 
 * Tokens: every gateway call in the period, at the rate in force for its model when it
   was made (see ``app.models.chargeback``).
+* Speech (E67): seconds transcribed, at a transcription model's ``unit_price`` per audio
+  minute, and characters synthesised, at a speech model's ``unit_price`` per million.
+  Never at token prices: a rate without a unit price leaves speech unpriced.
+* Agent tool calls (E67): each call that ran, at its ``tool:<name>`` rate's
+  ``unit_price``, else ``tool:*``'s. A tool with neither is counted, not priced, and kept
+  apart from unpriced model usage so a site that never prices tools isn't warned forever.
 * GPU time: the hours each model's deployments held their GPUs (``gpu_allocations``),
   at that model's ``gpu_hour`` rate, split at every rate change. A deployment's GPUs cost
   the same whether it answers one call or a thousand, so the hours are **shared out by
@@ -40,9 +46,17 @@ from app.core.csv_safe import safe_cell
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.core.scope import Scope
+from app.models.agents import Agent
 from app.models.audit import AuditAction
 from app.models.auth import User
-from app.models.chargeback import DEFAULT_RATE_MODEL, CostRate
+from app.models.chargeback import (
+    DEFAULT_RATE_MODEL,
+    DEFAULT_TOOL_RATE,
+    TOOL_RATE_PREFIX,
+    UNIT_AUDIO_SECONDS,
+    UNIT_TOKENS,
+    CostRate,
+)
 from app.models.models_registry import UsageRecord
 from app.repositories.chargeback import GROUPS, ChargebackRepository, CostRateRepository
 from app.services.audit import AuditService
@@ -51,6 +65,7 @@ log = get_logger(__name__)
 
 MILLION = Decimal(1_000_000)
 HOUR = Decimal(3600)
+MINUTE = Decimal(60)
 #: Amounts are carried at full precision and rounded once, here, for display.
 MONEY = Decimal("0.0001")
 HOURS = Decimal("0.001")
@@ -62,8 +77,9 @@ MAX_RATE = Decimal(1_000_000_000)
 #: Shown on every report and in every export.
 ESTIMATE_NOTE = (
     "Estimates from local rates, not invoices. Token costs use the rate in force for each "
-    "call's model when it was made. GPU hours are the time each model's deployments held "
-    "their GPUs, shared out by each caller's share of that model's tokens."
+    "call's model when it was made. Speech is priced per audio minute or million "
+    "characters, and agent tool calls per call. GPU hours are the time each model's "
+    "deployments held their GPUs, shared out by each caller's share of that model's usage."
 )
 
 NO_GROUP_LABEL = {
@@ -92,6 +108,14 @@ class _Line:
     gpu_cost: Decimal | None = None
     unpriced_requests: int = 0
     partial_requests: int = 0
+    #: E67: speech, counted in its own units and priced per unit.
+    audio_seconds: int = 0
+    speech_characters: int = 0
+    speech_cost: Decimal | None = None
+    #: E67: agent tool calls that ran.
+    tool_calls: int = 0
+    tool_cost: Decimal | None = None
+    unpriced_tool_calls: int = 0
     #: Tokens per model, for sharing out GPU time.
     model_tokens: dict[str, int] = field(default_factory=dict)
     #: Latency and streaming timings (E40); empty until the report fills them in.
@@ -102,6 +126,12 @@ class _Line:
 
     def add_gpu_cost(self, amount: Decimal) -> None:
         self.gpu_cost = (self.gpu_cost or Decimal(0)) + amount
+
+    def add_speech_cost(self, amount: Decimal) -> None:
+        self.speech_cost = (self.speech_cost or Decimal(0)) + amount
+
+    def add_tool_cost(self, amount: Decimal) -> None:
+        self.tool_cost = (self.tool_cost or Decimal(0)) + amount
 
 
 @dataclass(slots=True)
@@ -233,6 +263,7 @@ class ChargebackService:
                     "prompt_per_million": rate.prompt_per_million,
                     "completion_per_million": rate.completion_per_million,
                     "gpu_hour": rate.gpu_hour,
+                    "unit_price": rate.unit_price,
                     "note": rate.note,
                     "created_at": rate.created_at,
                     "currency": self.currency,
@@ -245,14 +276,19 @@ class ChargebackService:
         *,
         actor: User,
         model: str,
-        prompt_per_million: Decimal,
-        completion_per_million: Decimal,
+        prompt_per_million: Decimal = Decimal(0),
+        completion_per_million: Decimal = Decimal(0),
         gpu_hour: Decimal | None = None,
+        unit_price: Decimal | None = None,
         effective_from: dt.datetime | None = None,
         note: str | None = None,
     ) -> CostRate:
         model = model.strip()
-        if model != DEFAULT_RATE_MODEL and not await self._rates.model_is_known(model):
+        if model.startswith(TOOL_RATE_PREFIX):
+            await self._check_tool_rate(
+                model, prompt_per_million, completion_per_million, gpu_hour, unit_price
+            )
+        elif model != DEFAULT_RATE_MODEL and not await self._rates.model_is_known(model):
             raise ValidationError(
                 f"No model named {model!r} is registered or has recorded usage. Use the "
                 "name the gateway records, or '*' for the default rate.",
@@ -262,6 +298,7 @@ class ChargebackService:
             ("prompt_per_million", prompt_per_million),
             ("completion_per_million", completion_per_million),
             ("gpu_hour", gpu_hour),
+            ("unit_price", unit_price),
         ):
             if value is not None and not Decimal(0) <= value <= MAX_RATE:
                 raise ValidationError(
@@ -284,6 +321,7 @@ class ChargebackService:
             prompt_per_million=prompt_per_million,
             completion_per_million=completion_per_million,
             gpu_hour=gpu_hour,
+            unit_price=unit_price,
             note=(note or "").strip() or None,
             created_by=actor.id,
         )
@@ -304,6 +342,33 @@ class ChargebackService:
         )
         log.info("cost_rate_created", model=model, effective_from=when.isoformat())
         return rate
+
+    async def _check_tool_rate(
+        self,
+        model: str,
+        prompt: Decimal,
+        completion: Decimal,
+        gpu_hour: Decimal | None,
+        unit_price: Decimal | None,
+    ) -> None:
+        """A ``tool:`` rate prices calls to a known tool (or ``tool:*``), and only calls."""
+        tool = model.removeprefix(TOOL_RATE_PREFIX).strip()
+        if model != DEFAULT_TOOL_RATE and (not tool or not await self._rates.tool_is_known(tool)):
+            raise ValidationError(
+                f"No tool named {tool!r} is registered or has been called. Use the tool's "
+                f"name, or {DEFAULT_TOOL_RATE!r} for the default tool rate.",
+                details={"field": "model"},
+            )
+        if unit_price is None:
+            raise ValidationError(
+                "A tool rate needs unit_price: the price of one call.",
+                details={"field": "unit_price"},
+            )
+        if prompt or completion or gpu_hour is not None:
+            raise ValidationError(
+                "A tool rate prices calls only; leave the token and GPU prices empty.",
+                details={"field": "prompt_per_million"},
+            )
 
     async def delete_rate(self, rate_id: uuid.UUID, *, actor: User, reason: str | None) -> None:
         rate = await self._rates.get(rate_id)
@@ -328,6 +393,7 @@ class ChargebackService:
             "prompt_per_million": str(rate.prompt_per_million),
             "completion_per_million": str(rate.completion_per_million),
             "gpu_hour": None if rate.gpu_hour is None else str(rate.gpu_hour),
+            "unit_price": None if rate.unit_price is None else str(rate.unit_price),
             "currency": self.currency,
         }
 
@@ -360,21 +426,50 @@ class ChargebackService:
             group=group, start=begin, end=finish, where=scope.clause(UsageRecord.team_id)
         ):
             line = self._line_for(group, row, lines)
-            tokens = int(row["prompt_tokens"]) + int(row["completion_tokens"])
+            prompt, completion = int(row["prompt_tokens"]), int(row["completion_tokens"])
+            unit = row.get("unit") or UNIT_TOKENS
             line.requests += int(row["requests"])
-            line.prompt_tokens += int(row["prompt_tokens"])
-            line.completion_tokens += int(row["completion_tokens"])
             line.partial_requests += int(row["partial"])
-            line.model_tokens[row["model"]] = line.model_tokens.get(row["model"], 0) + tokens
+            # GPU time is shared by usage per model, whatever its unit: one model only
+            # ever counts one kind.
+            line.model_tokens[row["model"]] = (
+                line.model_tokens.get(row["model"], 0) + prompt + completion
+            )
+            if unit == UNIT_TOKENS:
+                line.prompt_tokens += prompt
+                line.completion_tokens += completion
+            elif unit == UNIT_AUDIO_SECONDS:
+                line.audio_seconds += prompt
+            else:
+                line.speech_characters += prompt
             rate = by_id.get(row["rate_id"]) if row["rate_id"] else None
-            if rate is None:
+            if rate is None or (unit != UNIT_TOKENS and rate.unit_price is None):
+                # E67: speech without a unit price is unpriced, never priced as tokens.
                 line.unpriced_requests += int(row["requests"])
                 unpriced_models.add(row["model"])
                 continue
-            line.add_token_cost(
-                Decimal(int(row["prompt_tokens"])) * rate.prompt_per_million / MILLION
-                + Decimal(int(row["completion_tokens"])) * rate.completion_per_million / MILLION
-            )
+            if unit == UNIT_TOKENS:
+                line.add_token_cost(
+                    Decimal(prompt) * rate.prompt_per_million / MILLION
+                    + Decimal(completion) * rate.completion_per_million / MILLION
+                )
+            elif unit == UNIT_AUDIO_SECONDS:
+                line.add_speech_cost(Decimal(prompt) / MINUTE * (rate.unit_price or 0))
+            else:
+                line.add_speech_cost(Decimal(prompt) / MILLION * (rate.unit_price or 0))
+
+        # E67: agent tool calls, on the same lines.
+        for row in await self._reports.tool_calls(
+            group=group, start=begin, end=finish, where=scope.clause(Agent.team_id)
+        ):
+            line = self._line_for(group, row, lines)
+            count = int(row["calls"])
+            line.tool_calls += count
+            rate = by_id.get(row["rate_id"]) if row["rate_id"] else None
+            if rate is None or rate.unit_price is None:
+                line.unpriced_tool_calls += count
+                continue
+            line.add_tool_cost(count * rate.unit_price)
 
         gpu = self._gpu_by_model(
             await self._reports.model_gpu_reservations(start=begin, end=finish),
@@ -443,6 +538,12 @@ class ChargebackService:
                 "total_cost": _sum(r["total_cost"] for r in every),
                 "unpriced_requests": sum(r["unpriced_requests"] for r in rows),
                 "partial_requests": sum(r["partial_requests"] for r in rows),
+                "audio_seconds": sum(r["audio_seconds"] for r in rows),
+                "speech_characters": sum(r["speech_characters"] for r in rows),
+                "speech_cost": _sum(r["speech_cost"] for r in rows),
+                "tool_calls": sum(r["tool_calls"] for r in rows),
+                "tool_cost": _sum(r["tool_cost"] for r in rows),
+                "unpriced_tool_calls": sum(r["unpriced_tool_calls"] for r in rows),
                 **_timing_fields(overall if rows else {}),
             },
         }
@@ -532,6 +633,7 @@ class ChargebackService:
             "total_cost": _money(cost),
             "unpriced_requests": 0,
             "partial_requests": 0,
+            **_UNIT_ZEROS,
             **_timing_fields({}),
         }
 
@@ -539,6 +641,8 @@ class ChargebackService:
     def _row(line: _Line) -> dict[str, Any]:
         token_cost = _money(line.token_cost)
         gpu_cost = _money(line.gpu_cost)
+        speech_cost = _money(line.speech_cost)
+        tool_cost = _money(line.tool_cost)
         return {
             "key": line.key,
             "label": line.label,
@@ -550,9 +654,15 @@ class ChargebackService:
             "token_cost": token_cost,
             "gpu_hours": _hours(line.gpu_hours),
             "gpu_cost": gpu_cost,
-            "total_cost": _sum([token_cost, gpu_cost]),
+            "total_cost": _sum([token_cost, gpu_cost, speech_cost, tool_cost]),
             "unpriced_requests": line.unpriced_requests,
             "partial_requests": line.partial_requests,
+            "audio_seconds": line.audio_seconds,
+            "speech_characters": line.speech_characters,
+            "speech_cost": speech_cost,
+            "tool_calls": line.tool_calls,
+            "tool_cost": tool_cost,
+            "unpriced_tool_calls": line.unpriced_tool_calls,
             **_timing_fields(line.timings),
         }
 
@@ -585,6 +695,8 @@ class ChargebackService:
                 "estimate",
                 # E40, appended so the columns before keep their places.
                 *TIMING_FIELDS,
+                # E67, likewise.
+                *UNIT_FIELDS,
             ]
         )
         rows = [*report["rows"], *([report["idle"]] if report["idle"] else [])]
@@ -609,6 +721,10 @@ class ChargebackService:
                     report["period_end"].isoformat(),
                     "true",
                     *(_number(row[name]) for name in TIMING_FIELDS),
+                    *(
+                        _amount(row[name]) if name.endswith("_cost") else row[name]
+                        for name in UNIT_FIELDS
+                    ),
                 ]
             )
         await self._audit.record(
@@ -639,6 +755,25 @@ TIMING_FIELDS = (
     "output_tps_p50",
     "timed_streams",
 )
+
+
+#: Speech and tool columns (E67), on every row, the totals and the CSV.
+UNIT_FIELDS = (
+    "audio_seconds",
+    "speech_characters",
+    "speech_cost",
+    "tool_calls",
+    "tool_cost",
+    "unpriced_tool_calls",
+)
+_UNIT_ZEROS: dict[str, Any] = {
+    "audio_seconds": 0,
+    "speech_characters": 0,
+    "speech_cost": None,
+    "tool_calls": 0,
+    "tool_cost": None,
+    "unpriced_tool_calls": 0,
+}
 
 
 def _timing_fields(values: dict[str, Any]) -> dict[str, Any]:

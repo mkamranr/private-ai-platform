@@ -22,11 +22,25 @@ class CostRateCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model: str = Field(
-        min_length=1, max_length=128, description="Model name, or '*' for the default"
+        min_length=1,
+        max_length=128,
+        description="Model name, '*' for the default, or 'tool:<name>' / 'tool:*' for tools",
     )
-    prompt_per_million: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
-    completion_per_million: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
+    prompt_per_million: Decimal = Field(default=Decimal(0), ge=0, max_digits=18, decimal_places=6)
+    completion_per_million: Decimal = Field(
+        default=Decimal(0), ge=0, max_digits=18, decimal_places=6
+    )
     gpu_hour: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
+    unit_price: Decimal | None = Field(
+        default=None,
+        ge=0,
+        max_digits=18,
+        decimal_places=6,
+        description=(
+            "E67: per audio minute (transcription model), per million characters (speech "
+            "model) or per call (tool rate)"
+        ),
+    )
     effective_from: dt.datetime | None = Field(
         default=None, description="When the rate starts. Defaults to now; may be in the past."
     )
@@ -48,6 +62,7 @@ class CostRateRead(BaseModel):
     prompt_per_million: Decimal
     completion_per_million: Decimal
     gpu_hour: Decimal | None
+    unit_price: Decimal | None = None
     note: str | None
     created_at: dt.datetime
     currency: str
@@ -73,6 +88,13 @@ class ChargebackRow(BaseModel):
     total_cost: Decimal | None
     unpriced_requests: int
     partial_requests: int
+    #: E67: speech in its own units, and agent tool calls.
+    audio_seconds: int = 0
+    speech_characters: int = 0
+    speech_cost: Decimal | None = None
+    tool_calls: int = 0
+    tool_cost: Decimal | None = None
+    unpriced_tool_calls: int = 0
     #: Timings (E40). None when nothing was measured; TTFT and tok/s are from streamed
     #: calls only, and ``timed_streams`` says how many.
     avg_latency_ms: float | None = None
@@ -93,6 +115,13 @@ class ChargebackTotals(BaseModel):
     total_cost: Decimal | None
     unpriced_requests: int
     partial_requests: int
+    #: E67: speech in its own units, and agent tool calls.
+    audio_seconds: int = 0
+    speech_characters: int = 0
+    speech_cost: Decimal | None = None
+    tool_calls: int = 0
+    tool_cost: Decimal | None = None
+    unpriced_tool_calls: int = 0
     #: Timings (E40). None when nothing was measured; TTFT and tok/s are from streamed
     #: calls only, and ``timed_streams`` says how many.
     avg_latency_ms: float | None = None

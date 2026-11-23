@@ -150,6 +150,9 @@ class AgentStreamAccounting:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     disconnected: bool = False
+    #: E67: `time.perf_counter()` at the first frame with visible text (narration or the
+    #: answer), for the run's time to first output. None if nothing was shown.
+    first_output_at: float | None = None
 
 
 async def run_agent_buffered(
@@ -219,8 +222,11 @@ async def run_agent_streamed(
     chat protocol can carry.
     """
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+    accounting = accounting if accounting is not None else AgentStreamAccounting()
 
     def frame(delta: dict[str, Any], finish: str | None = None) -> str:
+        if delta.get("content") and accounting.first_output_at is None:
+            accounting.first_output_at = time.perf_counter()
         return (
             "data: "
             + json.dumps(
@@ -235,7 +241,6 @@ async def run_agent_streamed(
             + "\n\n"
         )
 
-    accounting = accounting if accounting is not None else AgentStreamAccounting()
     try:
         async for chunk in _narrate(
             frame, agent, runs, actor, message, conversation_id, accounting
