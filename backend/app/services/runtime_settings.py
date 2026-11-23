@@ -301,6 +301,30 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next support bundle",
     ),
     RuntimeSetting(
+        "agents.answer_scoring_percent",
+        "general",
+        "Agent answers judged (%)",
+        "The share of agent answers drawn from knowledge-base passages whose faithfulness to "
+        "those passages is judged, by the model below. 0 judges none. Each judged answer is "
+        "one more model call, charged to the agent's team. Scores are on the Agents page.",
+        "Next agent run",
+    ),
+    RuntimeSetting(
+        "agents.answer_judge_model",
+        "general",
+        "Agent answer judge model",
+        "The alias or model that judges sampled agent answers. Empty judges none. A "
+        "different, stronger model than the agents use gives a more useful verdict.",
+        "Next answer judged",
+    ),
+    RuntimeSetting(
+        "agents.answer_score_retention_days",
+        "retention",
+        "Agent answer scores kept (days)",
+        "Scored agent answers older than this are deleted, hourly.",
+        "Within an hour",
+    ),
+    RuntimeSetting(
         "agents.approval_ttl_hours",
         "security",
         "Approvals expire after (hours)",

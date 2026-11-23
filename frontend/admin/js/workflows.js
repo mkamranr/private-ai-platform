@@ -341,7 +341,7 @@ function renderBuilder() {
           </div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0">
-              <tbody>${nodes.map((n) => nodeRow(n, edit)).join('') ||
+              <tbody>${nodes.map((n) => wfNodeRow(n, edit)).join('') ||
                 `<tr><td class="text-secondary small p-3">No nodes.</td></tr>`}</tbody>
             </table>
           </div>
@@ -412,7 +412,7 @@ function nodeSummary(n) {
   }
 }
 
-function nodeRow(n, edit) {
+function wfNodeRow(n, edit) {
   const retry = n.retry?.max_attempts > 1 ? `<span class="chip" title="Retries">×${esc(n.retry.max_attempts)}</span>` : '';
   return `<tr>
     <td style="width:7.5rem"><span class="wf-type wf-t-${esc(n.type)}">${esc(WF_TYPE_LABEL[n.type] || n.type)}</span></td>
@@ -1212,7 +1212,7 @@ function renderRunTab() {
 /* -------------------------------------------------------------------------- */
 /* Runs                                                                       */
 /* -------------------------------------------------------------------------- */
-function duration(run) {
+function wfDuration(run) {
   if (!run.started_at) return '—';
   const end = run.finished_at ? new Date(run.finished_at) : new Date();
   const ms = end - new Date(run.started_at);
@@ -1235,7 +1235,7 @@ async function renderRunsTab() {
           <td class="small">${esc(r.trigger)}</td>
           <td class="small">${r.version ? `v${esc(r.version)}` : '<span class="text-secondary">draft</span>'}</td>
           <td class="small">${esc(r.step_count)}</td>
-          <td class="small">${esc(duration(r))}</td>
+          <td class="small">${esc(wfDuration(r))}</td>
           <td class="text-end"><button class="btn btn-sm btn-outline-secondary" data-wf-run="${esc(r.id)}">Trace</button></td>
         </tr>`).join('')}</tbody>
       </table>
@@ -1265,7 +1265,7 @@ function showWorkflowRun(run) {
   body.innerHTML = `
     <div class="row g-3 mb-3">
       ${[['Trigger', run.trigger], ['Version', run.version ? `v${run.version}` : 'draft'],
-         ['Steps', run.step_count], ['Duration', duration(run)]].map(([label, value]) => `
+         ['Steps', run.step_count], ['Duration', wfDuration(run)]].map(([label, value]) => `
         <div class="col-6 col-lg-3"><div class="stat-card">
           <div class="stat-value" style="font-size:1.1rem">${esc(value)}</div>
           <div class="stat-label">${esc(label)}</div>

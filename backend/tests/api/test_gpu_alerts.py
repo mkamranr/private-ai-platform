@@ -15,6 +15,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import GpuSettings
+from app.models.audit import AuditLog
 from app.models.infrastructure import Gpu, GpuMetric, Node, NodeStatus
 from app.models.operations import Alert, AlertSeverity, AlertState
 from app.repositories.audit import AuditRepository
@@ -27,6 +28,7 @@ from app.services.gpu_alerts import (
     GpuAlertWatcher,
     evaluate,
     gpu_alert_fingerprint,
+    node_settings,
 )
 from app.services.notifications import KNOWN_SOURCES
 from tests.conftest import auth_header
@@ -339,3 +341,77 @@ class TestNoFlapping:
             headers=headers,
         )
         assert response.status_code == 422
+
+
+class TestNodeLevels:
+    """E70: a node's own levels replace the platform's for its GPUs."""
+
+    async def _node_levels(self, session: AsyncSession, gpu: Gpu, **levels) -> None:
+        node = await session.get(Node, gpu.node_id)
+        node.gpu_alert_thresholds = levels
+        await session.flush()
+
+    async def test_a_hot_room_node_alerts_later(self, session: AsyncSession, gpu: Gpu) -> None:
+        await self._node_levels(
+            session, gpu, temperature_warning_celsius=88, temperature_critical_celsius=95
+        )
+        await _sample(session, gpu, temperature=86)
+        assert (await _watcher(session).run(GpuSettings())).raised == []
+        await _sample(session, gpu, temperature=91, at=NOW + dt.timedelta(seconds=15))
+        await _watcher(session, NOW + dt.timedelta(seconds=15)).run(GpuSettings())
+        alert = await _open_alert(session, gpu)
+        assert alert.severity == AlertSeverity.WARNING  # 91 < this node's critical 95
+        assert "warning level (88 °C)" in alert.message
+
+    async def test_unset_levels_come_from_the_platform(
+        self, session: AsyncSession, gpu: Gpu
+    ) -> None:
+        await self._node_levels(session, gpu, memory_warning_percent=80)
+        await _sample(session, gpu, memory_used=70000)  # 85%
+        await _watcher(session).run(GpuSettings())
+        alert = await _open_alert(session, gpu)
+        assert alert.severity == AlertSeverity.WARNING and "memory 85% used" in alert.title
+        await _sample(session, gpu, temperature=91, at=NOW + dt.timedelta(seconds=15))
+        await _watcher(session, NOW + dt.timedelta(seconds=15)).run(GpuSettings())
+        await session.refresh(alert)
+        assert alert.severity == AlertSeverity.CRITICAL  # the platform's 90 °C
+
+    def test_levels_that_no_longer_fit_fall_back(self) -> None:
+        platform = GpuSettings(alert_temperature_critical_celsius=85)
+        merged = node_settings(platform, {"temperature_warning_celsius": 88})
+        assert merged == platform
+        merged = node_settings(GpuSettings(), {"temperature_warning_celsius": 70, "x": 1})
+        assert merged.alert_temperature_warning_celsius == 70
+
+    async def test_set_through_the_api(
+        self, client: AsyncClient, tokens, superuser, gpu: Gpu, session: AsyncSession
+    ) -> None:
+        headers = auth_header(tokens, superuser)
+        url = f"/api/v1/nodes/{gpu.node_id}/gpu-alert-levels"
+        response = await client.put(url, json={"temperature_warning_celsius": 92}, headers=headers)
+        assert response.status_code == 422, response.text  # above the platform's 90 °C critical
+        assert "below the critical" in response.json()["error"]["message"]
+
+        response = await client.put(
+            url,
+            json={"temperature_warning_celsius": 88, "temperature_critical_celsius": 95},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["gpu_alert_thresholds"] == {
+            "temperature_warning_celsius": 88,
+            "temperature_critical_celsius": 95,
+        }
+        action = (
+            (
+                await session.execute(
+                    select(AuditLog.action).where(AuditLog.resource_id == str(gpu.node_id))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert "NODE_GPU_LEVELS_CHANGED" in action
+
+        response = await client.put(url, json={}, headers=headers)
+        assert response.status_code == 200 and response.json()["gpu_alert_thresholds"] is None

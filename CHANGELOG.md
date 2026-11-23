@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Per-node GPU alert levels, and live agent answers scored
+- **A node can have its own GPU alert levels**: its own warning and critical temperatures and memory level, for a hot room or cards rated for more. *Alert levels* on the Nodes page; empty fields use the platform's.
+- **Agent answers can be judged for faithfulness.** Set a share (`agents.answer_scoring_percent`) and a judge model (`agents.answer_judge_model`) on the Settings page, and that share of answers drawn from knowledge bases is checked against the passages they were given, in the background. *Quality* on the Agents page shows the average and each answer's unsupported claims. Each judged answer is one more model call, charged to the agent's team. The passages are deleted once judged.
+- **Fixed: the Nodes page table** showed rows drawn by a workflow-builder function with the same name, and workflow run durations used the operations page's format.
+- **Upgrade.** Migration `d2a4c6e8f0b1`. Answer scoring is off until both settings are set.
+
 ### Workflows: a canvas, checked settings and parallel branches
 - **The Workflows builder is a canvas.** Drag steps to arrange them, drag from a step's dot to another step to connect them (conditions and approvals have one dot per branch, and every step a red one for its failure branch), click a step to edit it, and press Delete to remove a step or connection. Positions are saved with the draft; *Auto-arrange* tidies up.
 - **Settings are checked against each step type.** A misspelt or unknown setting, a value of the wrong type or out of range, and a template that reads a step that doesn't exist, runs later or has no such output are listed before publishing. The step form offers the values of earlier steps to insert.

@@ -102,6 +102,10 @@ class Node(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(16), default=NodeStatus.UNKNOWN, nullable=False, index=True
     )
     status_detail: Mapped[str | None] = mapped_column(Text)
+    #: E70: this node's own GPU alert levels, overriding the platform's for its GPUs:
+    #: ``{"temperature_warning_celsius", "temperature_critical_celsius",
+    #: "memory_warning_percent"}``, each optional. Null: the platform's levels.
+    gpu_alert_thresholds: Mapped[dict | None] = mapped_column(JSONB)
 
     os_info: Mapped[str | None] = mapped_column(String(255))
     kernel_version: Mapped[str | None] = mapped_column(String(255))

@@ -14,7 +14,7 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
-from app.config.settings import Settings
+from app.config.settings import GpuSettings, Settings
 from app.core.errors import (
     ConflictError,
     DependencyUnavailableError,
@@ -298,6 +298,47 @@ class NodeService:
             resource_id=str(node_id),
             metadata={"name": name},
         )
+
+    async def set_gpu_alert_levels(
+        self,
+        node_id: uuid.UUID,
+        levels: dict[str, int | None],
+        *,
+        platform: GpuSettings,
+        actor: User,
+    ) -> Node:
+        """E70: the node's own GPU alert levels; an empty set returns it to the platform's.
+
+        Checked against the platform's current levels, so the node's warning stays below
+        its critical whichever of the two each comes from."""
+        node = await self.get_node(node_id)
+        chosen = {k: v for k, v in levels.items() if v is not None}
+        merged = {
+            "warning": chosen.get(
+                "temperature_warning_celsius", platform.alert_temperature_warning_celsius
+            ),
+            "critical": chosen.get(
+                "temperature_critical_celsius", platform.alert_temperature_critical_celsius
+            ),
+        }
+        if merged["warning"] >= merged["critical"]:
+            raise ValidationError(
+                f"The warning temperature ({merged['warning']} °C) must be below the critical "
+                f"temperature ({merged['critical']} °C); a level left empty is the platform's.",
+                details={"field": "temperature_warning_celsius"},
+            )
+        before = node.gpu_alert_thresholds
+        node.gpu_alert_thresholds = chosen or None
+        await self._nodes.flush()
+        await self._audit.record(
+            AuditAction.NODE_GPU_LEVELS_CHANGED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="node",
+            resource_id=str(node_id),
+            metadata={"name": node.name, "before": before, "after": node.gpu_alert_thresholds},
+        )
+        return node
 
     # -- synchronisation ---------------------------------------------------
     async def sync_node(self, node: Node, *, token: str | None = None) -> SyncResult:

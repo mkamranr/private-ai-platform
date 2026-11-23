@@ -42,6 +42,7 @@ from app.schemas.infrastructure import (
     ContainerActionResponse,
     ContainerLogsRead,
     ContainerRead,
+    GpuAlertLevels,
     GpuAllocationRead,
     GpuDetail,
     GpuHealthEventRead,
@@ -195,6 +196,26 @@ async def get_node(
     node_id: uuid.UUID = Path(...),
 ) -> NodeRead:
     return NodeRead.model_validate(await service.get_node(node_id))
+
+
+@router.put(
+    "/nodes/{node_id}/gpu-alert-levels",
+    response_model=NodeRead,
+    summary="Set a node's own GPU alert levels",
+)
+async def set_node_gpu_alert_levels(
+    service: NodeServiceDep,
+    settings: EffectiveSettingsDep,
+    actor: Annotated[User, require_permission(Perm.INFRASTRUCTURE_MANAGE)],
+    body: GpuAlertLevels,
+    node_id: uuid.UUID = Path(...),
+) -> NodeRead:
+    """E70: replaces the platform's GPU alert levels for this node's GPUs. A level left
+    null is the platform's; all null returns the node to the platform's levels."""
+    node = await service.set_gpu_alert_levels(
+        node_id, body.model_dump(), platform=settings.gpu, actor=actor
+    )
+    return NodeRead.model_validate(node)
 
 
 @router.delete(
