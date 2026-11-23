@@ -64,7 +64,8 @@ class TestAgentStreams:
         assert any("Using lookup" in f for f in frames)
         # Not the role-only frame sent at once: the narration after the first model call.
         assert accounting.first_output_at is not None
-        assert accounting.first_output_at - started >= 0.02
+        # Windows timers can wake a millisecond early, hence 15 ms for a 20 ms sleep.
+        assert accounting.first_output_at - started >= 0.015
 
     async def test_finalising_records_it(self):
         recorded: dict[str, Any] = {}

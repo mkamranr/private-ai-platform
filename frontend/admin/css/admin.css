@@ -820,6 +820,32 @@ body.app-active main {
 .wf-graph .wf-st-running .wf-node-dot { fill: var(--info); }
 .wf-graph .wf-st-skipped, .wf-graph .wf-st-pending { opacity: .45; }
 
+/* The editing canvas (E69) */
+.wf-canvas { touch-action: none; user-select: none; background:
+  radial-gradient(circle, color-mix(in srgb, var(--bs-border-color) 80%, transparent) 1px, transparent 1px) 0 0 / 16px 16px; border-radius: .5rem; }
+.wf-canvas:focus { outline: none; }
+.wf-editable .wf-node { cursor: grab; }
+.wf-editable .wf-node:active { cursor: grabbing; }
+.wf-canvas .wf-node:focus { outline: none; }
+.wf-canvas .wf-node:focus-visible rect:first-of-type,
+.wf-canvas .wf-node.wf-sel rect:first-of-type { stroke: var(--bs-primary); stroke-width: 2.2; }
+.wf-canvas .wf-node.wf-target rect:first-of-type { stroke: var(--ok); stroke-width: 2.5; }
+.wf-canvas .wf-port { fill: var(--surface-raised, #fff); stroke: var(--wf-c); stroke-width: 2; cursor: crosshair; }
+.wf-canvas .wf-port:hover { fill: var(--wf-c); }
+.wf-canvas .wf-port-neg { stroke-dasharray: 2 1.5; }
+.wf-canvas .wf-port-error { stroke: var(--crit); }
+.wf-canvas .wf-port-error:hover { fill: var(--crit); }
+.wf-canvas .wf-port-in { fill: #9aa3c7; }
+.wf-canvas .wf-edge-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+.wf-canvas .wf-conn.wf-sel .wf-edge { stroke: var(--bs-primary); stroke-width: 2.4; }
+.wf-canvas .wf-edge-temp { stroke: var(--bs-primary); stroke-dasharray: 4 3; pointer-events: none; }
+.wf-canvas .wf-edge-del { cursor: pointer; }
+.wf-canvas .wf-edge-del circle { fill: var(--crit); }
+.wf-canvas .wf-edge-del path { stroke: #fff; stroke-width: 1.8; }
+.wf-add .wf-legend { margin: 0 .35rem 0 0; }
+.wf-refs { display: flex; flex-wrap: wrap; gap: .3rem; }
+.wf-refs .chip { border: 0; cursor: pointer; font-size: .72rem; }
+
 .wf-templates { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .6rem; }
 .wf-template {
   display: flex; gap: .55rem; align-items: flex-start; padding: .65rem .75rem; cursor: pointer;
