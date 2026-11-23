@@ -35,7 +35,7 @@ runs these operations itself:
   |---|---|
   | backup.create | `scripts/backup.py create` |
   | backup.verify | `scripts/backup.py verify backups/<name>` |
-  | backup.restore | `scripts/backup.py restore backups/<name> --yes [--parts …] [--knowledge-base <id> … \| --team <id>]` |
+  | backup.restore | `scripts/backup.py restore backups/<name> --yes [--parts …] [--knowledge-base <id> … \| --team <id> [--knowledge-only]]` |
   | bundle.verify | signature check, then `offline/lib.sh` `verify_bundle` |
   | upgrade | the installed `offline/upgrade.sh`, then optionally `alembic upgrade head` |
   | rollback | `offline/rollback.sh <root> <point> --yes` |
@@ -308,7 +308,7 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 | `GET /ops/backups`, `POST /ops/backups` | `backup.manage` | list (with last verify), take |
 | `GET /ops/backups/schedule` | `backup.manage` | schedule, next due, overdue, retention candidates |
 | `POST /ops/backups/{name}/verify` | `backup.manage` | |
-| `POST /ops/backups/{name}/restore` | `backup.restore` | body `{confirm: name, reason, parts?, knowledge_base_ids? \| team_id?}` |
+| `POST /ops/backups/{name}/restore` | `backup.restore` | body `{confirm: name, reason, parts?, knowledge_base_ids? \| team_id? [knowledge_only?]}` |
 | `GET /ops/bundles`, `POST /ops/bundles/{name}/verify` | `system.upgrade` | |
 | `GET /ops/bundles/{name}/preflight` | `system.upgrade` | checks with pass/warn/fail |
 | `POST /ops/upgrades` | `system.upgrade` | `{bundle, confirm, reason, migrate}`; refused while preflight fails |

@@ -133,6 +133,47 @@ deleting the user did. Files or vectors asked for without the database part are 
 for a base that isn't on the platform any more. There is no encryption key check: these
 tables hold nothing encrypted.
 
+## Restoring a team
+
+`--team` brings back the team's setup as well as its knowledge bases: the team itself,
+its memberships, its tools, agents (every version, with their tool and skill grants),
+workflows (every version), API clients and keys, and the quotas and cost budgets set for
+the team or for its keys.
+
+```
+python3 scripts/backup.py restore backups/20261110T020000Z --team legal
+python3 scripts/backup.py restore backups/20261110T020000Z --team legal --knowledge-only
+```
+
+`--knowledge-only` restores only its knowledge bases, as before. On the Backup & Restore
+page, choose *Only one team* as the scope; the *Only its knowledge bases* box is the same
+switch. A team that owned no knowledge bases can be restored too (not with
+`--knowledge-only`, which would have nothing to do).
+
+The confirmation lists how many of each the backup holds. Then, in the same transaction as
+the knowledge bases (the team's rows go first, so a base finds its team):
+
+* **Rows the backup has are put back as they were**, under the same ids. A team, agent or
+  workflow deleted since comes back, and its old run history points at it again. An agent
+  version's tool and skill grants are replaced by the backup's.
+* **What the team made since is kept**: an agent, workflow or key created after the backup
+  is not deleted. Run history, approvals and question history are not touched.
+* **Members are only added.** Anyone in the team at the time of the backup is a member
+  again; someone who joined since stays.
+* **API keys never come back usable by accident.** A key revoked since stays revoked, and
+  a key deleted since comes back revoked. Reissue one deliberately if it is wanted.
+* **Things that no longer exist:** a grant of a tool or skill deleted since is dropped, a
+  membership of a deleted user is dropped, and an owner or creator who was deleted is
+  cleared, as deleting them did. Anything else that points at a missing row refuses.
+* **A name taken since refuses** (another team, agent, workflow, tool or API client now has
+  it, under another id), and nothing changes.
+
+Unlike knowledge bases, a team's setup holds encrypted values (tool credentials,
+workflow webhook secrets, API client identity secrets), so it needs **the backup's encryption key**, as a whole
+restore does. Under another key the setup is refused with a pointer to `--knowledge-only`;
+files alone need no key. Models and aliases the team owned are not restored: they are tied
+to deployments that may no longer exist.
+
 ## A trap worth knowing
 
 `pg_restore` cannot read a custom-format dump from a **pipe** — it fails with "input file

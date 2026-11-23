@@ -534,6 +534,7 @@ class TestScopedRestore:
     KB_A = "11111111-1111-4111-8111-111111111111"
     KB_B = "22222222-2222-4222-8222-222222222222"
     TEAM = "33333333-3333-4333-8333-333333333333"
+    LONE_TEAM = "55555555-5555-4555-8555-555555555555"
     OTHER_KEY = "20260901T020000Z"
     OLD = "20260801T020000Z"
 
@@ -613,6 +614,51 @@ class TestScopedRestore:
         assert r.status_code == 202, r.text
         spec = (await claim(client, runner_headers)).json()
         assert spec["params"] == {"backup": BACKUP, "team": self.TEAM}
+
+    async def test_a_team_setup_needs_the_backups_key(
+        self, client, operator, tokens, runner_headers
+    ):
+        """E68: a team's setup holds encrypted credentials; its knowledge bases don't."""
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(client, tokens, operator, self.OTHER_KEY, team_id=self.TEAM)
+        assert r.status_code == 422 and "knowledge_only" in r.text
+        r = await self._restore(
+            client, tokens, operator, self.OTHER_KEY, team_id=self.TEAM, knowledge_only=True
+        )
+        assert r.status_code == 202, r.text
+        spec = (await claim(client, runner_headers)).json()
+        assert spec["params"] == {
+            "backup": self.OTHER_KEY,
+            "team": self.TEAM,
+            "knowledge_only": True,
+        }
+
+    async def test_a_team_without_knowledge_bases(self, client, operator, tokens, runner_headers):
+        """E68: its setup can be restored; knowledge_only would have nothing to do."""
+        backups = self._backups()
+        backups[0]["teams"].append({"id": self.LONE_TEAM, "name": "ops"})
+        await beat(client, runner_headers, backups=backups)
+        r = await self._restore(
+            client, tokens, operator, BACKUP, team_id=self.LONE_TEAM, knowledge_only=True
+        )
+        assert r.status_code == 422 and "no knowledge bases" in r.text
+        r = await self._restore(client, tokens, operator, BACKUP, team_id=self.LONE_TEAM)
+        assert r.status_code == 202, r.text
+
+    async def test_files_alone_need_no_key(self, client, operator, tokens, runner_headers):
+        """Restoring only a team's files touches no setup, so any key will do."""
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(
+            client, tokens, operator, self.OTHER_KEY, team_id=self.TEAM, parts=["files"]
+        )
+        assert r.status_code == 202, r.text
+
+    async def test_knowledge_only_needs_a_team(self, client, operator, tokens, runner_headers):
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(
+            client, tokens, operator, BACKUP, knowledge_base_ids=[self.KB_A], knowledge_only=True
+        )
+        assert r.status_code == 422
 
     async def test_unknown_ids_are_refused(self, client, operator, tokens, runner_headers):
         await beat(client, runner_headers, backups=self._backups())

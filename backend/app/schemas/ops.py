@@ -230,16 +230,22 @@ class RestoreRequest(ConfirmedJobRequest):
 
     E64: ``knowledge_base_ids`` or ``team_id`` restores only those knowledge bases (or the
     ones the team owns in the backup), leaving the rest of the platform as it is.
+
+    E68: with ``team_id`` the team's setup comes back too (members, tools, agents,
+    workflows, API clients and keys, quotas, cost budgets), unless ``knowledge_only``.
     """
 
     parts: list[RestorePart] | None = Field(default=None, min_length=1)
     knowledge_base_ids: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=50)
     team_id: uuid.UUID | None = None
+    knowledge_only: bool = False
 
     @model_validator(mode="after")
     def _one_scope(self) -> RestoreRequest:
         if self.knowledge_base_ids and self.team_id:
             raise ValueError("Choose knowledge bases or a team, not both.")
+        if self.knowledge_only and self.team_id is None:
+            raise ValueError("knowledge_only goes with team_id.")
         return self
 
 

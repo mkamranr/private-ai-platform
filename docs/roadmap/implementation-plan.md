@@ -469,7 +469,7 @@ dashboard real signals.
 - [x] `GpuSettings`: `alerts_enabled`, `alert_temperature_warning_celsius` (83), `alert_temperature_critical_celsius` (90, warning must be lower), `alert_memory_warning_percent` (98, the node agent's level, above what model servers reserve). Runtime settings in a new *GPU monitoring* category. Uncorrectable ECC errors are always CRITICAL.
 - [x] `app/services/gpu_alerts.py` `GpuAlertWatcher`, run by the worker job `gpu_alerts` (`WORKERS__GPU_ALERT_INTERVAL_SECONDS`, 60): each GPU's newest sample from the last five minutes (`GpuMetricRepository.latest_per_gpu`, `DISTINCT ON`), one alert per GPU (`gpu_threshold:<gpu_id>`, resource `gpu`, no team) at the worst level, title naming the node, index and readings. Cleared on recovery, after five minutes without a sample, or when turned off. `gpu_threshold` added to the channel source filter. No migration.
 - [x] Tests: `tests/api/test_gpu_alerts.py`. Docs: [gpu.md](../gpu.md#threshold-alerts), settings.md, notifications.md.
-- [ ] Latest sample only: no "sustained for N minutes" and no hysteresis, so a GPU hovering at a threshold can raise and clear repeatedly. No per-node or per-GPU thresholds. Utilisation, power and PCIe replay counts are not alerted on.
+- [ ] ~~Latest sample only: no "sustained for N minutes" and no hysteresis~~ (E68). No per-node or per-GPU thresholds. Utilisation, power and PCIe replay counts are not alerted on.
 
 ## E53: Quota warnings, extended
 
@@ -601,6 +601,14 @@ matrix still listed as missing.
 - [x] `agent:` streams record `ttft_ms` (first visible text, `AgentStreamAccounting.first_output_at`); voice turns record it on the speech row (`GatewayContext.waiting_since` = the end of the person's speech). `timing_columns(direct_only=True)` leaves both out of per-model figures (usage summary, chargeback by model).
 - [x] Tests: `tests/api/test_chargeback_units.py`, `tests/api/test_first_output_timings.py`. Docs: [chargeback.md](../chargeback.md#speech-and-tool-cost), [gateway-policy.md](../gateway-policy.md#timings), speech.md.
 - [ ] Workflow tool steps record no tool call and aren't priced; OCR isn't metered per page. Tool calls have no API key or end user to group by. No currency conversion. A buffered `agent:` call has no first-output time.
+
+## E68: Restore a team's setup; GPU alerts that don't flap (closes the feature-matrix team restore gap and the E52 flapping limit)
+
+- [x] `scripts/backup.py restore --team` restores the team's setup with its knowledge bases, in the same transaction: `teams`, `team_memberships` (merged), `tools`, `agents`, `agent_versions`, `agent_tools` and `agent_skills` (replaced per restored version), `workflows`, `workflow_versions`, `api_clients`, `api_keys`, and `gateway_quotas` / `cost_budgets` set for the team or its keys (`TEAM_TABLES`). Upserted by id, so run history points at the restored rows; rows made since are kept. A key revoked since stays revoked; one deleted since comes back revoked. Dangling join rows are dropped, nullable references cleared, anything else and any unique conflict with another id refuses (`SCOPED-REFUSED`). `--knowledge-only` restores only the bases, as before.
+- [x] The team setup needs the backup's encryption key (`_key_refusal`, shared with the whole restore); the bases and files alone don't. API: `RestoreRequest.knowledge_only` (only with `team_id`); a team without knowledge bases is accepted unless `knowledge_only`. Console: *Only one team* scope lists every team in the backup, with an *Only its knowledge bases* box.
+- [x] GPU alerts: `gpu.alert_sustain_minutes` (default 0) raises a temperature or memory alert only once the unbroken run of breaching samples spans that long (`sustained`; a gap over `SAMPLE_MAX_AGE` restarts it; ECC raises at once). `gpu.alert_recovery_margin_celsius` (3) and `_percent` (2) lower the lines while an alert is open (`evaluate(recovering=True)`), so it clears and de-escalates only once clearly under them. `GpuMetricRepository.recent_for_gpus`; runtime settings. No migration.
+- [x] Tests: `tests/api/test_team_restore_sql.py`, `TestTeamSetup` in `tests/unit/test_scoped_restore.py`, `tests/api/test_ops.py`, `TestNoFlapping` in `tests/api/test_gpu_alerts.py`. Docs: [backup.md](../backup.md#restoring-a-team), [gpu.md](../gpu.md#alerts-that-dont-flap), api.md, operations.md, settings.md.
+- [ ] A team restore doesn't bring back run history, approvals, question history, or the models and aliases the team owned; memberships are only added, never removed. GPU thresholds are the same for every GPU (no per-node or per-GPU thresholds); a GPU waiting out the sustain time doesn't escalate early.
 
 ## Phase acceptance (applies to each)
 

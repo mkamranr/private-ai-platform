@@ -389,6 +389,13 @@ class GpuSettings(BaseModel):
     alert_temperature_warning_celsius: int = Field(default=83, ge=30, le=120)
     alert_temperature_critical_celsius: int = Field(default=90, ge=30, le=120)
     alert_memory_warning_percent: int = Field(default=98, ge=50, le=100)
+    # E68: alerts that don't flap. A temperature or memory breach must last this long
+    # before it raises an alert (0: the first sample over the line raises it). ECC errors
+    # always raise at once.
+    alert_sustain_minutes: int = Field(default=0, ge=0, le=60)
+    # ...and an open alert clears only once the GPU is this far back under the line.
+    alert_recovery_margin_celsius: int = Field(default=3, ge=0, le=20)
+    alert_recovery_margin_percent: int = Field(default=2, ge=0, le=20)
 
     @model_validator(mode="after")
     def _warning_below_critical(self) -> GpuSettings:

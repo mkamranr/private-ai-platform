@@ -4,12 +4,16 @@
     python3 scripts/backup.py create  [--output DIR]
     python3 scripts/backup.py verify  PATH
     python3 scripts/backup.py restore PATH [--yes] [--parts database,files,vectors]
-                                     [--knowledge-base NAME_OR_ID ... | --team NAME_OR_ID]
+                                     [--knowledge-base NAME_OR_ID ... | --team NAME_OR_ID
+                                      [--knowledge-only]]
     python3 scripts/backup.py list    [--output DIR]
 
 ``--knowledge-base`` and ``--team`` (E64) restore only those knowledge bases (or every
 knowledge base the team owns): their rows, stored files and vectors. Everything else is
-left as it is; see ``restore_scoped``.
+left as it is; see ``restore_scoped``. Since E68 ``--team`` also restores the team's
+setup (the team itself, members, tools, agents, workflows, API clients and keys, quotas
+and cost budgets) when the database part is restored; ``--knowledge-only`` keeps it to
+the knowledge bases.
 
 **Host-side, like check_airgap.py.** ``pg_dump`` lives in the postgres image and Rule 4
 forbids apt-get at build time, so the control plane cannot dump its own database — it
@@ -422,7 +426,26 @@ def parse_parts(raw):
     return [p for p in PARTS if p in wanted]
 
 
-def restore(path: Path, assume_yes: bool, parts=None, *, knowledge_bases=None, team=None) -> int:
+def _key_refusal(manifest: dict, env: dict) -> str | None:
+    """Why the database can't be restored under this platform's key, or None."""
+    recorded = manifest.get("encryption_key_fingerprint", "")
+    current = _key_fingerprint(env)
+    if recorded and current and recorded != current:
+        return (
+            "this platform's SECURITY__ENCRYPTION_KEY is not the one this backup was taken "
+            "with.\n\nRestoring anyway would appear to succeed. Every encrypted tool "
+            "credential and node token\nwould decrypt to garbage, and you would find out days "
+            "later when an agent's LDAP\nlookup failed for no visible reason. Put the original "
+            "key back and run this again."
+        )
+    if recorded and not current:
+        return ("this backup records an encryption key fingerprint but no "
+                "SECURITY__ENCRYPTION_KEY is set here.")
+    return None
+
+
+def restore(path: Path, assume_yes: bool, parts=None, *, knowledge_bases=None, team=None,
+            knowledge_only: bool = False) -> int:
     if verify(path) != 0:
         print("\nRefusing to restore a backup that does not verify.", file=sys.stderr)
         return 1
@@ -442,36 +465,24 @@ def restore(path: Path, assume_yes: bool, parts=None, *, knowledge_bases=None, t
     if not chosen:
         print("\nNothing to restore.", file=sys.stderr)
         return 1
+    team_setup = bool(team) and not knowledge_only and "database" in chosen
     if knowledge_bases or team:
-        # No key check: the knowledge base tables hold no encrypted values.
+        # The knowledge base tables hold no encrypted values, so they need no key check;
+        # a team's setup does (tool credentials, webhook and identity secrets).
+        if team_setup and (problem := _key_refusal(manifest, env)):
+            print(f"\nREFUSED: {problem}\n\nRestore only the team's knowledge bases "
+                  "(--knowledge-only) under another key.", file=sys.stderr)
+            return 1
         return restore_scoped(
             path, manifest, env, chosen, assume_yes,
-            knowledge_bases=list(knowledge_bases or []), team=team,
+            knowledge_bases=list(knowledge_bases or []), team=team, team_setup=team_setup,
         )
 
     # The key protects only what is inside the database dump. Files and vectors are not
     # encrypted with it, so restoring only those is allowed under another key.
-    if "database" in chosen:
-        recorded = manifest.get("encryption_key_fingerprint", "")
-        current = _key_fingerprint(env)
-        if recorded and current and recorded != current:
-            print(
-                "\nREFUSED: this platform's SECURITY__ENCRYPTION_KEY is not the one this "
-                "backup was taken with.\n\n"
-                "Restoring anyway would appear to succeed. Every encrypted tool credential "
-                "and node token\nwould decrypt to garbage, and you would find out days later "
-                "when an agent's LDAP\nlookup failed for no visible reason. Put the original "
-                "key back and run this again.",
-                file=sys.stderr,
-            )
-            return 1
-        if recorded and not current:
-            print(
-                "\nREFUSED: this backup records an encryption key fingerprint but no "
-                "SECURITY__ENCRYPTION_KEY is set here.",
-                file=sys.stderr,
-            )
-            return 1
+    if "database" in chosen and (problem := _key_refusal(manifest, env)):
+        print(f"\nREFUSED: {problem}", file=sys.stderr)
+        return 1
 
     described = {
         "database": "the database (users, agents, runs, audit history, document text)",
@@ -718,11 +729,11 @@ def _rows(result) -> list:
     return [line.split("|") for line in (result.stdout or "").splitlines() if line.strip()]
 
 
-def common_columns(live: dict, backup: dict) -> dict:
+def common_columns(live: dict, backup: dict, names=SCOPED_NAMES) -> dict:
     """Per table in both databases, the columns to copy: those both have, in the live
     order, less the ones given fresh values. A newer column keeps its default."""
     out = {}
-    for table in SCOPED_NAMES:
+    for table in names:
         if table in live and table in backup:
             fresh = FRESH_COLUMNS.get(table, set())
             out[table] = [c for c in live[table] if c in backup[table] and c not in fresh]
@@ -839,14 +850,14 @@ FOREIGN_KEYS_SQL = (
 )
 
 
-def _columns(user: str, database: str) -> dict:
-    names = ", ".join(_literal(t) for t in SCOPED_NAMES)
+def _columns(user: str, database: str, tables=SCOPED_NAMES) -> dict:
+    names = ", ".join(_literal(t) for t in tables)
     rows = _rows(_psql(user, database, COLUMNS_SQL.format(names=names)))
     return {row[0]: row[1].split(",") for row in rows if len(row) == 2}
 
 
-def _foreign_keys(user: str, database: str) -> list:
-    names = ", ".join(_literal(t) for t in SCOPED_NAMES)
+def _foreign_keys(user: str, database: str, tables=SCOPED_NAMES) -> list:
+    names = ", ".join(_literal(t) for t in tables)
     rows = _rows(_psql(user, database, FOREIGN_KEYS_SQL.format(names=names)))
     return [(r[0], r[1], r[2], r[3], r[4] == "true") for r in rows if len(r) == 5]
 
@@ -885,8 +896,214 @@ def _resolve_scope(user: str, scratch: str, knowledge_bases, team) -> list:
     return bases
 
 
+# ---------------------------------------------------------------------------
+# team restore (E68): a team's agents, workflows, tools, API clients and quotas
+# ---------------------------------------------------------------------------
+_TEAM_VERSIONS = (
+    "agent_version_id IN (SELECT v.id FROM public.agent_versions v "
+    "JOIN public.agents a ON a.id = v.agent_id WHERE a.team_id = {team})"
+)
+_TEAM_SUBJECTS = (
+    "(scope = 'team' AND subject = {team_text}) OR (scope = 'api_key' AND subject IN "
+    "(SELECT k.id::text FROM public.api_keys k JOIN public.api_clients c "
+    "ON c.id = k.client_id WHERE c.team_id = {team}))"
+)
+#: What a team owns, in insert order: (table, rows in the backup, how they go back).
+#: ``upsert``: by id, so run history and usage keep pointing at the same rows, and rows
+#: created since the backup are left alone. ``merge``: added, never removed (members
+#: who joined since stay). ``replace``: the rows of restored parents are swapped whole
+#: (an agent version's tools and skills).
+TEAM_TABLES = (
+    ("teams", "id = {team}", "upsert"),
+    ("team_memberships", "team_id = {team}", "merge"),
+    ("tools", "team_id = {team}", "upsert"),
+    ("agents", "team_id = {team}", "upsert"),
+    ("agent_versions", "agent_id IN (SELECT id FROM public.agents WHERE team_id = {team})",
+     "upsert"),
+    ("agent_tools", _TEAM_VERSIONS, ("replace", "agent_version_id", "agent_versions")),
+    ("agent_skills", _TEAM_VERSIONS, ("replace", "agent_version_id", "agent_versions")),
+    ("workflows", "team_id = {team}", "upsert"),
+    ("workflow_versions",
+     "workflow_id IN (SELECT id FROM public.workflows WHERE team_id = {team})", "upsert"),
+    ("api_clients", "team_id = {team}", "upsert"),
+    ("api_keys", "client_id IN (SELECT id FROM public.api_clients WHERE team_id = {team})",
+     "upsert"),
+    ("gateway_quotas", _TEAM_SUBJECTS, "upsert"),
+    ("cost_budgets", _TEAM_SUBJECTS, "upsert"),
+)
+TEAM_NAMES = tuple(table for table, _, _ in TEAM_TABLES)
+TEAM_STAGING = "/tmp/aip-team"
+#: What the confirmation calls each table.
+TEAM_LABELS = {
+    "teams": "the team", "team_memberships": "memberships", "tools": "tools",
+    "agents": "agents", "agent_versions": "agent versions", "agent_tools": "agent tool grants",
+    "agent_skills": "agent skills", "workflows": "workflows",
+    "workflow_versions": "workflow versions", "api_clients": "API clients",
+    "api_keys": "API keys", "gateway_quotas": "quotas", "cost_budgets": "cost budgets",
+}
+UNIQUES_SQL = (
+    "SELECT t.relname, string_agg(a.attname, ',' ORDER BY k.ord) FROM pg_index i "
+    "JOIN pg_class t ON t.oid = i.indrelid "
+    "JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public' "
+    "CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) "
+    "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum "
+    "WHERE i.indisunique AND NOT i.indisprimary AND i.indpred IS NULL "
+    "AND 0 <> ALL (i.indkey) AND t.relname IN ({names}) GROUP BY t.relname, i.indexrelid"
+)
+
+
+def _team_values(team: str) -> dict:
+    return {"team": f"{_literal(team)}::uuid", "team_text": _literal(team)}
+
+
+def _team_mode(table: str):
+    return next(mode for name, _, mode in TEAM_TABLES if name == table)
+
+
+def team_stage_sql(columns: dict) -> list:
+    return [
+        f"CREATE TEMP TABLE stage_{table} (LIKE public.{table} INCLUDING DEFAULTS) ON COMMIT DROP"
+        for table in TEAM_NAMES if table in columns
+    ]
+
+
+def team_apply_sql(team: str, columns: dict, foreign_keys, uniques) -> list:
+    """Put a team's setup back from the staged rows, in one transaction.
+
+    ``foreign_keys`` is (table, column, referenced table, referenced column, nullable)
+    and ``uniques`` (table, [columns]) for the live tables. A reference to a row gone
+    since is dropped for a join row (a grant of a deleted tool), cleared when nullable,
+    and refuses everything otherwise; so does a name another row has taken since.
+    """
+    staged = set(columns)
+    out = []
+    for table, column, ref_table, ref_column, nullable in foreign_keys:
+        if table not in staged or column not in columns[table]:
+            continue
+        col, ref = _ident(column), _ident(ref_column)
+        missing = (
+            f"stage_{table}.{col} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.{ref_table} r "
+            f"WHERE r.{ref} = stage_{table}.{col})"
+        )
+        if ref_table in staged:
+            missing += (
+                f" AND NOT EXISTS (SELECT 1 FROM stage_{ref_table} r "
+                f"WHERE r.{ref} = stage_{table}.{col})"
+            )
+        if _team_mode(table) != "upsert":
+            out.append(f"DELETE FROM stage_{table} WHERE {missing}")
+        elif nullable:
+            out.append(f"UPDATE stage_{table} SET {col} = NULL WHERE {missing}")
+        else:
+            out.append(_refuse_if(
+                f"SELECT 1 FROM stage_{table} WHERE {missing}",
+                f"{table}.{column} names a {ref_table} row that no longer exists; nothing was "
+                "restored.",
+            ))
+    if "api_keys" in staged:
+        # A key revoked since stays revoked, and one deleted since comes back revoked:
+        # restoring a team must never quietly make a withdrawn credential work again.
+        out.append(
+            "UPDATE stage_api_keys s SET revoked_at = l.revoked_at FROM public.api_keys l "
+            "WHERE l.id = s.id AND l.revoked_at IS NOT NULL"
+        )
+        out.append(
+            "UPDATE stage_api_keys s SET revoked_at = now() WHERE s.revoked_at IS NULL AND "
+            "NOT EXISTS (SELECT 1 FROM public.api_keys l WHERE l.id = s.id)"
+        )
+    for table, unique in uniques:
+        if table not in staged or _team_mode(table) != "upsert":
+            continue
+        if not all(c in columns[table] for c in unique):
+            continue
+        on = " AND ".join(f"l.{_ident(c)} = s.{_ident(c)}" for c in unique)
+        out.append(_refuse_if(
+            f"SELECT 1 FROM stage_{table} s JOIN public.{table} l ON l.id <> s.id AND {on}",
+            f"another row in {table} now has the same {', '.join(unique)} as one being "
+            "restored. Rename or delete it first; nothing was restored.",
+        ))
+    for table in TEAM_NAMES:
+        if table not in staged:
+            continue
+        names = columns[table]
+        cols = ", ".join(_ident(c) for c in names)
+        insert = f"INSERT INTO public.{table} ({cols}) SELECT {cols} FROM stage_{table}"
+        mode = _team_mode(table)
+        if mode == "upsert":
+            updates = ", ".join(f"{_ident(c)} = EXCLUDED.{_ident(c)}" for c in names if c != "id")
+            out.append(f"{insert} ON CONFLICT (id) DO UPDATE SET {updates}")
+        elif mode == "merge":
+            out.append(f"{insert} ON CONFLICT DO NOTHING")
+        else:
+            _, parent_column, parent = mode
+            out.append(
+                f"DELETE FROM public.{table} WHERE {_ident(parent_column)} IN "
+                f"(SELECT id FROM stage_{parent})"
+            )
+            out.append(insert)
+    return out
+
+
+def team_copy_out(team: str, columns: dict) -> str:
+    values = _team_values(team)
+    lines = []
+    for table, where, _ in TEAM_TABLES:
+        if table in columns:
+            cols = ", ".join(_ident(c) for c in columns[table])
+            lines.append(
+                f"\\copy (SELECT {cols} FROM public.{table} WHERE {where.format(**values)}) "
+                f"TO '{TEAM_STAGING}/{table}.csv' WITH (FORMAT csv)"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def team_apply_script(team: str, columns: dict, foreign_keys, uniques) -> str:
+    lines = [f"{s};" for s in team_stage_sql(columns)]
+    for table in TEAM_NAMES:
+        if table in columns:
+            cols = ", ".join(_ident(c) for c in columns[table])
+            lines.append(
+                f"\\copy stage_{table} ({cols}) FROM '{TEAM_STAGING}/{table}.csv' "
+                "WITH (FORMAT csv)"
+            )
+    lines += [f"{s};" for s in team_apply_sql(team, columns, foreign_keys, uniques)]
+    return "\n".join(lines) + "\n"
+
+
+def team_counts_sql(team: str, tables) -> str:
+    """Rows per table the backup holds for the team, and how many are not here now."""
+    values = _team_values(team)
+    parts = [
+        f"SELECT {_literal(table)}, count(*) FROM public.{table} WHERE {where.format(**values)}"
+        for table, where, _ in TEAM_TABLES if table in tables
+    ]
+    return " UNION ALL ".join(parts)
+
+
+def _uniques(user: str, database: str, names) -> list:
+    listed = ", ".join(_literal(t) for t in names)
+    rows = _rows(_psql(user, database, UNIQUES_SQL.format(names=listed)))
+    return [(r[0], r[1].split(",")) for r in rows if len(r) == 2]
+
+
+def _resolve_team(user: str, scratch: str, team: str):
+    value = _literal(team)
+    rows = _rows(_psql(
+        user, scratch,
+        f"SELECT id, name FROM public.teams WHERE id::text = {value} OR name = {value}",
+    ))
+    rows = [r for r in rows if len(r) == 2]
+    return {"id": rows[0][0], "name": rows[0][1]} if rows else None
+
+
+def _team_summary(user: str, scratch: str, team_id: str) -> dict:
+    tables = _columns(user, scratch, TEAM_NAMES)
+    rows = _rows(_psql(user, scratch, team_counts_sql(team_id, tables)))
+    return {r[0]: int(r[1]) for r in rows if len(r) == 2}
+
+
 def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bool,
-                   *, knowledge_bases, team) -> int:
+                   *, knowledge_bases, team, team_setup: bool = False) -> int:
     """Restore only some knowledge bases, leaving every other row, file and vector alone.
 
     1. The backup's dump goes into a scratch database beside the live one, which is how
@@ -897,6 +1114,9 @@ def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bo
     3. ``files``: their stored originals are merged back; the current ones are moved
        aside, not deleted.
     4. ``vectors``: their collections are recovered from the snapshots.
+
+    ``team_setup`` (E68): with the database part, the team's own rows come back too, in
+    the same transaction as its bases' (see ``TEAM_TABLES``).
 
     The scratch database is dropped afterwards, whatever happened.
     """
@@ -921,17 +1141,25 @@ def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bo
                   file=sys.stderr)
             return 1
         print("done")
+        team_row = None
+        if team_setup:
+            team_row = _resolve_team(user, scratch, team)
+            if team_row is None:
+                print(f"\nREFUSED: the backup has no team {team!r}.", file=sys.stderr)
+                return 1
         try:
             bases = _resolve_scope(user, scratch, knowledge_bases, team)
         except ValueError as exc:
-            print(f"\nREFUSED: {exc}.", file=sys.stderr)
-            return 1
+            if team_row is None:
+                print(f"\nREFUSED: {exc}.", file=sys.stderr)
+                return 1
+            bases = []  # a team with no knowledge bases still has its setup
 
         ids = [b["id"] for b in bases]
         live = {r[0]: r[1] for r in _rows(_psql(
             user, database,
             f"SELECT id, collection FROM public.knowledge_bases WHERE id IN ({_ids_sql(ids)})",
-        )) if len(r) == 2}
+        )) if len(r) == 2} if ids else {}
         described = {"database": "their rows (documents, chunks, access, evaluation sets)",
                      "files": "their stored original documents", "vectors": "their vectors"}
         print(f"\nAbout to REPLACE, with the backup from {manifest['created_at']}, "
@@ -941,6 +1169,14 @@ def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bo
             print(f"  - {base['name']} ({base['id']}; {state})")
         for part in chosen:
             print(f"  · {described[part]}")
+        if team_row is not None:
+            summary = _team_summary(user, scratch, team_row["id"])
+            print(f"and the setup of team {team_row['name']} ({team_row['id']}), as it was:")
+            for table in TEAM_NAMES:
+                if summary.get(table):
+                    print(f"  - {summary[table]} {TEAM_LABELS[table]}")
+            print("  Anything the team created since is kept. API keys revoked or deleted "
+                  "since stay unusable.")
         print("Every other knowledge base, and the rest of the platform, is left as it is.")
         if not assume_yes and input("Type the word 'replace' to continue: ").strip() != "replace":
             print("Cancelled.")
@@ -948,7 +1184,9 @@ def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bo
 
         database_done = False
         if "database" in chosen:
-            problem = _apply_scoped_rows(user, database, scratch, ids)
+            problem = _apply_scoped_rows(
+                user, database, scratch, ids, team=team_row["id"] if team_row else None
+            )
             if problem:
                 print(f"\nREFUSED: {problem}", file=sys.stderr)
                 return 1
@@ -969,7 +1207,8 @@ def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bo
                 print("\n  Vectors were not restored. Rebuild each restored knowledge base "
                       "(Rebuild index) so searches match its documents.")
     finally:
-        _compose("exec", "-T", "postgres", "rm", "-rf", SCOPED_STAGING, capture=True, check=False)
+        _compose("exec", "-T", "postgres", "rm", "-rf", SCOPED_STAGING, TEAM_STAGING,
+                 capture=True, check=False)
         _compose("exec", "-T", "postgres", "dropdb", "-U", user, "--if-exists", scratch,
                  capture=True, check=False)
 
@@ -978,7 +1217,9 @@ def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bo
         for line in errors[:20]:
             print(f"  - {line}", file=sys.stderr)
         return 1
-    names = ", ".join(b["name"] for b in bases)
+    names = ", ".join([*(b["name"] for b in bases), *(
+        [f"team {team_row['name']}'s setup"] if team_row is not None and database_done else []
+    )])
     print(f"\nRestored {', '.join(chosen)} of {names} from {manifest['created_at']}.")
     return 0
 
@@ -1001,21 +1242,42 @@ def _load_scratch(path: Path, user: str, scratch: str) -> bool:
     return "knowledge_bases" in _columns(user, scratch)
 
 
-def _apply_scoped_rows(user: str, database: str, scratch: str, ids) -> str | None:
-    """Copy the bases' rows out of the scratch database and swap them in. Returns why it
-    was refused or failed, or None."""
+def _apply_scoped_rows(user: str, database: str, scratch: str, ids,
+                       team: str | None = None) -> str | None:
+    """Copy the bases' rows (and, with ``team``, the team's setup, E68) out of the scratch
+    database and swap them in, in one transaction. Returns why it was refused or failed,
+    or None."""
     columns = common_columns(_columns(user, database), _columns(user, scratch))
-    if "knowledge_bases" not in columns:
+    if ids and "knowledge_bases" not in columns:
         return "the knowledge base tables could not be read."
+    team_columns: dict = {}
+    if team:
+        team_columns = common_columns(
+            _columns(user, database, TEAM_NAMES), _columns(user, scratch, TEAM_NAMES), TEAM_NAMES
+        )
+        if "teams" not in team_columns:
+            return "the team tables could not be read."
     print("  copying their rows … ", end="", flush=True)
     _compose("exec", "-T", "postgres", "sh", "-c",
-             f"rm -rf {SCOPED_STAGING} && mkdir -p {SCOPED_STAGING}", capture=True, check=False)
-    exported = _psql(user, scratch, script=_copy_out(ids, columns))
+             f"rm -rf {SCOPED_STAGING} {TEAM_STAGING} && mkdir -p {SCOPED_STAGING} "
+             f"{TEAM_STAGING}", capture=True, check=False)
+    export = (_copy_out(ids, columns) if ids else "") + (
+        team_copy_out(team, team_columns) if team else ""
+    )
+    exported = _psql(user, scratch, script=export)
     if exported.returncode != 0:
         print("FAILED")
         return f"the rows could not be read from the backup: {exported.stderr.strip()[-400:]}"
-    live_tables = set(_columns(user, database))
-    script = apply_script(ids, columns, _foreign_keys(user, database), live_tables)
+    script = ""
+    if team:
+        # First, so a base's team is back before the bases are checked for it.
+        script += team_apply_script(
+            team, team_columns, _foreign_keys(user, database, TEAM_NAMES),
+            _uniques(user, database, TEAM_NAMES),
+        )
+    if ids:
+        live_tables = set(_columns(user, database))
+        script += apply_script(ids, columns, _foreign_keys(user, database), live_tables)
     applied = _psql(user, database, script=script)
     if applied.returncode != 0:
         print("FAILED")
@@ -1170,7 +1432,12 @@ def main() -> int:
     )
     scope.add_argument(
         "--team", metavar="NAME_OR_ID",
-        help="Restore only the knowledge bases this team owns in the backup.",
+        help="Restore only this team: its knowledge bases and, with the database part, its "
+             "setup (members, tools, agents, workflows, API clients and keys, quotas).",
+    )
+    restore_parser.add_argument(
+        "--knowledge-only", action="store_true",
+        help="With --team: only its knowledge bases, as before E68.",
     )
 
     list_parser = sub.add_parser("list", help="List backups.")
@@ -1186,8 +1453,11 @@ def main() -> int:
             parts = parse_parts(options.parts)
         except ValueError as exc:
             parser.error(str(exc))
+        if options.knowledge_only and not options.team:
+            parser.error("--knowledge-only goes with --team")
         return restore(options.path, options.yes, parts,
-                       knowledge_bases=options.knowledge_base, team=options.team)
+                       knowledge_bases=options.knowledge_base, team=options.team,
+                       knowledge_only=options.knowledge_only)
     return list_backups(options.output)
 
 

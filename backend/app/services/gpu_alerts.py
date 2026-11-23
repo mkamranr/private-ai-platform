@@ -14,6 +14,16 @@ holds one alert per GPU at the worst level any threshold gives.
 
 Alerts clear themselves when the GPU recovers, when it stops reporting (an unreachable
 node is a different problem, with its own status), and when the feature is turned off.
+
+E68, alerts that don't flap:
+
+* ``gpu.alert_sustain_minutes``: a temperature or memory breach raises an alert only once
+  every sample for that long has been over a line (a gap in the samples starts the count
+  again). ECC errors raise at once: they don't come and go.
+* ``gpu.alert_recovery_margin_celsius`` / ``_percent``: while an alert is open, its levels
+  are lowered by the margin, so it clears (or drops from CRITICAL to WARNING) only once the
+  GPU is clearly back under the line, not when it dips a degree below it.
+
 GPUs belong to no team, so their alerts go to channels that are not limited to one team.
 """
 
@@ -21,7 +31,8 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from app.config.settings import GpuSettings
@@ -57,8 +68,19 @@ class Breach:
     details: tuple[str, ...]
 
 
-def evaluate(metric: GpuMetric, settings: GpuSettings) -> Breach | None:
-    """The worst threshold ``metric`` crosses, or None when the GPU is within all of them."""
+def evaluate(
+    metric: GpuMetric, settings: GpuSettings, *, recovering: bool = False
+) -> Breach | None:
+    """The worst threshold ``metric`` crosses, or None when the GPU is within all of them.
+
+    ``recovering`` (E68): an alert is open, so the levels are lowered by the recovery
+    margins and the GPU has to be clearly back under them to count as within them.
+    """
+    celsius = settings.alert_recovery_margin_celsius if recovering else 0
+    points = settings.alert_recovery_margin_percent if recovering else 0
+    critical_at = settings.alert_temperature_critical_celsius - celsius
+    warning_at = settings.alert_temperature_warning_celsius - celsius
+    memory_at = settings.alert_memory_warning_percent - points
     critical: list[tuple[str, str]] = []
     warning: list[tuple[str, str]] = []
 
@@ -73,7 +95,7 @@ def evaluate(metric: GpuMetric, settings: GpuSettings) -> Breach | None:
         )
 
     temperature = metric.temperature_celsius
-    if temperature >= settings.alert_temperature_critical_celsius:
+    if temperature >= critical_at:
         critical.append(
             (
                 f"{temperature:.0f} °C",
@@ -82,7 +104,7 @@ def evaluate(metric: GpuMetric, settings: GpuSettings) -> Breach | None:
                 "shut down.",
             )
         )
-    elif temperature >= settings.alert_temperature_warning_celsius:
+    elif temperature >= warning_at:
         warning.append(
             (
                 f"{temperature:.0f} °C",
@@ -93,7 +115,7 @@ def evaluate(metric: GpuMetric, settings: GpuSettings) -> Breach | None:
 
     if metric.memory_total_mib > 0:
         percent = metric.memory_used_mib * 100 / metric.memory_total_mib
-        if percent >= settings.alert_memory_warning_percent:
+        if percent >= memory_at:
             warning.append(
                 (
                     f"memory {percent:.0f}% used",
@@ -113,11 +135,28 @@ def evaluate(metric: GpuMetric, settings: GpuSettings) -> Breach | None:
     )
 
 
+def sustained(samples: Sequence[GpuMetric], settings: GpuSettings, minutes: int) -> bool:
+    """Whether the newest-first ``samples`` have all been over a line for ``minutes``:
+    the unbroken run of breaching samples back from the newest one has to span that long.
+    A gap longer than ``SAMPLE_MAX_AGE`` ends the run, as nothing is known about it."""
+    if not samples or evaluate(samples[0], settings) is None:
+        return False
+    start = samples[0].recorded_at
+    newer = samples[0].recorded_at
+    for metric in samples[1:]:
+        if newer - metric.recorded_at > SAMPLE_MAX_AGE or evaluate(metric, settings) is None:
+            break
+        start = newer = metric.recorded_at
+    return samples[0].recorded_at - start >= dt.timedelta(minutes=minutes)
+
+
 @dataclass
 class GpuWatchResult:
     raised: list[str] = field(default_factory=list)
     cleared: list[str] = field(default_factory=list)
     checked: int = 0
+    #: Over a line, but not yet for ``gpu.alert_sustain_minutes`` (E68).
+    pending: list[str] = field(default_factory=list)
 
 
 class GpuAlertWatcher:
@@ -140,22 +179,59 @@ class GpuAlertWatcher:
         result = GpuWatchResult()
         wanted: set[str] = set()
 
+        open_now = await self._alert_repo.open_fingerprints(GPU_ALERT_SOURCE)
+
         if settings.alerts_enabled:
-            samples = await self._metrics.latest_per_gpu(self._clock() - SAMPLE_MAX_AGE)
+            now = self._clock()
+            samples = await self._metrics.latest_per_gpu(now - SAMPLE_MAX_AGE)
             result.checked = len(samples)
+            history = await self._history(samples, settings, open_now, now)
             for metric, gpu, node_name in samples:
-                breach = evaluate(metric, settings)
+                fingerprint = gpu_alert_fingerprint(gpu.id)
+                is_open = fingerprint in open_now
+                breach = evaluate(metric, settings, recovering=is_open)
                 if breach is None:
                     continue
-                fingerprint = gpu_alert_fingerprint(gpu.id)
+                if (
+                    not is_open
+                    and settings.alert_sustain_minutes
+                    and not metric.ecc_errors_uncorrected
+                    and not sustained(history[gpu.id], settings, settings.alert_sustain_minutes)
+                ):
+                    result.pending.append(fingerprint)
+                    continue
                 wanted.add(fingerprint)
                 await self._raise(fingerprint, breach, gpu, node_name, metric)
                 result.raised.append(fingerprint)
 
-        for fingerprint in await self._alert_repo.open_fingerprints(GPU_ALERT_SOURCE) - wanted:
+        for fingerprint in open_now - wanted:
             if await self._alerts.clear(fingerprint):
                 result.cleared.append(fingerprint)
         return result
+
+    async def _history(
+        self,
+        samples: Sequence[tuple[GpuMetric, Gpu, str]],
+        settings: GpuSettings,
+        open_now: set[str],
+        now: dt.datetime,
+    ) -> dict[uuid.UUID, list[GpuMetric]]:
+        """Recent samples of the GPUs that would raise a new alert, when a breach has to be
+        sustained first. Only those: the rest need nothing beyond their latest sample."""
+        history: dict[uuid.UUID, list[GpuMetric]] = defaultdict(list)
+        minutes = settings.alert_sustain_minutes
+        if not minutes:
+            return history
+        ids = [
+            gpu.id
+            for metric, gpu, _ in samples
+            if gpu_alert_fingerprint(gpu.id) not in open_now
+            and evaluate(metric, settings) is not None
+        ]
+        since = now - dt.timedelta(minutes=minutes) - SAMPLE_MAX_AGE
+        for metric in await self._metrics.recent_for_gpus(ids, since):
+            history[metric.gpu_id].append(metric)
+        return history
 
     async def _raise(
         self, fingerprint: str, breach: Breach, gpu: Gpu, node_name: str, metric: GpuMetric

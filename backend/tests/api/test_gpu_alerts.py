@@ -230,3 +230,112 @@ class TestSettingsAndChannels:
             headers=headers,
         )
         assert response.status_code == 200, response.text
+
+
+class TestNoFlapping:
+    """E68: a breach has to last before it alerts, and has to clearly end before it clears."""
+
+    @staticmethod
+    def _at(minutes: float) -> dt.datetime:
+        return NOW + dt.timedelta(minutes=minutes)
+
+    async def test_a_short_spike_stays_quiet(self, session: AsyncSession, gpu: Gpu) -> None:
+        settings = GpuSettings(alert_sustain_minutes=3)
+        fingerprint = gpu_alert_fingerprint(gpu.id)
+        await _sample(session, gpu, temperature=60, at=self._at(-1))
+        for minute in (0, 1, 2):
+            await _sample(session, gpu, temperature=86, at=self._at(minute))
+            result = await _watcher(session, self._at(minute)).run(settings)
+            assert result.pending == [fingerprint] and result.raised == []
+        await _sample(session, gpu, temperature=86, at=self._at(3))
+        result = await _watcher(session, self._at(3)).run(settings)
+        assert result.raised == [fingerprint]
+
+    async def test_a_dip_starts_the_count_again(self, session: AsyncSession, gpu: Gpu) -> None:
+        settings = GpuSettings(alert_sustain_minutes=2)
+        await _sample(session, gpu, temperature=86, at=self._at(0))
+        await _sample(session, gpu, temperature=80, at=self._at(1))
+        await _sample(session, gpu, temperature=86, at=self._at(2))
+        assert (await _watcher(session, self._at(2)).run(settings)).raised == []
+        await _sample(session, gpu, temperature=91, at=self._at(4))
+        result = await _watcher(session, self._at(4)).run(settings)
+        assert result.raised == [gpu_alert_fingerprint(gpu.id)]
+        assert (await _open_alert(session, gpu)).severity == AlertSeverity.CRITICAL
+
+    async def test_a_gap_in_the_samples_starts_the_count_again(
+        self, session: AsyncSession, gpu: Gpu
+    ) -> None:
+        settings = GpuSettings(alert_sustain_minutes=5)
+        await _sample(session, gpu, temperature=86, at=self._at(0))
+        await _sample(session, gpu, temperature=86, at=self._at(6))
+        assert (await _watcher(session, self._at(6)).run(settings)).raised == []
+
+    async def test_ecc_errors_raise_at_once(self, session: AsyncSession, gpu: Gpu) -> None:
+        await _sample(session, gpu, ecc=2)
+        result = await _watcher(session).run(GpuSettings(alert_sustain_minutes=10))
+        assert result.raised == [gpu_alert_fingerprint(gpu.id)]
+
+    async def test_an_open_alert_needs_the_margin_to_clear(
+        self, session: AsyncSession, gpu: Gpu
+    ) -> None:
+        settings = GpuSettings(alert_recovery_margin_celsius=3)
+        await _sample(session, gpu, temperature=84, at=self._at(0))
+        await _watcher(session, self._at(0)).run(settings)
+        assert await _open_alert(session, gpu) is not None
+
+        # 81 °C is under the 83 °C line but inside the margin: still open.
+        await _sample(session, gpu, temperature=81, at=self._at(1))
+        result = await _watcher(session, self._at(1)).run(settings)
+        assert result.cleared == [] and await _open_alert(session, gpu) is not None
+
+        await _sample(session, gpu, temperature=79, at=self._at(2))
+        result = await _watcher(session, self._at(2)).run(settings)
+        assert result.cleared == [gpu_alert_fingerprint(gpu.id)]
+
+        # Closed again, so 82 °C (inside the margin) does not reopen it.
+        await _sample(session, gpu, temperature=82, at=self._at(3))
+        assert (await _watcher(session, self._at(3)).run(settings)).raised == []
+
+    async def test_critical_drops_to_warning_only_past_the_margin(
+        self, session: AsyncSession, gpu: Gpu
+    ) -> None:
+        settings = GpuSettings(alert_recovery_margin_celsius=3)
+        await _sample(session, gpu, temperature=91, at=self._at(0))
+        await _watcher(session, self._at(0)).run(settings)
+        await _sample(session, gpu, temperature=88, at=self._at(1))
+        await _watcher(session, self._at(1)).run(settings)
+        alert = await _open_alert(session, gpu)
+        assert alert.severity == AlertSeverity.CRITICAL
+        await _sample(session, gpu, temperature=86, at=self._at(2))
+        await _watcher(session, self._at(2)).run(settings)
+        await session.refresh(alert)
+        assert alert.severity == AlertSeverity.WARNING
+
+    async def test_memory_has_its_own_margin(self, session: AsyncSession, gpu: Gpu) -> None:
+        settings = GpuSettings(alert_memory_warning_percent=90, alert_recovery_margin_percent=5)
+        await _sample(session, gpu, memory_used=75000, at=self._at(0))  # 91.6%
+        await _watcher(session, self._at(0)).run(settings)
+        await _sample(session, gpu, memory_used=71000, at=self._at(1))  # 86.7%
+        assert (await _watcher(session, self._at(1)).run(settings)).cleared == []
+        await _sample(session, gpu, memory_used=69000, at=self._at(2))  # 84.2%
+        assert (await _watcher(session, self._at(2)).run(settings)).cleared != []
+
+    async def test_the_margins_are_runtime_settings(
+        self, client: AsyncClient, tokens, superuser
+    ) -> None:
+        headers = auth_header(tokens, superuser)
+        for key, value in (
+            ("gpu.alert_sustain_minutes", 5),
+            ("gpu.alert_recovery_margin_celsius", 4),
+            ("gpu.alert_recovery_margin_percent", 3),
+        ):
+            response = await client.put(
+                f"/api/v1/settings/{key}", json={"value": value, "reason": "test"}, headers=headers
+            )
+            assert response.status_code == 200, response.text
+        response = await client.put(
+            "/api/v1/settings/gpu.alert_sustain_minutes",
+            json={"value": 120, "reason": "test"},
+            headers=headers,
+        )
+        assert response.status_code == 422
