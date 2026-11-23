@@ -349,6 +349,36 @@ the personal data the tool was called to look up, and `audit.view` is broader st
 
 ---
 
+## Answer quality
+
+A share of agent answers can be judged for faithfulness to the knowledge-base passages
+they were given: the same judge as the retrieval playground
+([rag-evaluation.md](rag-evaluation.md#the-answer-and-how-faithful-it-is)), on real answers.
+
+| setting | default | |
+|---|---|---|
+| `agents.answer_scoring_percent` | 0 | share of answers judged, 0–100. 0 judges none |
+| `agents.answer_judge_model` | empty | the alias or model that judges. Empty judges none |
+| `agents.answer_score_retention_days` | 90 | how long scores are kept |
+
+- **Which answers.** A run that completed with passages retrieved, sampled at that rate
+  when it finishes. Answers with no passages, failed runs, and runs that paused for an
+  approval (the passages aren't kept across the pause) are not judged.
+- **Off the answer's path.** The answer is queued with its question and passages, and a
+  worker judges queued answers one at a time, so judging never slows an answer down. A
+  judge that is down or over budget fails that answer's score; it isn't retried.
+- **Charged like any platform call**: through the gateway, to the agent's team and the
+  person who asked, as `agent-judge:<slug>`.
+- **The passages are not kept.** They were read under the asker's document access; once
+  judged, only the claims (sentences of the answer) and their verdict remain.
+- **Where to look.** On the Agents page, *Quality* shows the last 30 days (average
+  faithfulness, answers judged, unsupported claims) and each judged answer with its
+  claims, unsupported ones in red. `GET /agents/{id}/answer-scores` returns the same, to
+  anyone who can read the agent's runs.
+
+The judge is a model and can be wrong: read the claims, not just the number. Use a capable
+model, ideally not the one the agent uses.
+
 ## Known gaps
 
 * **Every agent run is accounted.** An `agent:<slug>` call through `/v1`

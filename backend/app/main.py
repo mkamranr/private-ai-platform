@@ -152,11 +152,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.workflow_worker = workflow_worker
     workflow_task: asyncio.Task[None] | None = None
 
+    # Judges sampled agent answers for faithfulness (E70).
+    from app.api.deps import build_answer_scoring_service
+    from app.workers.answer_scoring import AnswerScoringWorker
+
+    scoring_worker = AnswerScoringWorker(
+        database.sessionmaker, lambda session: build_answer_scoring_service(session, app.state)
+    )
+    scoring_task: asyncio.Task[None] | None = None
+
     if settings.workers.enabled:
         worker.start()
         deployment_task = asyncio.create_task(deployment_worker.run_forever())
         ingestion_task = asyncio.create_task(ingestion_worker.run_forever())
         workflow_task = asyncio.create_task(workflow_worker.run_forever())
+        scoring_task = asyncio.create_task(scoring_worker.run_forever())
     else:
         log.info("workers_disabled", reason="WORKERS__ENABLED is false")
 
@@ -174,7 +184,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         worker.shutdown()
-        for task in (deployment_task, ingestion_task, workflow_task):
+        for task in (deployment_task, ingestion_task, workflow_task, scoring_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

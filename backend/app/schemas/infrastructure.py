@@ -61,6 +61,14 @@ class GpuRead(GpuSummary):
     created_at: dt.datetime
 
 
+class GpuAlertLevels(BaseModel):
+    """E70: a node's own GPU alert levels. Null (or left out): the platform's."""
+
+    temperature_warning_celsius: int | None = Field(default=None, ge=30, le=120)
+    temperature_critical_celsius: int | None = Field(default=None, ge=30, le=120)
+    memory_warning_percent: int | None = Field(default=None, ge=50, le=100)
+
+
 class NodeRead(ORMModel):
     id: uuid.UUID
     name: str
@@ -72,6 +80,8 @@ class NodeRead(ORMModel):
     role: str
     status: str
     status_detail: str | None = None
+    #: E70: the node's own GPU alert levels; null uses the platform's.
+    gpu_alert_thresholds: dict[str, int] | None = None
     os_info: str | None = None
     architecture: str | None = None
     cpu_model: str | None = None

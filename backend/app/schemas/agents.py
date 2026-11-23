@@ -340,6 +340,42 @@ class ToolExecutionRead(ORMModel):
     truncated: bool = False
 
 
+class AnswerScoreRead(ORMModel):
+    """A sampled agent answer and its faithfulness (E70). The passages are never shown:
+    they were retrieved under the asker's document access, and are gone once judged."""
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    agent_id: uuid.UUID
+    status: str
+    question: str
+    answer: str
+    judge_model: str | None = None
+    faithfulness: float | None = None
+    verdict: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: dt.datetime
+    scored_at: dt.datetime | None = None
+
+
+class AnswerScoreSummary(BaseModel):
+    days: int
+    pending: int
+    scored: int
+    failed: int
+    #: Mean over scored answers that made claims; null when none did.
+    average_faithfulness: float | None = None
+    unsupported_claims: int
+
+
+class AnswerScoresResponse(BaseModel):
+    summary: AnswerScoreSummary
+    items: list[AnswerScoreRead]
+    #: Whether sampling is on (``agents.answer_scoring_percent`` and a judge model).
+    sampling_percent: int
+    judge_model: str
+
+
 class RunRead(ORMModel):
     id: uuid.UUID
     agent_id: uuid.UUID

@@ -448,3 +448,63 @@ class ToolExecution(UUIDPrimaryKeyMixin, Base):
 
     def __repr__(self) -> str:
         return f"<ToolExecution {self.tool_name} {self.approval_state}>"
+
+
+# ---------------------------------------------------------------------------
+# Live answer quality (E70)
+# ---------------------------------------------------------------------------
+class AnswerScoreStatus(enum.StrEnum):
+    PENDING = "PENDING"
+    SCORED = "SCORED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+
+
+class AgentAnswerScore(UUIDPrimaryKeyMixin, Base):
+    """A sampled agent answer and how faithful it was to the passages it was given (E70).
+
+    Queued when a run that retrieved passages completes and is sampled
+    (``agents.answer_scoring_percent``); judged later by the answer-scoring worker with
+    ``agents.answer_judge_model``. The passage text is kept only until then: it was
+    retrieved under the asker's document access, and a score needs only the claims.
+    """
+
+    __tablename__ = "agent_answer_scores"
+    __table_args__ = (
+        Index("ix_agent_answer_scores_agent_created", "agent_id", "created_at"),
+        Index("ix_agent_answer_scores_status", "status"),
+        CheckConstraint(
+            "status IN ('PENDING','SCORED','FAILED','SKIPPED')",
+            name="answer_score_status",
+        ),
+    )
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(
+        String(12), default=AnswerScoreStatus.PENDING, nullable=False
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    #: ``[{text, document, knowledge_base, location, score}]``; cleared once judged.
+    passages: Mapped[list | None] = mapped_column(JSONB)
+    judge_model: Mapped[str | None] = mapped_column(String(255))
+    faithfulness: Mapped[float | None] = mapped_column(Float)
+    #: The judge's claims (``Verdict.as_dict``): each claim, whether it is supported, and
+    #: by which passage numbers.
+    verdict: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    scored_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))

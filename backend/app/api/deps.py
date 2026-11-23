@@ -36,6 +36,7 @@ from app.db.session import session_scope
 from app.models.auth import User
 from app.models.infrastructure import NodeEnrollment
 from app.repositories.agents import (
+    AgentAnswerScoreRepository,
     AgentRepository,
     AgentRunEventRepository,
     AgentRunRepository,
@@ -118,6 +119,7 @@ from app.services.agent_runs import AgentRunService
 from app.services.agent_runtime import PlatformAgentRuntime
 from app.services.alerts import AlertService
 from app.services.answer_quality import AnswerQualityService
+from app.services.answer_scoring import AnswerScoringService
 from app.services.api_keys import ApiKeyService
 from app.services.audit import AuditService
 from app.services.auth import AuthService
@@ -862,6 +864,7 @@ def get_agent_runtime(
         # Built once at startup and shared, because it owns a queue and a background
         # drain task. None unless LANGFUSE__ENABLED (M19).
         getattr(request.app.state, "langfuse", None),
+        answer_scores=AgentAnswerScoreRepository(session),
     )
 
 
@@ -965,6 +968,7 @@ def build_agent_run_service(session: AsyncSession, app_state: Any) -> AgentRunSe
         gateway.provider_for_model,
         retrieval,
         getattr(app_state, "langfuse", None),
+        answer_scores=AgentAnswerScoreRepository(session),
     )
     registry = AgentRegistryService(
         settings,
@@ -1045,6 +1049,28 @@ def build_workflow_service(session: AsyncSession, app_state: Any) -> WorkflowSer
 
 def get_workflow_service(request: Request, session: SessionDep) -> WorkflowService:
     return build_workflow_service(session, request.app.state)
+
+
+def build_answer_scoring_service(session: AsyncSession, app_state: Any) -> AnswerScoringService:
+    """Judging sampled agent answers (E70), assembled without FastAPI for the worker; the
+    judge goes through the gateway like every platform model call."""
+    settings = RUNTIME.latest(get_settings())
+    gateway = GatewayService(
+        settings,
+        ModelRepository(session),
+        ModelAliasRepository(session),
+        ModelDeploymentRepository(session),
+        ApiKeyRepository(session),
+        UsageRepository(session),
+        app_state.redis.client,
+        app_state.database.sessionmaker,
+    )
+    answers = AnswerQualityService(
+        gateway.provider_for_model,
+        usage=gateway.record_internal_usage,
+        budget=gateway.check_internal_budget,
+    )
+    return AnswerScoringService(settings, AgentAnswerScoreRepository(session), answers)
 
 
 WorkflowServiceDep = Annotated[WorkflowService, Depends(get_workflow_service)]
@@ -1161,6 +1187,16 @@ def get_answer_quality_service(gateway: GatewayServiceDep) -> AnswerQualityServi
 
 
 AnswerQualityDep = Annotated[AnswerQualityService, Depends(get_answer_quality_service)]
+
+
+def get_answer_scoring_service(
+    session: SessionDep, settings: EffectiveSettingsDep, answers: AnswerQualityDep
+) -> AnswerScoringService:
+    """Live agent answer scores (E70), for reading."""
+    return AnswerScoringService(settings, AgentAnswerScoreRepository(session), answers)
+
+
+AnswerScoringDep = Annotated[AnswerScoringService, Depends(get_answer_scoring_service)]
 
 
 def get_rag_eval_service(

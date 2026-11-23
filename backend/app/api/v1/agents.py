@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from app.api.deps import (
     AgentRegistryDep,
     AgentRunServiceDep,
+    AnswerScoringDep,
     AuditDep,
     DefinitionImporterDep,
     EffectiveSettingsDep,
@@ -36,6 +37,9 @@ from app.schemas.agents import (
     AgentRead,
     AgentUpdateRequest,
     AgentVersionRead,
+    AnswerScoreRead,
+    AnswerScoresResponse,
+    AnswerScoreSummary,
     ApprovalRequest,
     DefinitionImportResponse,
     DiscoveryResponse,
@@ -611,6 +615,35 @@ async def list_agent_runs(
 ) -> list[RunRead]:
     await guard.agent(agent_id)
     return [RunRead.model_validate(r) for r in await service.list_runs(agent_id, limit=limit)]
+
+
+@router.get(
+    "/agents/{agent_id}/answer-scores",
+    response_model=AnswerScoresResponse,
+    summary="Faithfulness of an agent's sampled answers",
+)
+async def list_answer_scores(
+    scoring: AnswerScoringDep,
+    settings: EffectiveSettingsDep,
+    _actor: Annotated[User, require_permission(Perm.AGENT_VIEW)],
+    guard: ScopeGuardDep,
+    agent_id: uuid.UUID = Path(...),
+    limit: Annotated[int, Query(ge=1, le=200)] = 25,
+) -> AnswerScoresResponse:
+    """E70: the last 30 days in summary, and the latest sampled answers with the judge's
+    claims. The same people who can read the agent's runs can read these."""
+    await guard.agent(agent_id)
+    summary = await scoring.summary(agent_id)
+    return AnswerScoresResponse(
+        summary=AnswerScoreSummary(**asdict(summary)),
+        items=[
+            AnswerScoreRead.model_validate(r) for r in await scoring.recent(agent_id, limit=limit)
+        ],
+        sampling_percent=settings.agents.answer_scoring_percent
+        if settings.agents.answer_judge_model
+        else 0,
+        judge_model=settings.agents.answer_judge_model,
+    )
 
 
 # Declared before /runs/{run_id}: FastAPI matches in order, and this literal path

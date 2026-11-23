@@ -677,6 +677,14 @@ class AgentsSettings(BaseModel):
     #: Stop every agent at once (E55): no run starts, no approval is accepted, and running
     #: agents stop before their next model or tool call. Workflows are not affected.
     kill_switch: bool = False
+    #: Live answer quality (E70). The share of agent answers drawn from retrieved
+    #: passages that are judged for faithfulness, 0 to 100 (0: none), by this model (an
+    #: alias or model name; empty: none). Each judged answer is one more model call,
+    #: charged to the agent's team.
+    answer_scoring_percent: int = Field(default=0, ge=0, le=100)
+    answer_judge_model: str = Field(default="", max_length=255)
+    #: Days scored answers are kept.
+    answer_score_retention_days: int = Field(default=90, ge=1, le=3650)
     # Tool types deliberately disabled: §M12 lists them but §25 forbids
     # unrestricted shell execution. They stay off until a hardened executor
     # exists (see docs/security.md).

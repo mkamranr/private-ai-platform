@@ -247,11 +247,14 @@ class GpuMetricRepository(BaseRepository[GpuMetric]):
         stmt = stmt.order_by(GpuMetric.recorded_at.desc()).limit(limit)
         return (await self.session.execute(stmt)).scalars().all()
 
-    async def latest_per_gpu(self, since: dt.datetime) -> Sequence[tuple[GpuMetric, Gpu, str]]:
-        """Each GPU's newest sample recorded at or after ``since``, with the GPU and its
-        node's name. GPUs with no sample that recent are left out (E52)."""
+    async def latest_per_gpu(
+        self, since: dt.datetime
+    ) -> Sequence[tuple[GpuMetric, Gpu, str, dict | None]]:
+        """Each GPU's newest sample recorded at or after ``since``, with the GPU, its
+        node's name and (E70) the node's own alert levels. GPUs with no sample that recent
+        are left out (E52)."""
         stmt = (
-            select(GpuMetric, Gpu, Node.name)
+            select(GpuMetric, Gpu, Node.name, Node.gpu_alert_thresholds)
             .join(Gpu, Gpu.id == GpuMetric.gpu_id)
             .join(Node, Node.id == Gpu.node_id)
             .where(GpuMetric.recorded_at >= since)
@@ -259,7 +262,7 @@ class GpuMetricRepository(BaseRepository[GpuMetric]):
             .order_by(GpuMetric.gpu_id, GpuMetric.recorded_at.desc())
         )
         rows = (await self.session.execute(stmt)).all()
-        return [(metric, gpu, node_name) for metric, gpu, node_name in rows]
+        return [(metric, gpu, name, levels) for metric, gpu, name, levels in rows]
 
     async def recent_for_gpus(
         self, gpu_ids: Sequence[uuid.UUID], since: dt.datetime

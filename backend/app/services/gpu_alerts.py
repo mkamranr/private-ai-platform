@@ -24,6 +24,12 @@ E68, alerts that don't flap:
   are lowered by the margin, so it clears (or drops from CRITICAL to WARNING) only once the
   GPU is clearly back under the line, not when it dips a degree below it.
 
+E70: a node can have its own levels (``nodes.gpu_alert_thresholds``), for a hot room or
+cards rated for more. They replace the platform's for that node's GPUs; whatever the node
+doesn't set comes from the platform. A combination that no longer makes sense (the node's
+warning at or above the platform's critical after the platform's was lowered) falls back
+to the platform's levels rather than alerting on nonsense.
+
 GPUs belong to no team, so their alerts go to channels that are not limited to one team.
 """
 
@@ -34,6 +40,8 @@ import uuid
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+
+from pydantic import ValidationError as PydanticValidationError
 
 from app.config.settings import GpuSettings
 from app.core.logging import get_logger
@@ -49,6 +57,31 @@ GPU_ALERT_SOURCE = "gpu_threshold"
 #: A sample older than this is not evidence of anything current. Several poll intervals,
 #: so one missed collection does not clear and re-raise an alert.
 SAMPLE_MAX_AGE = dt.timedelta(minutes=5)
+
+
+#: A node's level keys and the platform settings they replace (E70).
+NODE_LEVELS: dict[str, str] = {
+    "temperature_warning_celsius": "alert_temperature_warning_celsius",
+    "temperature_critical_celsius": "alert_temperature_critical_celsius",
+    "memory_warning_percent": "alert_memory_warning_percent",
+}
+
+
+def node_settings(settings: GpuSettings, levels: dict | None) -> GpuSettings:
+    """The platform's GPU settings with a node's own levels applied (E70). Levels that
+    don't validate together leave the platform's in place."""
+    update = {
+        NODE_LEVELS[key]: value
+        for key, value in (levels or {}).items()
+        if key in NODE_LEVELS and value is not None
+    }
+    if not update:
+        return settings
+    try:
+        return GpuSettings.model_validate({**settings.model_dump(), **update})
+    except PydanticValidationError:
+        log.warning("gpu_node_levels_ignored", levels=levels)
+        return settings
 
 
 def gpu_alert_fingerprint(gpu_id: uuid.UUID) -> str:
@@ -185,18 +218,21 @@ class GpuAlertWatcher:
             now = self._clock()
             samples = await self._metrics.latest_per_gpu(now - SAMPLE_MAX_AGE)
             result.checked = len(samples)
-            history = await self._history(samples, settings, open_now, now)
-            for metric, gpu, node_name in samples:
+            levels = {gpu.id: node_settings(settings, own) for _, gpu, _, own in samples}
+            history = await self._history(samples, levels, open_now, now)
+            for metric, gpu, node_name, _ in samples:
                 fingerprint = gpu_alert_fingerprint(gpu.id)
                 is_open = fingerprint in open_now
-                breach = evaluate(metric, settings, recovering=is_open)
+                breach = evaluate(metric, levels[gpu.id], recovering=is_open)
                 if breach is None:
                     continue
                 if (
                     not is_open
                     and settings.alert_sustain_minutes
                     and not metric.ecc_errors_uncorrected
-                    and not sustained(history[gpu.id], settings, settings.alert_sustain_minutes)
+                    and not sustained(
+                        history[gpu.id], levels[gpu.id], settings.alert_sustain_minutes
+                    )
                 ):
                     result.pending.append(fingerprint)
                     continue
@@ -211,22 +247,24 @@ class GpuAlertWatcher:
 
     async def _history(
         self,
-        samples: Sequence[tuple[GpuMetric, Gpu, str]],
-        settings: GpuSettings,
+        samples: Sequence[tuple[GpuMetric, Gpu, str, dict | None]],
+        levels: dict[uuid.UUID, GpuSettings],
         open_now: set[str],
         now: dt.datetime,
     ) -> dict[uuid.UUID, list[GpuMetric]]:
         """Recent samples of the GPUs that would raise a new alert, when a breach has to be
         sustained first. Only those: the rest need nothing beyond their latest sample."""
         history: dict[uuid.UUID, list[GpuMetric]] = defaultdict(list)
-        minutes = settings.alert_sustain_minutes
+        if not samples:
+            return history
+        minutes = next(iter(levels.values())).alert_sustain_minutes
         if not minutes:
             return history
         ids = [
             gpu.id
-            for metric, gpu, _ in samples
+            for metric, gpu, _, _ in samples
             if gpu_alert_fingerprint(gpu.id) not in open_now
-            and evaluate(metric, settings) is not None
+            and evaluate(metric, levels[gpu.id]) is not None
         ]
         since = now - dt.timedelta(minutes=minutes) - SAMPLE_MAX_AGE
         for metric in await self._metrics.recent_for_gpus(ids, since):

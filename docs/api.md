@@ -168,6 +168,7 @@ is a separate duty.
 | POST | `/nodes` | `infrastructure.manage` |
 | GET | `/nodes/{id}` | `infrastructure.view` |
 | DELETE | `/nodes/{id}` | `infrastructure.manage` |
+| PUT | `/nodes/{id}/gpu-alert-levels` | `infrastructure.manage`. `{temperature_warning_celsius?, temperature_critical_celsius?, memory_warning_percent?}`; null or left out = the platform's; `{}` clears them. Warning must stay below critical. Returns the node (`gpu_alert_thresholds`). See [gpu.md](gpu.md#a-nodes-own-levels) |
 | POST | `/nodes/{id}/health` | `infrastructure.view` |
 | GET | `/nodes/{id}/gpus` | `gpu.view` |
 | GET | `/gpus` | `gpu.view` |
@@ -362,6 +363,7 @@ The response echoes the **alias**, never the underlying model.
 | GET | `/agents/{id}/versions` | `agent.view` |
 | POST | `/agents/{id}/execute` | `agent.execute` |
 | GET | `/agents/{id}/runs` | `agent.view` |
+| GET | `/agents/{id}/answer-scores` | `agent.view`. `summary` (last 30 days: `pending`, `scored`, `failed`, `average_faithfulness`, `unsupported_claims`), `items` (question, answer, `faithfulness`, the judge's `verdict` with its claims; never the passages), `sampling_percent`, `judge_model`. `limit` up to 200 (default 25). See [agents.md](agents.md#answer-quality) |
 | GET | `/runs/{run_id}` | `agent.view` |
 | GET | `/runs/{run_id}/events` | `agent.view` |
 | POST | `/runs/{run_id}/cancel` | `agent.execute` |

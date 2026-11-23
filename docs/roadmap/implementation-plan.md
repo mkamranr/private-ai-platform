@@ -618,6 +618,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/unit/test_workflow_schema.py`, `tests/api/test_workflow_parallel.py`; the delay test in `test_workflows.py` moves the step's own due time. Checked in Chromium (drag, add, connect, select and remove, keyboard delete, auto-arrange, save). Docs: [workflows.md](../workflows.md#the-canvas), api.md.
 - [ ] Outputs are named, not typed, and deeper template paths aren't checked. Retrieval and tool steps take turns on the database, so only model and HTTP calls overlap. No zoom, multi-select, copy/paste or undo on the canvas. No sub-workflows or loops.
 
+## E70: Per-node GPU alert levels; live agent answers scored (closes the feature-matrix per-node threshold and live-answer scoring gaps)
+
+- [x] `nodes.gpu_alert_thresholds` (migration `d2a4c6e8f0b1`): a node's warning and critical temperatures and memory level. `node_settings` applies them over the platform's for that node's GPUs (sustain and margins stay the platform's); a combination that no longer validates falls back to the platform's. `PUT /nodes/{id}/gpu-alert-levels` (`infrastructure.manage`, checked against the effective platform levels, audited `NODE_GPU_LEVELS_CHANGED`). Console: *Alert levels* on the Nodes page.
+- [x] `agent_answer_scores` (same migration): `PlatformAgentRuntime._queue_scoring` queues a completed run that retrieved passages, sampled at `agents.answer_scoring_percent` with `agents.answer_judge_model` set, with its question, answer and passages. `AnswerScoringService.score_next` (run by `AnswerScoringWorker`, one at a time, `SKIP LOCKED`) judges it with `AnswerQualityService.judge`, charged `agent-judge:<slug>` to the agent's team; passages are cleared once judged; pruned after `agents.answer_score_retention_days`. `GET /agents/{id}/answer-scores` (summary over 30 days and recent verdicts). Console: *Quality* on the Agents page.
+- [x] Fixed: the Nodes page drew its rows with the workflow builder's `nodeRow`, and workflow runs used the ops page's `duration`: `workflows.js` and `operations.js` declared globals with the same names as `admin.js` and each other. The workflow ones are now `wfNodeRow` and `wfDuration`.
+- [x] Tests: `TestNodeLevels` in `tests/api/test_gpu_alerts.py`, `tests/api/test_answer_scoring.py`. Both console views checked in Chromium. Docs: [gpu.md](../gpu.md#a-nodes-own-levels), [agents.md](../agents.md#answer-quality), api.md, settings.md.
+- [ ] Levels are per node, not per GPU. Runs that paused for an approval aren't scored (their passages aren't kept across the pause); a failed judge call isn't retried; there is no alert on falling faithfulness.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

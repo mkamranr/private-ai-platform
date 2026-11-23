@@ -108,8 +108,29 @@ crossing the critical line) raises one only when the time is up. A GPU that stop
 reporting clears its alert whatever the margins say. All three are on the Settings page
 under *GPU monitoring*.
 
-The thresholds are the same for every GPU. Per-node thresholds (a node in a hot room, a
-card rated for higher temperatures) are not supported yet.
+### A node's own levels
+
+A node in a hot room, or with cards rated for higher temperatures, can have its own
+warning and critical temperatures and memory level. On the Nodes page, *Alert levels*
+opens them; the platform's levels are shown greyed in the empty fields, and a node with
+its own shows *own*. Through the API:
+
+```http
+PUT /api/v1/nodes/{id}/gpu-alert-levels
+{"temperature_warning_celsius": 88, "temperature_critical_celsius": 95}
+```
+
+- A level left empty (or `null`) is the platform's; all empty (`{}`) returns the node to
+  the platform's levels.
+- The node's warning must stay below its critical, whichever of the two comes from the
+  platform, or the request is refused. If the platform's levels are changed later so that
+  a node's no longer fit (its warning at or above the platform's new critical), that node
+  uses the platform's levels until it is fixed.
+- The sustain time and recovery margins stay the platform's.
+- Changes need `infrastructure.manage`, apply from the next check and are audited
+  (`NODE_GPU_LEVELS_CHANGED`).
+
+Levels are per node, not per GPU.
 
 The ECC counter only goes back to zero when the driver resets it (usually a reboot or a
 GPU reset), so an ECC alert stays open until then. GPUs belong to no team, so their alerts

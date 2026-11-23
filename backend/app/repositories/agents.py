@@ -6,16 +6,18 @@ import datetime as dt
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 from app.models.agents import (
     Agent,
+    AgentAnswerScore,
     AgentRun,
     AgentRunEvent,
     AgentSkill,
     AgentTool,
     AgentVersion,
+    AnswerScoreStatus,
     ApprovalState,
     McpServer,
     RunState,
@@ -283,3 +285,65 @@ class ToolExecutionRepository(BaseRepository[ToolExecution]):
             execution.decided_at = dt.datetime.now(dt.UTC)
             execution.decision_reason = "No approver responded within the timeout."
         return len(stale)
+
+
+class AgentAnswerScoreRepository(BaseRepository[AgentAnswerScore]):
+    """Sampled agent answers and their faithfulness (E70)."""
+
+    model = AgentAnswerScore
+
+    async def claim_pending(self) -> AgentAnswerScore | None:
+        """The oldest answer waiting to be judged, locked for this worker."""
+        stmt = (
+            select(AgentAnswerScore)
+            .where(AgentAnswerScore.status == AnswerScoreStatus.PENDING)
+            .order_by(AgentAnswerScore.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def for_agent(self, agent_id: uuid.UUID, *, limit: int) -> Sequence[AgentAnswerScore]:
+        stmt = (
+            select(AgentAnswerScore)
+            .where(AgentAnswerScore.agent_id == agent_id)
+            .order_by(AgentAnswerScore.created_at.desc())
+            .limit(limit)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def summary(self, agent_id: uuid.UUID, since: dt.datetime) -> dict[str, object]:
+        """Counts by status, the mean faithfulness and the unsupported claims since then."""
+        rows = (
+            await self.session.execute(
+                select(
+                    AgentAnswerScore.status,
+                    func.count(),
+                    func.avg(AgentAnswerScore.faithfulness),
+                    func.coalesce(
+                        func.sum(AgentAnswerScore.verdict["unsupported"].as_integer()),
+                        0,
+                    ),
+                )
+                .where(
+                    AgentAnswerScore.agent_id == agent_id,
+                    AgentAnswerScore.created_at >= since,
+                )
+                .group_by(AgentAnswerScore.status)
+            )
+        ).all()
+        counts = {str(status): int(n) for status, n, _, _ in rows}
+        scored = next((r for r in rows if r[0] == AnswerScoreStatus.SCORED), None)
+        return {
+            "counts": counts,
+            "average_faithfulness": (
+                round(float(scored[2]), 4) if scored and scored[2] is not None else None
+            ),
+            "unsupported_claims": int(scored[3]) if scored else 0,
+        }
+
+    async def delete_older_than(self, cutoff: dt.datetime) -> int:
+        result = await self.session.execute(
+            delete(AgentAnswerScore).where(AgentAnswerScore.created_at < cutoff)
+        )
+        return int(getattr(result, "rowcount", 0) or 0)

@@ -646,6 +646,9 @@ function agentRow(agent) {
     <td class="text-end text-nowrap">
       <button class="btn btn-sm btn-outline-secondary me-1" data-agent-runs="${esc(agent.id)}"
               data-agent-name="${esc(agent.display_name)}">Runs</button>
+      <button class="btn btn-sm btn-outline-secondary me-1" data-agent-quality="${esc(agent.id)}"
+              data-agent-name="${esc(agent.display_name)}"
+              title="How faithful sampled answers were to the passages they drew on">Quality</button>
       <button class="btn btn-sm btn-outline-primary me-1" data-agent-try="${esc(agent.id)}"
               data-agent-name="${esc(agent.display_name)}">Try</button>
       <button class="btn btn-sm btn-outline-danger" data-agent-delete="${esc(agent.id)}"
@@ -659,6 +662,13 @@ function wireAgentActions() {
     button.onclick = () => guard(button, async () => {
       const runs = await api(`/agents/${button.dataset.agentRuns}/runs?limit=25`);
       showRunList(button.dataset.agentName, runs);
+    });
+  });
+
+  document.querySelectorAll('[data-agent-quality]').forEach((button) => {
+    button.onclick = () => guard(button, async () => {
+      showAnswerScores(button.dataset.agentName,
+        await api(`/agents/${button.dataset.agentQuality}/answer-scores?limit=25`));
     });
   });
 
@@ -682,6 +692,47 @@ function wireAgentActions() {
       await renderAgents();
     });
   });
+}
+
+/** E70: how faithful an agent's sampled answers were to the passages they drew on. */
+function showAnswerScores(name, data) {
+  const s = data.summary;
+  const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
+  const tone = (v) => (v === null || v === undefined ? 'text-bg-secondary'
+    : v >= 0.9 ? 'text-bg-success' : v >= 0.7 ? 'text-bg-warning' : 'text-bg-danger');
+  const off = !data.sampling_percent;
+  document.getElementById('run-modal-title').textContent = `Answer quality — ${name}`;
+  document.getElementById('run-modal-body').innerHTML = `
+    ${off ? `<div class="alert alert-secondary py-2 small">Sampling is off. Set
+      <span class="mono">agents.answer_scoring_percent</span> and
+      <span class="mono">agents.answer_judge_model</span> on the Settings page to judge a share of
+      answers drawn from knowledge bases.</div>`
+      : `<div class="small text-secondary mb-2">${esc(data.sampling_percent)}% of answers drawn from
+      knowledge bases are judged by <span class="mono">${esc(data.judge_model)}</span>. The judge is a
+      model and can be wrong: read the claims, not just the number.</div>`}
+    <div class="row g-2 mb-3">
+      ${statCard(`Faithfulness (${s.days} days)`, pct(s.average_faithfulness))}
+      ${statCard('Answers judged', s.scored)}
+      ${statCard('Unsupported claims', s.unsupported_claims)}
+      ${statCard('Waiting / failed', `${s.pending} / ${s.failed}`)}
+    </div>
+    ${data.items.length ? data.items.map((item) => `
+      <div class="border rounded p-2 mb-2">
+        <div class="d-flex gap-2 align-items-start">
+          <span class="badge ${item.status === 'SCORED' ? tone(item.faithfulness) : 'text-bg-secondary'}">
+            ${item.status === 'SCORED' ? pct(item.faithfulness) : esc(item.status)}</span>
+          <div class="min-w-0 flex-grow-1">
+            <div class="fw-medium small">${esc(item.question)}</div>
+            <div class="small text-secondary text-truncate" title="${esc(item.answer)}">${esc(item.answer)}</div>
+          </div>
+          <span class="small text-secondary text-nowrap">${esc(ago(item.created_at))}</span>
+        </div>
+        ${item.error ? `<div class="small text-danger mt-1">${esc(item.error)}</div>` : ''}
+        ${(item.verdict?.claims || []).length ? `<ul class="small mb-0 mt-1 ps-3">${item.verdict.claims.map((c) =>
+          `<li class="${c.supported ? '' : 'text-danger'}">${c.supported ? '' : '<b>Unsupported:</b> '}${esc(c.claim)}
+            ${c.passages?.length ? `<span class="text-secondary">[${c.passages.map(esc).join(', ')}]</span>` : ''}</li>`).join('')}</ul>` : ''}
+      </div>`).join('') : empty('No answers judged yet.')}`;
+  new bootstrap.Modal(document.getElementById('run-modal')).show();
 }
 
 function showRunList(name, runs) {
@@ -1215,6 +1266,9 @@ async function renderNodes() {
       </table>
     </div>`;
 
+  document.querySelectorAll('[data-node-levels]').forEach((button) => {
+    button.onclick = () => openNodeLevels(nodes.find((n) => n.id === button.dataset.nodeLevels));
+  });
   document.querySelectorAll('[data-check-node]').forEach((button) => {
     button.onclick = async () => {
       button.disabled = true;
@@ -1268,10 +1322,47 @@ function nodeRow(node) {
         ? `<div class="small text-secondary">${esc(node.nvidia_driver_version)} / CUDA ${esc(node.cuda_version || '?')}</div>` : ''}
     </td>
     <td class="small text-secondary">${esc(ago(node.last_seen_at))}</td>
-    <td class="text-end">
+    <td class="text-end text-nowrap">
+      ${node.gpus.length && can('infrastructure.manage') ? `<button class="btn btn-sm btn-outline-secondary"
+        data-node-levels="${esc(node.id)}" title="This node's own GPU alert levels">Alert levels${node.gpu_alert_thresholds
+          ? ' <span class="badge text-bg-warning">own</span>' : ''}</button>` : ''}
       <button class="btn btn-sm btn-outline-secondary" data-check-node="${esc(node.id)}">Check</button>
     </td>
   </tr>`;
+}
+
+/** E70: a node's own GPU alert levels, over the platform's. */
+async function openNodeLevels(node) {
+  const levels = node.gpu_alert_thresholds || {};
+  // The platform's levels, as placeholders, so an empty field says what it falls back to.
+  // Needs settings.view; without it the fields simply have no placeholder.
+  const catalogue = await api('/settings').catch(() => ({ items: [] }));
+  const platform = (key) => catalogue.items.find((i) => i.key === key)?.value;
+  document.getElementById('nl-name').textContent = node.name;
+  const fields = [
+    ['nl-warn', 'temperature_warning_celsius', platform('gpu.alert_temperature_warning_celsius')],
+    ['nl-crit', 'temperature_critical_celsius', platform('gpu.alert_temperature_critical_celsius')],
+    ['nl-mem', 'memory_warning_percent', platform('gpu.alert_memory_warning_percent')],
+  ];
+  fields.forEach(([id, key, fallback]) => {
+    const input = document.getElementById(id);
+    input.value = levels[key] ?? '';
+    input.placeholder = fallback ?? '';
+  });
+  document.getElementById('nl-error').classList.add('d-none');
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('node-levels-modal'));
+  const save = async (body) => {
+    await api(`/nodes/${node.id}/gpu-alert-levels`, { method: 'PUT', body: JSON.stringify(body) });
+    modal.hide();
+    alert(`${node.name}: GPU alert levels saved. They apply from the next check.`, 'success');
+    await renderNodes();
+  };
+  onModalSubmit('node-levels-form', 'nl-error', () => save(Object.fromEntries(fields.map(([id, key]) => {
+    const v = document.getElementById(id).value;
+    return [key, v === '' ? null : Number(v)];
+  }))));
+  document.getElementById('nl-reset').onclick = (event) => guard(event.target, () => save({}));
+  modal.show();
 }
 
 /* -------------------------------------------------------------------------- */

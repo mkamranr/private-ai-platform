@@ -11,6 +11,7 @@ Phase 0 owns seven tables. Each later module adds its own here as it lands.
 
 from app.models.agents import (
     Agent,
+    AgentAnswerScore,
     AgentRun,
     AgentRunEvent,
     AgentSkill,
@@ -131,6 +132,7 @@ __all__ = [
     "TERMINAL_STATES",
     "TERMINAL_VOICE_STATES",
     "Agent",
+    "AgentAnswerScore",
     "AgentRun",
     "AgentRunEvent",
     "AgentSkill",

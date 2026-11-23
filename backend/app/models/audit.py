@@ -173,6 +173,7 @@ class AuditAction(enum.StrEnum):
     # Infrastructure (Phase 1)
     NODE_REGISTERED = "NODE_REGISTERED"
     NODE_REMOVED = "NODE_REMOVED"
+    NODE_GPU_LEVELS_CHANGED = "NODE_GPU_LEVELS_CHANGED"
     # Self-enrolment (M04). NODE_ENROLLED and NODE_REENROLLED are separate because the
     # second one replaced a live node's credentials in place, which is the more
     # consequential event and the one worth finding in a search.

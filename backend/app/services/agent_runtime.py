@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import secrets
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -56,12 +57,17 @@ from app.core.interfaces.agent import (
 )
 from app.core.interfaces.llm import ChatMessage
 from app.core.logging import get_logger
-from app.models.agents import AgentRun, ApprovalState
+from app.models.agents import AgentAnswerScore, AgentRun, AnswerScoreStatus, ApprovalState
 from app.repositories.agents import AgentRunRepository, ToolExecutionRepository, ToolRepository
+from app.services.answer_quality import JUDGE_PASSAGE_CHARS
 from app.services.llm_provider import ProviderError
+from app.services.runtime_settings import RUNTIME
 from app.services.tool_pipeline import ToolPipeline
 
 log = get_logger(__name__)
+
+#: Passages kept with a sampled answer for the judge (E70).
+MAX_SCORED_PASSAGES = 20
 
 
 class PlatformAgentRuntime(AgentRuntime):
@@ -77,6 +83,7 @@ class PlatformAgentRuntime(AgentRuntime):
         provider_factory: Any,
         retrieval: Any = None,
         langfuse: Any = None,
+        answer_scores: Any = None,
     ) -> None:
         self._settings = settings
         self._runs = runs
@@ -94,6 +101,11 @@ class PlatformAgentRuntime(AgentRuntime):
         # LLM observability (M19, Phase 7). None unless LANGFUSE__ENABLED, and optional
         # for the same reason as retrieval: the loop must run identically without it.
         self._langfuse = langfuse
+        # E70: where sampled answers are queued for judging (an
+        # AgentAnswerScoreRepository); None queues nothing. The passages each run
+        # retrieved are held here until it completes.
+        self._answer_scores = answer_scores
+        self._retrieved: dict[str, tuple[str, list[Any]]] = {}
 
     # -- execute -----------------------------------------------------------
     def execute(
@@ -382,6 +394,9 @@ class PlatformAgentRuntime(AgentRuntime):
             )
             sequence += 1
 
+        if found.passages:
+            self._retrieved[context.run_id] = (str(question), list(found.passages))
+
         if found.context_block:
             # Inserted at the head, as a system message. Appending it after the question
             # would leave the model reading the question first and the evidence second,
@@ -520,6 +535,46 @@ class PlatformAgentRuntime(AgentRuntime):
         run.finished_at = dt.datetime.now(dt.UTC)
         run.checkpoint = {}
         self._finalise_observability(run, spec)
+        self._queue_scoring(run, output)
+
+    def _queue_scoring(self, run: AgentRun, output: str) -> None:
+        """E70: queue a sampled answer for the judge. Never raises: a run that completed
+        must not fail because its sample could not be queued."""
+        retrieved = self._retrieved.pop(str(run.id), None)
+        try:
+            agents = RUNTIME.latest(self._settings).agents
+            if (
+                self._answer_scores is None
+                or retrieved is None
+                or not output.strip()
+                or not agents.answer_judge_model
+                or agents.answer_scoring_percent <= 0
+                or secrets.randbelow(100) >= agents.answer_scoring_percent
+            ):
+                return
+            question, passages = retrieved
+            self._answer_scores.add(
+                AgentAnswerScore(
+                    run_id=run.id,
+                    agent_id=run.agent_id,
+                    user_id=run.user_id,
+                    status=AnswerScoreStatus.PENDING,
+                    question=question[:8000],
+                    answer=output[:20000],
+                    passages=[
+                        {
+                            "text": p.text[:JUDGE_PASSAGE_CHARS],
+                            "document": p.document_name,
+                            "knowledge_base": p.knowledge_base,
+                            "location": p.location,
+                            "score": round(p.score, 4),
+                        }
+                        for p in passages[:MAX_SCORED_PASSAGES]
+                    ],
+                )
+            )
+        except Exception:  # pragma: no cover - defensive
+            log.warning("answer_scoring_queue_failed", run=str(run.id), exc_info=True)
 
     async def _fail(self, run: AgentRun, error: str, spec: AgentSpec | None = None) -> None:
         run.state = RunState.FAILED
