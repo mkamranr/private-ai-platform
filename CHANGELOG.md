@@ -6,6 +6,17 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Restore a whole team from a backup
+- **Restoring one team now brings back its setup too**: the team, its members, tools, agents (every version, with their tool grants), workflows, API clients and keys, and the quotas and cost budgets set for it or its keys, together with its knowledge bases. Choose *Only one team* on the Backup & Restore page, or `--team` on the host. A deleted team comes back whole, under the same ids, so its run history points at it again.
+- **Nothing made since is lost**: agents, workflows and keys created after the backup are kept, members who joined since stay, and run history isn't touched. A key revoked or deleted since stays unusable.
+- It refuses, and changes nothing, when a name was taken since or something it needs no longer exists. A team's setup holds encrypted credentials, so it needs the backup's encryption key; its knowledge bases alone don't (*Only its knowledge bases*, or `--knowledge-only`).
+- **Upgrade.** No migration. `--team` used to restore only the team's knowledge bases; add `--knowledge-only` to scripts that relied on that.
+
+### GPU alerts that don't flap
+- **Set how long a GPU must stay over a line before it alerts** (`gpu.alert_sustain_minutes`, default 0: at once), so a short spike stays quiet. Uncorrectable ECC errors still alert at once.
+- **An open alert clears only once the GPU is clearly back under the line**: 3 °C under for temperature, 2 points for memory by default (`gpu.alert_recovery_margin_celsius`, `gpu.alert_recovery_margin_percent`). A critical alert drops to warning the same way. All on the Settings page under *GPU monitoring*.
+- **Upgrade.** No migration. The recovery margins are on by default, so an open GPU alert now clears a few degrees later than before; set them to 0 for the old behaviour.
+
 ### Speech and agent tool calls have a price
 - **Rates take a per-unit price**: per audio minute for a transcription model, per million characters for a speech model, and per call for agent tools (`tool:<name>` rates, `tool:*` as their default). Set it in *Per unit* in the Chargeback page's rate form.
 - **Speech is no longer priced as tokens.** Seconds of audio and characters used to be multiplied by the token price. Now a rate without a unit price leaves speech unpriced, and reports show audio minutes and characters in their own columns.

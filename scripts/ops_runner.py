@@ -168,7 +168,10 @@ def restore_scope(params: dict) -> list[str]:
     """E64: the backup.py arguments for a scoped restore. Only ids reach the command line."""
     team = str(params.get("team") or "")
     if team:
-        return ["--team", team] if UUID.match(team) else []
+        if not UUID.match(team):
+            return []
+        # E68: a team restore brings back its setup too, unless asked not to.
+        return ["--team", team, *(["--knowledge-only"] if params.get("knowledge_only") else [])]
     out: list[str] = []
     for value in params.get("knowledge_bases") or []:
         if UUID.match(str(value)):
@@ -715,6 +718,7 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
         if scope:
             reporter.result["scope"] = {
                 "team": params.get("team"), "knowledge_bases": params.get("knowledge_bases"),
+                "knowledge_only": bool(params.get("knowledge_only")),
             }
         return ("SUCCEEDED", None) if ok else ("FAILED", "backup.py restore reported errors.")
 

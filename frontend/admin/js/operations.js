@@ -372,14 +372,16 @@ async function renderBackups() {
       }).join('');
       // E64: only some knowledge bases, or one team's. Offered when the backup lists them.
       const bases = backup.knowledge_bases || [];
-      const teams = (backup.teams || []).filter((t) => bases.some((b) => b.team_id === t.id));
-      const scoped = backup.catalogued && bases.length && available.includes('database');
+      // E68: every team in the backup, not only those with knowledge bases: its setup
+      // (agents, workflows, tools, API clients, quotas) can come back too.
+      const teams = backup.teams || [];
+      const scoped = backup.catalogued && (bases.length || teams.length) && available.includes('database');
       const scopeHtml = scoped ? `
           <dt>Scope</dt><dd>
             <select class="form-select form-select-sm mb-2" id="rp-scope">
               <option value="all">The whole platform</option>
-              <option value="bases">Only some knowledge bases</option>
-              ${teams.length ? '<option value="team">Only one team&rsquo;s knowledge bases</option>' : ''}
+              ${bases.length ? '<option value="bases">Only some knowledge bases</option>' : ''}
+              ${teams.length ? '<option value="team">Only one team</option>' : ''}
             </select>
             <div id="rp-bases" class="d-none border rounded p-2 small" style="max-height:12rem;overflow:auto">
               ${bases.map((b) => `<div class="form-check mb-0">
@@ -387,9 +389,15 @@ async function renderBackups() {
                 <label class="form-check-label" for="rp-kb-${esc(b.id)}">${esc(b.display_name || b.name)}
                   <span class="text-secondary font-monospace">${esc(b.name)}</span></label></div>`).join('')}
             </div>
-            <select class="form-select form-select-sm d-none" id="rp-team">
-              ${teams.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
-            </select></dd>` : '';
+            <div id="rp-team-box" class="d-none">
+              <select class="form-select form-select-sm mb-2" id="rp-team">
+                ${teams.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
+              </select>
+              <div class="form-check mb-0 small">
+                <input class="form-check-input" type="checkbox" id="rp-team-kb-only">
+                <label class="form-check-label" for="rp-team-kb-only">Only its knowledge bases, not its
+                  members, tools, agents, workflows, API clients and quotas</label></div>
+            </div></dd>` : '';
       const wholeWarning = `${icon('i-alerts')} <b>The ticked parts are replaced</b> with the backup's. Restoring the
           database loses everything changed since ${esc(stampText(backup.name))}, including users, keys and
           audit records; restore the files and vectors with it, so documents and search match. The API
@@ -398,6 +406,11 @@ async function renderBackups() {
           their documents, chunks, document access and evaluation sets, and (if ticked) their stored files and
           vectors. Changes to them since ${esc(stampText(backup.name))} are lost. Every other knowledge base,
           user and setting is left as it is, and the API keeps running. A base deleted since comes back.`;
+      const teamWarning = `${icon('i-alerts')} <b>The team is put back as it was</b> on ${esc(stampText(backup.name))}:
+          its knowledge bases (as above) and, with the database, the team itself, its members, tools, agents,
+          workflows, API clients, API keys, quotas and cost budgets. Anything the team created since is kept;
+          members who joined since stay. A key revoked or deleted since stays unusable. Run history is not
+          touched. The API keeps running, and nothing changes if a name was taken since.`;
       confirmOps({
         title: 'Restore backup',
         expected: backup.name,
@@ -422,6 +435,7 @@ async function renderBackups() {
             if (!body.knowledge_base_ids.length) throw new Error('Tick at least one knowledge base.');
           } else if (scope === 'team') {
             body.team_id = document.getElementById('rp-team').value;
+            if (document.getElementById('rp-team-kb-only').checked) body.knowledge_only = true;
           }
           return api(`/ops/backups/${encodeURIComponent(backup.name)}/restore`,
             { method: 'POST', body: JSON.stringify(body) });
@@ -429,18 +443,25 @@ async function renderBackups() {
       });
       const scopeSelect = document.getElementById('rp-scope');
       if (scopeSelect) {
-        scopeSelect.onchange = () => {
+        const kbOnly = document.getElementById('rp-team-kb-only');
+        const update = () => {
           const value = scopeSelect.value;
+          const teamSetup = value === 'team' && !kbOnly.checked;
           document.getElementById('rp-bases').classList.toggle('d-none', value !== 'bases');
-          document.getElementById('rp-team').classList.toggle('d-none', value !== 'team');
-          document.getElementById('ops-confirm-warning').innerHTML = value === 'all' ? wholeWarning : scopedWarning;
-          // A different key blocks only a whole-database restore: these tables hold nothing encrypted.
+          document.getElementById('rp-team-box').classList.toggle('d-none', value !== 'team');
+          document.getElementById('ops-confirm-warning').innerHTML = value === 'all'
+            ? wholeWarning : teamSetup ? teamWarning : scopedWarning;
+          // A different key blocks a whole-database restore and a team's setup (it holds
+          // encrypted credentials); knowledge bases alone hold nothing encrypted.
+          const blocked = value === 'all' || teamSetup;
           document.querySelectorAll('[data-key-blocked="1"]').forEach((box) => {
-            box.disabled = value === 'all';
-            box.checked = value !== 'all';
-            box.parentElement.querySelector('[data-part-why]')?.classList.toggle('d-none', value !== 'all');
+            box.disabled = blocked;
+            box.checked = !blocked;
+            box.parentElement.querySelector('[data-part-why]')?.classList.toggle('d-none', !blocked);
           });
         };
+        scopeSelect.onchange = update;
+        kbOnly.onchange = update;
       }
     };
   });

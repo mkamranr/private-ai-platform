@@ -193,7 +193,10 @@ class TestRestoreScoped:
 
     def test_a_team_means_its_bases(self, backup, tmp_path):
         path = make_backup(backup.module, tmp_path)
-        assert backup.module.restore(path, True, parts=["database"], team="legal") == 0
+        assert (
+            backup.module.restore(path, True, parts=["database"], team="legal", knowledge_only=True)
+            == 0
+        )
         export = backup.scripts[0][1]
         assert KB_A in export and KB_B not in export
         assert not [r for r in backup.requests if r[0] == "PUT"]
@@ -276,3 +279,101 @@ class TestRunner:
             "teams": [],
             "catalogued": False,
         }
+
+
+class TestTeamSetup:
+    """E68: ``--team`` brings back the team's setup with its knowledge bases."""
+
+    TEAM_COLUMNS = (
+        "teams|id,name,slug\n"
+        "team_memberships|id,team_id,user_id\n"
+        "agents|id,slug,team_id,owner_id\n"
+        "api_keys|id,client_id,key_hash,revoked_at\n"
+    )
+
+    def _fake(self, backup, *, team_row: bool = True):
+        plain = backup.module._psql
+
+        def psql(user, database, sql="", *, script=None):
+            if script is None and "information_schema.columns" in sql and "'teams'" in sql:
+                backup.queries.append((database, sql))
+                return Done(self.TEAM_COLUMNS)
+            if script is None and "UNION ALL" in sql:
+                return Done("teams|1\nagents|2\napi_keys|1\n")
+            if script is None and "FROM public.teams WHERE id::text" in sql:
+                backup.queries.append((database, sql))
+                return Done(f"{TEAM}|legal\n" if team_row else "")
+            if script is None and "indisunique" in sql:
+                return Done("agents|slug\nteams|name\n")
+            if script is None and "pg_constraint" in sql and "'teams'" in sql:
+                return Done(
+                    "agents|owner_id|users|id|true\nteam_memberships|user_id|users|id|false\n"
+                )
+            return plain(user, database, sql, script=script)
+
+        backup.module._psql = psql
+
+    def test_setup_and_bases_in_one_transaction(self, backup, tmp_path):
+        self._fake(backup)
+        path = make_backup(backup.module, tmp_path)
+        assert backup.module.restore(path, True, parts=["database"], team="legal") == 0
+        (scratch, export), (target, apply) = backup.scripts
+        assert scratch.startswith("ai_platform_scoped_") and target == "ai_platform"
+        assert "aip-team/agents.csv" in export and KB_A in export
+        # One script: the team's rows first, so a base's team exists when it is checked.
+        assert apply.index("INSERT INTO public.teams") < apply.index(
+            "DELETE FROM public.knowledge_bases"
+        )
+        assert "ON CONFLICT (id) DO UPDATE" in apply
+        assert "INSERT INTO public.team_memberships" in apply and "ON CONFLICT DO NOTHING" in apply
+        assert "DELETE FROM stage_team_memberships" in apply  # a member deleted since
+        assert 'UPDATE stage_agents SET "owner_id" = NULL' in apply
+        assert "UPDATE stage_api_keys s SET revoked_at = now()" in apply
+        assert 'public.agents l ON l.id <> s.id AND l."slug" = s."slug"' in apply
+
+    def test_a_team_with_no_bases_still_has_its_setup(self, backup, tmp_path, monkeypatch):
+        self._fake(backup)
+        path = make_backup(backup.module, tmp_path)
+        monkeypatch.setattr(
+            backup.module,
+            "_resolve_scope",
+            lambda *a, **k: (_ for _ in ()).throw(
+                ValueError("the backup has no knowledge bases owned by team 'legal'")
+            ),
+        )
+        assert backup.module.restore(path, True, parts=["database"], team="legal") == 0
+        export = backup.scripts[0][1]
+        assert "aip-team/teams.csv" in export and "knowledge_bases" not in export
+
+    def test_an_unknown_team_is_refused(self, backup, tmp_path):
+        self._fake(backup, team_row=False)
+        path = make_backup(backup.module, tmp_path)
+        assert backup.module.restore(path, True, team="nobody") == 1
+        assert not backup.scripts
+
+    def test_another_key_refuses_the_setup_but_not_the_bases(self, backup, tmp_path):
+        self._fake(backup)
+        path = make_backup(backup.module, tmp_path, key="k-old")
+        assert backup.module.restore(path, True, parts=["database"], team="legal") == 1
+        assert not backup.scripts
+        assert (
+            backup.module.restore(path, True, parts=["database"], team="legal", knowledge_only=True)
+            == 0
+        )
+        assert "aip-team" not in backup.scripts[0][1]
+
+    def test_files_alone_restore_no_setup(self, backup, tmp_path):
+        self._fake(backup)
+        path = make_backup(backup.module, tmp_path)
+        backup.live = {KB_A: f"kb_{KB_A[:8]}"}
+        assert backup.module.restore(path, True, parts=["files"], team="legal") == 0
+        assert not backup.scripts
+
+    def test_the_runner_passes_knowledge_only(self):
+        runner = load("ops_runner")
+        assert runner.restore_scope({"team": TEAM}) == ["--team", TEAM]
+        assert runner.restore_scope({"team": TEAM, "knowledge_only": True}) == [
+            "--team",
+            TEAM,
+            "--knowledge-only",
+        ]

@@ -394,9 +394,10 @@ class OpsService:
         parts: Sequence[str] | None = None,
         knowledge_base_ids: Sequence[uuid.UUID] | None = None,
         team_id: uuid.UUID | None = None,
+        knowledge_only: bool = False,
     ) -> OpsJob:
         """Queue a restore of the whole backup, or (E60) only ``parts`` of it, or (E64)
-        only some knowledge bases."""
+        only some knowledge bases, or (E68) one team."""
         backup = await self._backup(name)
         self._check_confirm(confirm, name)
         if not backup.complete:
@@ -413,7 +414,13 @@ class OpsService:
         scoped = bool(knowledge_base_ids) or team_id is not None
         if scoped:
             return await self._request_scoped_restore(
-                backup, chosen, knowledge_base_ids or [], team_id, actor=actor, reason=reason
+                backup,
+                chosen,
+                knowledge_base_ids or [],
+                team_id,
+                knowledge_only=knowledge_only,
+                actor=actor,
+                reason=reason,
             )
         if (chosen is None or "database" in chosen) and backup.key_matches is False:
             # backup.py refuses this too; failing here saves a stopped platform. Files and
@@ -435,10 +442,14 @@ class OpsService:
         knowledge_base_ids: Sequence[uuid.UUID],
         team_id: uuid.UUID | None,
         *,
+        knowledge_only: bool = False,
         actor: User,
         reason: str,
     ) -> OpsJob:
         """E64: some knowledge bases. No key check: their tables hold nothing encrypted.
+
+        E68: a team's setup (with the database part, unless ``knowledge_only``) does hold
+        encrypted values, so it needs the backup's key, as a whole restore does.
 
         The dump is needed whatever the parts, as that is where the bases are looked up.
         Checked against the backup's catalogue when it has one; backup.py checks the
@@ -449,13 +460,22 @@ class OpsService:
                 "Restoring single knowledge bases needs the backup's database dump, and "
                 "this backup has none."
             )
+        team_setup = (
+            team_id is not None and not knowledge_only and (chosen is None or "database" in chosen)
+        )
+        if team_setup and backup.key_matches is False:
+            raise ValidationError(
+                "This backup was taken under a different encryption key, and a team's setup "
+                "holds encrypted credentials. Restore only its knowledge bases "
+                "(knowledge_only), or put the original key back; see docs/backup.md."
+            )
         if backup.catalogued:
             if team_id is not None:
                 if team_id not in {t.id for t in backup.teams}:
                     raise ValidationError(
                         "That team is not in this backup.", details={"field": "team_id"}
                     )
-                if not any(b.team_id == team_id for b in backup.knowledge_bases):
+                if not team_setup and not any(b.team_id == team_id for b in backup.knowledge_bases):
                     raise ValidationError(
                         "That team owned no knowledge bases when this backup was taken.",
                         details={"field": "team_id"},
@@ -472,6 +492,8 @@ class OpsService:
             params["parts"] = chosen
         if team_id is not None:
             params["team"] = str(team_id)
+            if knowledge_only:
+                params["knowledge_only"] = True
         else:
             params["knowledge_bases"] = sorted({str(i) for i in knowledge_base_ids})
         return await self._request(JobKind.BACKUP_RESTORE, params, actor=actor, reason=reason)

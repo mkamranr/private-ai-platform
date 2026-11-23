@@ -189,6 +189,32 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next GPU alert check (every minute)",
     ),
     RuntimeSetting(
+        "gpu.alert_sustain_minutes",
+        "monitoring",
+        "GPU alert: sustained for (minutes)",
+        "A temperature or memory reading must stay over its level this many minutes before "
+        "an alert is raised, so a short spike stays quiet. 0 raises on the first reading. "
+        "Uncorrectable ECC errors always raise at once. Read by the gpu_alerts job.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
+        "gpu.alert_recovery_margin_celsius",
+        "monitoring",
+        "GPU alert: recovery margin (°C)",
+        "An open temperature alert clears only once the GPU is this many degrees under the "
+        "level that raised it, so a GPU hovering at the line doesn't raise and clear it over "
+        "and over. Read by the gpu_alerts job.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
+        "gpu.alert_recovery_margin_percent",
+        "monitoring",
+        "GPU alert: recovery margin (memory %)",
+        "An open memory alert clears only once usage is this many points under the warning "
+        "level. Read by the gpu_alerts job.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
         "gateway.circuit_failure_threshold",
         "gateway",
         "Circuit breaker: failures to open",

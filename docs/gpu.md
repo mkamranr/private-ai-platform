@@ -91,6 +91,26 @@ The thresholds are on the Settings page under *GPU monitoring* and apply from th
 check. The warning temperature must be below the critical one. Model servers usually
 reserve 90–95% of GPU memory when they start, so keep the memory threshold above that.
 
+### Alerts that don't flap
+
+A GPU running at 82–84 °C against an 83 °C line would otherwise raise and clear its alert
+every minute, and every raise reaches the channels. Two settings stop that:
+
+| setting | default | effect |
+|---|---|---|
+| `gpu.alert_sustain_minutes` | 0 | A temperature or memory breach raises an alert only once every sample for this many minutes has been over a line. A sample back under the line, or a gap of more than five minutes between samples, starts the count again. 0 raises on the first sample. |
+| `gpu.alert_recovery_margin_celsius` | 3 | While an alert is open, the temperature lines are this much lower: an alert raised at 83 °C clears below 80 °C, and a CRITICAL one raised at 90 °C drops to WARNING below 87 °C. |
+| `gpu.alert_recovery_margin_percent` | 2 | The same for memory: an alert raised at 98% clears below 96%. |
+
+Uncorrectable ECC errors always raise at once; they don't come and go. A GPU that is
+waiting out the sustain time has no alert yet, so getting worse during it (for example
+crossing the critical line) raises one only when the time is up. A GPU that stops
+reporting clears its alert whatever the margins say. All three are on the Settings page
+under *GPU monitoring*.
+
+The thresholds are the same for every GPU. Per-node thresholds (a node in a hot room, a
+card rated for higher temperatures) are not supported yet.
+
 The ECC counter only goes back to zero when the driver resets it (usually a reboot or a
 GPU reset), so an ECC alert stays open until then. GPUs belong to no team, so their alerts
 go to channels set to *Every team*.

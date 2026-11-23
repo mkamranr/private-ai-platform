@@ -261,6 +261,20 @@ class GpuMetricRepository(BaseRepository[GpuMetric]):
         rows = (await self.session.execute(stmt)).all()
         return [(metric, gpu, node_name) for metric, gpu, node_name in rows]
 
+    async def recent_for_gpus(
+        self, gpu_ids: Sequence[uuid.UUID], since: dt.datetime
+    ) -> Sequence[GpuMetric]:
+        """Samples of these GPUs recorded at or after ``since``, each GPU's newest first
+        (E68: is a breach sustained?)."""
+        if not gpu_ids:
+            return []
+        stmt = (
+            select(GpuMetric)
+            .where(GpuMetric.gpu_id.in_(gpu_ids), GpuMetric.recorded_at >= since)
+            .order_by(GpuMetric.gpu_id, GpuMetric.recorded_at.desc())
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
     async def delete_older_than(self, cutoff: dt.datetime) -> int:
         """Enforce retention. Returns the number of rows removed."""
         result = cast(
