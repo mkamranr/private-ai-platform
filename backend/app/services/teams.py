@@ -425,11 +425,16 @@ class ScopeGuard:
         models: Iterable[str] = (),
         knowledge_bases: Iterable[str] = (),
         tools: Iterable[uuid.UUID] = (),
+        workflows: Iterable[str] = (),
     ) -> None:
         """An agent or workflow in ``team_id`` may use only shared resources and its own
         team's, whoever saves it. See app/services/team_references.py."""
         problems = await TeamReferences(self._lookups).unavailable(
-            team_id, models=models, knowledge_bases=knowledge_bases, tools=tools
+            team_id,
+            models=models,
+            knowledge_bases=knowledge_bases,
+            tools=tools,
+            workflows=workflows,
         )
         if problems:
             raise ValidationError(describe(what, team_id, problems), details={"uses": problems})
@@ -438,9 +443,12 @@ class ScopeGuard:
         found: tuple[bool, uuid.UUID | None] = await getattr(self._lookups, resource_type)(ident)
         return found[1]
 
-    async def _references_of(self, resource_type: str, ident: uuid.UUID) -> tuple[list, list, list]:
+    async def _references_of(
+        self, resource_type: str, ident: uuid.UUID
+    ) -> tuple[list, list, list, list]:
         """The models, knowledge bases and (E35) tools an agent's current version, or the
-        models and knowledge bases a workflow's draft and published version, refer to."""
+        models, knowledge bases and (E71) sub-workflows a workflow's draft and published
+        version, refer to."""
         session = self._lookups.session
         if resource_type == "agent":
             row = (
@@ -451,7 +459,7 @@ class ScopeGuard:
                 )
             ).first()
             if row is None:
-                return [], [], []
+                return [], [], [], []
             tools = (
                 (
                     await session.execute(
@@ -461,11 +469,11 @@ class ScopeGuard:
                 .scalars()
                 .all()
             )
-            return [row.model], list(row.knowledge_base_ids or []), list(tools)
+            return [row.model], list(row.knowledge_base_ids or []), list(tools), []
         if resource_type == "workflow":
             workflow = await session.get(Workflow, ident)
             if workflow is None:
-                return [], [], []
+                return [], [], [], []
             definitions = [workflow.draft or {}]
             if workflow.published_version is not None:
                 published = (
@@ -480,11 +488,13 @@ class ScopeGuard:
                     definitions.append(published)
             models: list[str] = []
             bases: list[str] = []
+            children: list[str] = []
             for definition in definitions:
                 models += wd.referenced_ids(definition, "llm", "model")
                 bases += wd.referenced_ids(definition, "retrieval", "knowledge_base_ids")
-            return models, bases, []
-        return [], [], []
+                children += wd.referenced_workflows(definition)
+            return models, bases, [], children
+        return [], [], [], []
 
     async def assignable(self, team_id: uuid.UUID | None) -> None:
         """Validate a ``team_id`` from a create payload."""
@@ -528,9 +538,9 @@ class ScopeGuard:
         # E18: an agent or workflow moved into another team must still be able to use what
         # it refers to there. Refused now, rather than discovered at its next run.
         if resource_type in ("agent", "workflow"):
-            models, bases, tools = await self._references_of(resource_type, resource_id)
+            models, bases, tools, children = await self._references_of(resource_type, resource_id)
             problems = await TeamReferences(self._lookups).unavailable(
-                team_id, models=models, knowledge_bases=bases, tools=tools
+                team_id, models=models, knowledge_bases=bases, tools=tools, workflows=children
             )
             if problems:
                 raise ConflictError(describe(label, team_id, problems), details={"uses": problems})

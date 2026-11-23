@@ -119,6 +119,8 @@ draft is checked or published.
 | `transform` | `output`: an object built from earlier values | that object |
 | `approval` | `message`, `details`, `allow_self_approval` | branches `approved` / `rejected` |
 | `delay` | `seconds` (up to a week) | `waited_seconds` |
+| `workflow` | `workflow_id`, `input` | `output` (the sub-workflow run's output), `run_id`. See [Sub-workflows and loops](#sub-workflows-and-loops) |
+| `foreach` | `items`, `workflow_id`, `input` (may use `{{ item }}`, `{{ index }}`), `max_items` | `results` (each run's output, in order), `count`, `run_ids` |
 | `end` | `output` (empty: the last step's output) | becomes the run's output |
 
 Condition operators are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `not_contains`,
@@ -214,6 +216,41 @@ Run statuses: `QUEUED`, `RUNNING`, `WAITING`, `WAITING_FOR_APPROVAL`, `SUCCEEDED
 - `POST /workflow-runs/{id}/cancel` stops a queued, paused or waiting run. Its pending
   approvals expire.
 - A run stops after 200 steps.
+
+### Sub-workflows and loops
+
+A **Sub-workflow** step (`workflow`) runs another workflow, and a **For each** step
+(`foreach`) runs one once for each item of a list:
+
+```json
+{"id": "each", "type": "foreach",
+ "config": {"items": "{{ nodes.search.passages }}", "workflow_id": "<uuid>",
+            "input": {"text": "{{ item.text }}", "position": "{{ index }}"}, "max_items": 20}}
+```
+
+- **A run of its own.** The sub-workflow's published version runs as a separate run, with
+  trigger `workflow`, `parent_run_id` and `parent_node_id` set, and the parent's starter
+  and permissions. Its steps are in its own trace; the parent's step links to it in the
+  console, and the child links back.
+- **One item at a time**, in order. `{{ item }}` and `{{ index }}` are available only in
+  the foreach step's `input`. Without an `input`, each run gets `{"item": <the item>}`.
+  `items` must render to a list of at most `max_items` (default 20, up to 100), or the
+  step fails.
+- **A child that pauses** (an approval, a delay) leaves the step waiting, and the parent
+  run is `WAITING`. When the child finishes, the parent continues; a foreach then starts
+  its next item.
+- **A child that fails** (or is cancelled) fails the step, naming the run, and the step
+  follows its `error` branch if it has one. A foreach stops at the first failed item.
+- **Cancelling a parent** cancels its unfinished children (and their pending approvals).
+- **Not retried or timed out as a whole**: a retry would start the children again. The
+  children's own steps have their own retries and timeouts.
+- **Bounded.** Sub-workflows nest at most 3 deep below the run a trigger started; a
+  deeper one fails the step. That also stops a workflow that ends up calling itself
+  through others. One that calls itself directly can't be published.
+- **Checked when saved and published.** The target must be a workflow you can see and that
+  the workflow's own team may use (shared, or the same team). Publishing, or a test run,
+  also needs it to be published and not this workflow itself. A sub-workflow archived
+  later fails the step that runs it.
 
 ### Whose permissions a run uses
 
@@ -386,4 +423,6 @@ Workflows take part in team scope ([teams.md](teams.md)):
   work, so only model and HTTP calls truly overlap.
 - **Canvas niceties**: no zoom, multi-select, copy and paste, or undo (*Discard changes*
   goes back to the saved draft).
-- **Sub-workflows and loops.**
+- **Loops inside a workflow.** Repetition is a foreach over a sub-workflow; edges can't
+  go back. Items run one at a time, not in parallel, and a foreach can't carry on past a
+  failed item.

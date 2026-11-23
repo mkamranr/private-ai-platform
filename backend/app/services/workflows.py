@@ -322,6 +322,7 @@ class WorkflowService:
         if workflow.status == WorkflowStatus.ARCHIVED:
             raise ConflictError("An archived workflow cannot be published.")
         wd.require_valid(workflow.draft)
+        await self._check_children(workflow, workflow.draft)
         version = (workflow.published_version or 0) + 1
         self._versions.add(
             WorkflowVersion(
@@ -399,6 +400,26 @@ class WorkflowService:
             resource_id=str(workflow_id),
             metadata={"name": workflow.name},
         )
+
+    async def _check_children(self, workflow: Workflow, definition: dict[str, Any]) -> None:
+        """E71: the workflows its sub-workflow and foreach steps run exist, are published,
+        and aren't this one. (A longer cycle stops at `wd.MAX_DEPTH` when it runs.)"""
+        for ref in wd.referenced_workflows(definition):
+            ident = uuid.UUID(ref)  # validated as an id by require_valid
+            if ident == workflow.id:
+                raise ValidationError(
+                    "A workflow cannot run itself as a sub-workflow.",
+                    details={"workflow_id": ref},
+                )
+            child = await self._workflows.get(ident)
+            if child is None:
+                raise ValidationError(f"No workflow with id {ref}.", details={"workflow_id": ref})
+            if child.status != WorkflowStatus.PUBLISHED or not child.published_version:
+                raise ValidationError(
+                    f"Sub-workflow {child.name!r} is {child.status.lower()}. Publish it first: "
+                    "a sub-workflow runs its published version.",
+                    details={"workflow_id": ref},
+                )
 
     async def _flush(self, workflow: Workflow) -> None:
         """Flush, then reload ``updated_at``: the database sets it, and an expired column
@@ -560,6 +581,7 @@ class WorkflowService:
 
         if trigger == "test":
             wd.require_valid(workflow.draft)
+            await self._check_children(workflow, workflow.draft)
             definition, version = workflow.draft, None
         else:
             if workflow.status != WorkflowStatus.PUBLISHED or not workflow.published_version:
@@ -635,11 +657,7 @@ class WorkflowService:
             raise NotFoundError(f"No workflow run with id {run_id}.")
         if run.is_terminal:
             raise ConflictError(f"The run already {run.status.lower()}.")
-        for approval in await self._approvals.pending_for_run(run.id):
-            approval.status = ApprovalStatus.EXPIRED
-        run.status = RunStatus.CANCELLED
-        run.finished_at = dt.datetime.now(dt.UTC)
-        run.error = f"Cancelled by {actor.username}."
+        await self._cancel_tree(run, f"Cancelled by {actor.username}.")
         await self._runs.flush()
         await self._audit.record(
             AuditAction.WORKFLOW_RUN_CANCELLED,
@@ -648,7 +666,21 @@ class WorkflowService:
             resource_type="workflow_run",
             resource_id=str(run.id),
         )
+        # E71: a child cancelled on its own fails its parent's step (or takes its error
+        # branch), so the parent doesn't wait for it forever.
+        await self._engine.child_finished(run)
+        await self._runs.flush()
         return run
+
+    async def _cancel_tree(self, run: WorkflowRun, reason: str) -> None:
+        """Cancel ``run`` and (E71) its unfinished child runs, depth first."""
+        for child in await self._runs.active_children(run.id):
+            await self._cancel_tree(child, "Its parent run was cancelled.")
+        for approval in await self._approvals.pending_for_run(run.id):
+            approval.status = ApprovalStatus.EXPIRED
+        run.status = RunStatus.CANCELLED
+        run.finished_at = dt.datetime.now(dt.UTC)
+        run.error = reason
 
     # ------------------------------------------------------------------ approvals
     async def pending_approvals(self) -> list[WorkflowApproval]:

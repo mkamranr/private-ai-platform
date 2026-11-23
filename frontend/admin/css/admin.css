@@ -777,6 +777,8 @@ body.app-active main {
 .wf-t-transform { --wf-c: #64748b; }
 .wf-t-approval  { --wf-c: #db2777; }
 .wf-t-delay     { --wf-c: #a16207; }
+.wf-t-workflow  { --wf-c: #0f766e; }
+.wf-t-foreach   { --wf-c: #9333ea; }
 .wf-t-end       { --wf-c: #16a34a; }
 
 .wf-type {

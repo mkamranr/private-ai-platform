@@ -129,6 +129,21 @@ class WorkflowRunRepository(BaseRepository[WorkflowRun]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def active_children(self, run_id: uuid.UUID) -> Sequence[WorkflowRun]:
+        """E71: child runs of ``run_id`` that have not finished, locked."""
+        stmt = (
+            select(WorkflowRun)
+            .where(
+                WorkflowRun.parent_run_id == run_id,
+                WorkflowRun.status.not_in(
+                    [RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED]
+                ),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
     async def last_for(self, workflow_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, WorkflowRun]:
         """The most recent run of each workflow, for the list page."""
         if not workflow_ids:

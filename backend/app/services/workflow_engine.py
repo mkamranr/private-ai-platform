@@ -25,6 +25,15 @@ follows its ``error`` edge if it has one (its error is then available as
 
 **Bounded.** At most `MAX_STEPS` steps per run. The graph is acyclic, so a definition
 cannot loop; this guards against a bug that would.
+
+**Child runs (E71).** A ``workflow`` step starts the target's published version as a run
+of its own (``parent_run_id``, ``trigger`` "workflow", the parent's permissions) and
+advances it at once; a ``foreach`` step does that once per item, one after another. A
+child that finishes at once gives its output straight away. A child that pauses (an
+approval, a delay) leaves the step waiting; when the child finishes, whoever finished it
+(the worker, an approval decision, a cancellation) calls `child_finished`, which records
+its result for the step and continues the parent, so the step runs again and picks up
+where it was. A failed child fails the step, which follows its error branch if it has one.
 """
 
 from __future__ import annotations
@@ -58,7 +67,12 @@ from app.models.workflows import (
 )
 from app.repositories.agents import ToolRepository
 from app.repositories.teams import ScopeLookupRepository
-from app.repositories.workflows import WorkflowApprovalRepository, WorkflowStepRepository
+from app.repositories.workflows import (
+    WorkflowApprovalRepository,
+    WorkflowRunRepository,
+    WorkflowStepRepository,
+    WorkflowVersionRepository,
+)
 from app.services import workflow_definition as wd
 from app.services.team_references import TeamReferences, describe
 from app.services.tool_pipeline import _truncate, executable_definition
@@ -68,7 +82,7 @@ log = get_logger(__name__)
 MAX_STEPS: Final = 200
 #: E69: step types whose handlers take ``WorkflowEngine._db`` themselves, around their
 #: database work only, so their model or HTTP calls can overlap.
-_OWN_LOCKING: Final = frozenset({"llm", "http"})
+_OWN_LOCKING: Final = frozenset({"llm", "http", *wd.CHILD_RUN_TYPES})
 #: Characters of an HTTP response kept in a step's output.
 MAX_HTTP_BODY: Final = 16_000
 
@@ -111,6 +125,26 @@ def _jsonable(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
 
 
+def _result_of(child: WorkflowRun) -> dict[str, Any]:
+    """What a parent keeps of a finished child run (E71)."""
+    return {
+        "run_id": str(child.id),
+        "status": child.status,
+        "output": _jsonable(child.output),
+        "error": child.error,
+    }
+
+
+def _require_succeeded(result: Mapping[str, Any], *, index: int | None = None) -> dict:
+    """The result, if its run succeeded; otherwise the step fails, naming the run."""
+    if result.get("status") == RunStatus.SUCCEEDED:
+        return dict(result)
+    which = f"Item {index}: the" if index is not None else "The"
+    status = str(result.get("status") or "failed").lower()
+    why = f": {result['error']}" if result.get("error") else "."
+    raise NodeFailedError(f"{which} sub-workflow run {result.get('run_id')} {status}{why}")
+
+
 class WorkflowEngine:
     def __init__(
         self,
@@ -125,7 +159,12 @@ class WorkflowEngine:
         http_transport: httpx.AsyncBaseTransport | None = None,
         usage: Any | None = None,
         budget: Any | None = None,
+        runs: WorkflowRunRepository | None = None,
+        versions: WorkflowVersionRepository | None = None,
     ) -> None:
+        #: E71: child runs of workflow and foreach steps. None: those steps fail.
+        self._runs = runs
+        self._versions = versions
         #: GatewayService.record_internal_usage in production (E19).
         self._usage = usage
         #: GatewayService.check_internal_budget in production (E24).
@@ -151,13 +190,23 @@ class WorkflowEngine:
             "transform": self._transform,
             "approval": self._approval,
             "delay": self._delay,
+            "workflow": self._workflow,
+            "foreach": self._foreach,
             "end": self._end,
         }
 
     # ------------------------------------------------------------------ driving
     async def advance(self, run: WorkflowRun) -> WorkflowRun:
         """Run until the workflow finishes, fails or pauses. Never raises for a node's
-        failure: that is recorded on the run."""
+        failure: that is recorded on the run. A child run that finishes here continues
+        the parent waiting for it (E71)."""
+        was_terminal = run.is_terminal
+        run = await self._advance(run)
+        if run.is_terminal and not was_terminal:
+            await self.child_finished(run)
+        return run
+
+    async def _advance(self, run: WorkflowRun) -> WorkflowRun:
         if run.is_terminal:
             return run
         definition = run.definition
@@ -283,9 +332,11 @@ class WorkflowEngine:
                 and (due := _parse_time(e.get("resume_at")) or paused_until) is not None
             ]
             run.resume_at = min(delays) if delays else None
+            # Waiting for a child run (E71) is WAITING with no due time: the child's end
+            # continues it, not the worker's clock.
             run.status = (
                 RunStatus.WAITING_FOR_APPROVAL
-                if any(e.get("wait") != "delay" for e in waiting)
+                if any(e.get("wait") == "approval" for e in waiting)
                 else RunStatus.WAITING
             )
             await self._steps.flush()
@@ -359,6 +410,10 @@ class WorkflowEngine:
         config = node.get("config") or {}
         attempts, backoff = wd.retry_policy(node)
         timeout = wd.timeout_of(node)
+        # E71: a child-run step runs once and untimed; its children's steps are timed.
+        whole = kind in wd.CHILD_RUN_TYPES
+        if whole:
+            attempts, backoff = 1, 0.0
 
         async with self._db:
             run.step_count += 1
@@ -383,7 +438,9 @@ class WorkflowEngine:
             step.attempts = attempt
             try:
                 call = handler(run, node, config, context, node_state)
-                if own_locking:
+                if whole:
+                    outcome = await call
+                elif own_locking:
                     outcome = await asyncio.wait_for(call, timeout=timeout)
                 else:
                     outcome = await asyncio.wait_for(self._locked(call), timeout=timeout)
@@ -447,6 +504,95 @@ class WorkflowEngine:
             step.branch = branch
             step.finished_at = _now()
             step.duration_ms = int((step.finished_at - step.started_at).total_seconds() * 1000)
+
+    # ------------------------------------------------------------------ child runs
+    async def child_finished(self, child: WorkflowRun) -> WorkflowRun | None:
+        """E71: ``child`` has finished; continue the parent step waiting for it.
+
+        The result is kept in the parent's ``state["children"][node]`` (with those of the
+        items before it, for a foreach) and the step is run again, which picks up from
+        there. Nothing happens unless the parent is still waiting for this very child: a
+        child that finished inside its parent's step was handled there, and a parent
+        cancelled meanwhile stays cancelled."""
+        if child.parent_run_id is None or child.parent_node_id is None or self._runs is None:
+            return None
+        parent = await self._runs.lock(child.parent_run_id)
+        if parent is None or parent.is_terminal:
+            return None
+        node_id = child.parent_node_id
+        node_state = dict((parent.state or {}).get("nodes") or {})
+        entry = node_state.get(node_id) or {}
+        output = entry.get("output") or {}
+        if entry.get("status") != "waiting" or output.get("run_id") != str(child.id):
+            return None
+        results = [*(output.get("results") or []), _result_of(child)]
+        node_state.pop(node_id)
+        children = dict((parent.state or {}).get("children") or {})
+        children[node_id] = results
+        parent.state = {**(parent.state or {}), "nodes": node_state, "children": children}
+        await self._close_waiting_step(
+            parent, node_id, {"run_id": str(child.id), "status": child.status}
+        )
+        await self._steps.flush()
+        return await self.advance(parent)
+
+    async def _start_child(
+        self, run: WorkflowRun, node_id: str, workflow_ref: Any, payload: Any
+    ) -> WorkflowRun:
+        """Create a child run of ``workflow_ref``'s published version and advance it."""
+        if self._runs is None or self._versions is None:
+            raise NodeFailedError("Sub-workflows are not available here.")
+        depth = (run.depth or 0) + 1
+        if depth > wd.MAX_DEPTH:
+            raise NodeFailedError(
+                f"Sub-workflows nest at most {wd.MAX_DEPTH} deep; this one would be {depth}."
+            )
+        if not isinstance(payload, dict):
+            raise NodeFailedError("A sub-workflow's input is an object.")
+        try:
+            workflow_id = uuid.UUID(str(workflow_ref))
+        except ValueError as exc:
+            raise NodeFailedError(f"{workflow_ref!r} is not a workflow id.") from exc
+        async with self._db:
+            workflow = await self._steps.session.get(Workflow, workflow_id)
+            if workflow is None:
+                raise NodeFailedError(f"No workflow with id {workflow_id}.")
+            if workflow.status != "PUBLISHED" or not workflow.published_version:
+                raise NodeFailedError(
+                    f"Workflow {workflow.name!r} is {workflow.status.lower()}; only a "
+                    "published workflow can run as a sub-workflow."
+                )
+            lookups = ScopeLookupRepository(self._steps.session)
+            _, team_id = await lookups.workflow(run.workflow_id)
+            problems = await TeamReferences(lookups).unavailable(team_id, workflows=[workflow_id])
+            if problems:
+                raise NodeFailedError(describe("workflow", team_id, problems))
+            version = await self._versions.get_version(workflow.id, workflow.published_version)
+            if version is None:
+                raise NodeFailedError(f"Workflow {workflow.name!r} has no published version.")
+            child = WorkflowRun(
+                workflow_id=workflow.id,
+                version=version.version,
+                definition=version.definition,
+                trigger="workflow",
+                status=RunStatus.QUEUED,
+                input=_jsonable(payload),
+                state={"nodes": {}},
+                user_permissions=list(run.user_permissions or []),
+                started_by=run.started_by,
+                parent_run_id=run.id,
+                parent_node_id=node_id,
+                depth=depth,
+            )
+            self._runs.add(child)
+            await self._steps.flush()
+        log.info("workflow_child_started", run=str(run.id), node=node_id, child=str(child.id))
+        # The inner advance: this step handles the child's end itself, below.
+        return await self._advance(child)
+
+    @staticmethod
+    def _finished(run: WorkflowRun, node_id: str) -> list[dict[str, Any]]:
+        return list(((run.state or {}).get("children") or {}).get(node_id) or [])
 
     # ------------------------------------------------------------------ approvals
     async def decide(
@@ -849,6 +995,73 @@ class WorkflowEngine:
             output={"waited_seconds": seconds},
             wait="delay",
             resume_at=_now() + dt.timedelta(seconds=seconds),
+        )
+
+    async def _workflow(
+        self,
+        run: WorkflowRun,
+        node: dict[str, Any],
+        config: dict[str, Any],
+        context: dict[str, Any],
+        node_state: dict[str, Any],
+    ) -> Outcome:
+        node_id = str(node["id"])
+        done = self._finished(run, node_id)
+        if not done:
+            child = await self._start_child(
+                run,
+                node_id,
+                config.get("workflow_id"),
+                wd.render(config.get("input") or {}, context),
+            )
+            if not child.is_terminal:
+                return Outcome(output={"run_id": str(child.id), "results": []}, wait="workflow")
+            done = [_result_of(child)]
+        result = _require_succeeded(done[0])
+        return Outcome(output={"output": result["output"], "run_id": result["run_id"]})
+
+    async def _foreach(
+        self,
+        run: WorkflowRun,
+        node: dict[str, Any],
+        config: dict[str, Any],
+        context: dict[str, Any],
+        node_state: dict[str, Any],
+    ) -> Outcome:
+        node_id = str(node["id"])
+        items = wd.render(config.get("items"), context)
+        if not isinstance(items, list):
+            raise NodeFailedError(f"items is not a list (it is {type(items).__name__}).")
+        limit = int(config.get("max_items") or wd.DEFAULT_MAX_ITEMS)
+        if len(items) > limit:
+            raise NodeFailedError(f"{len(items)} items; this step takes at most {limit}.")
+        results = self._finished(run, node_id)
+        for index, result in enumerate(results):
+            _require_succeeded(result, index=index)
+        for index in range(len(results), len(items)):
+            payload = wd.render(
+                config.get("input") or {"item": "{{ item }}"},
+                {**context, "item": items[index], "index": index},
+            )
+            child = await self._start_child(run, node_id, config.get("workflow_id"), payload)
+            if not child.is_terminal:
+                return Outcome(
+                    output={
+                        "run_id": str(child.id),
+                        "results": results,
+                        "index": index,
+                        "count": len(items),
+                    },
+                    wait="workflow",
+                )
+            results.append(_result_of(child))
+            _require_succeeded(results[-1], index=index)
+        return Outcome(
+            output={
+                "results": [r["output"] for r in results],
+                "count": len(results),
+                "run_ids": [r["run_id"] for r in results],
+            }
         )
 
     async def _end(
