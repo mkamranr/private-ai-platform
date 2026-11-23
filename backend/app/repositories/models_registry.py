@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import and_, case, delete, func, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.models.models_registry import (
@@ -336,17 +336,32 @@ def output_tps_expression() -> Any:
     )
 
 
-def timing_columns() -> list[Any]:
+#: E67: rows whose time to first output is not the model's own: an `agent:` run (its
+#: first output follows tool calls) and a voice turn's speech (the whole turn's wait).
+INDIRECT_TIMING = or_(
+    UsageRecord.requested_model.startswith("agent:"),
+    UsageRecord.endpoint == "audio.speech",
+)
+
+
+def timing_columns(*, direct_only: bool = False) -> list[Any]:
     """p50/p95 timing aggregates (E16). Percentiles skip NULLs, so buffered calls and
     rows from before E16 drop out of the TTFT and throughput figures instead of reading
-    as zero."""
+    as zero.
+
+    ``direct_only`` (E67) is for per-model figures: agent runs' and voice turns' times
+    to first output are what a caller waited, not what the model took, so they are left
+    out there and kept everywhere else."""
     tps = output_tps_expression()
+    ttft: Any = UsageRecord.ttft_ms
+    if direct_only:
+        ttft = case((INDIRECT_TIMING, None), else_=UsageRecord.ttft_ms)
     return [
-        _percentile(0.5, UsageRecord.ttft_ms).label("ttft_p50_ms"),
-        _percentile(0.95, UsageRecord.ttft_ms).label("ttft_p95_ms"),
+        _percentile(0.5, ttft).label("ttft_p50_ms"),
+        _percentile(0.95, ttft).label("ttft_p95_ms"),
         _percentile(0.95, UsageRecord.latency_ms).label("latency_p95_ms"),
         _percentile(0.5, tps).label("output_tps_p50"),
-        func.count(UsageRecord.ttft_ms).label("timed_streams"),
+        func.count(ttft).label("timed_streams"),
     ]
 
 
@@ -383,7 +398,7 @@ class UsageRepository(BaseRepository[UsageRecord]):
                 func.avg(UsageRecord.latency_ms).label("avg_latency_ms"),
                 func.count().filter(UsageRecord.status_code >= 400).label("errors"),
                 func.count().filter(UsageRecord.fallback_from.isnot(None)).label("fallbacks"),
-                *timing_columns(),
+                *timing_columns(direct_only=True),
             )
             .where(UsageRecord.recorded_at >= since)
             .group_by(UsageRecord.model)

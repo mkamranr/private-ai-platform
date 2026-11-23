@@ -16,6 +16,7 @@ A **cost rate** prices one model from a moment onwards:
 | `model` | The model name the gateway records (the model that answered, not the alias asked for), or `*` for every model without a rate of its own |
 | `prompt_per_million`, `completion_per_million` | Price per million tokens |
 | `gpu_hour` | Price per GPU-hour that model's deployments hold. Empty: GPU time is not priced (shown as such, not as 0) |
+| `unit_price` | For what isn't counted in tokens: per **audio minute** for a transcription model, per **million characters** for a speech model, per **call** for a tool rate. Empty: those units are not priced |
 | `effective_from` | When the rate starts. Default: now. May be in the past |
 | `note` | Free text, such as the rate card it comes from |
 
@@ -35,6 +36,11 @@ Rates are a **schedule**, not a setting:
 Adding and removing rates is audited (`COST_RATE_CREATED`, `COST_RATE_DELETED`, with the
 values and, for a removal, the reason). A rate for a model name that is neither registered
 nor present in recorded usage is refused, because it could never price anything.
+
+**Tool rates.** Agent tool calls are priced by rates named `tool:<tool name>`, with
+`tool:*` as the default for tools without their own. A tool rate takes `unit_price` (the
+price of one call) and nothing else, and names a registered tool or one an agent has
+called. The token default `*` never prices tools, and token prices never price speech.
 
 **Currency.** The runtime setting `chargeback.currency` (Settings page, default `USD`) is
 the label every amount carries. It is a label only. Changing it converts nothing, so set it
@@ -60,6 +66,28 @@ Calls with no team, key, user or end user get their own row, such as "Shared (no
 Token cost is the prompt and completion tokens of each call multiplied by the rate in force
 for that call. Streams the client abandoned record only the tokens seen, so they are counted
 as **partial**. Their cost is a lower bound.
+
+### Speech and tool cost
+
+- **Speech** has no tokens. A transcription records the seconds of audio and a synthesis
+  the characters spoken, and they are priced at the model's `unit_price`: per audio minute
+  and per million characters. A rate without a unit price leaves speech **unpriced**; it
+  is never priced at the rate's token prices (before this, the seconds and characters were
+  priced as if they were tokens). Report rows show `audio_seconds`, `speech_characters`
+  and `speech_cost`; speech is not added to the token columns.
+- **Agent tool calls** are priced per call: every call that ran (succeeded or failed; not
+  refused or still waiting for approval), at its tool's rate in force when it was asked
+  for. A call belongs to the agent's team and the run's user; agent runs carry no API key
+  or end user, so those groupings show tool calls on their "none" row, and the model
+  grouping shows each tool as `tool:<name>`. Rows show `tool_calls` and `tool_cost`.
+  Tool calls with no tool rate are counted in `unpriced_tool_calls`, apart from unpriced
+  model usage, so a site that doesn't price tools isn't warned about every call.
+  Workflow tool steps don't record a tool call and aren't priced.
+- **Ingestion** is already priced: the embeddings run while ingesting documents, searching
+  knowledge bases and storing memories are recorded as usage (since 0.2) and priced at the
+  embedding model's token rate.
+
+Speech and tool cost are part of `total_cost`, so cost budgets count them too.
 
 ### GPU cost
 
@@ -183,6 +211,5 @@ rate card is a finance decision.
 - **Currency conversion.**
 - **Power or utilisation-weighted GPU cost.** GPU time is reservation time, the only GPU
   measure the platform can attribute to a model reliably.
-- **Cost of retrieval, embeddings run by ingestion workers, agent tool calls and voice.**
-  Model and embedding calls, including the platform's own, are recorded and priced like
-  any other call; the rest of this work is not costed.
+- **Cost of workflow tool steps and OCR.** Workflow tool steps run executors directly and
+  record no tool call; OCR calls are not metered per page.

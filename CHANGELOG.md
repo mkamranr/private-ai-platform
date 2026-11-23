@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Speech and agent tool calls have a price
+- **Rates take a per-unit price**: per audio minute for a transcription model, per million characters for a speech model, and per call for agent tools (`tool:<name>` rates, `tool:*` as their default). Set it in *Per unit* in the Chargeback page's rate form.
+- **Speech is no longer priced as tokens.** Seconds of audio and characters used to be multiplied by the token price. Now a rate without a unit price leaves speech unpriced, and reports show audio minutes and characters in their own columns.
+- **Agent tool calls appear in chargeback**, by team, user and tool, priced per call. Tools with no rate are counted but not flagged as unpriced usage. Cost budgets include speech and tool cost.
+- **Agent and voice calls report how long the caller waited**: time to the first visible output for streamed `agent:` calls, and from the end of the person's speech to audio for voice turns. They count in totals and per-team figures, not in a model's own first-token figures.
+- **Upgrade.** Migration `c9e1a3b5d7f8`. If you price speech, add a unit price to its models' rates: until then their usage shows as unpriced instead of at token prices.
+
 ### Streams survive a copy failing mid-answer
 - **A stream that breaks after part of the answer was sent is finished by another copy of the model.** The gateway gives it the text so far to continue, so the caller gets one answer with no error, instead of a cut-off answer and an `upstream_error` event.
 - Works on vLLM, SGLang, llama.cpp and Ollama by default (a new `resume` capability); an external endpoint only when declared. Needs a second running copy and `gateway.replica_retries` of at least 1.

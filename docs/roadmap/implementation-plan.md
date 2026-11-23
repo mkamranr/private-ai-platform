@@ -594,6 +594,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_stream_resume.py`, `tests/api/test_agent_capabilities.py`. Docs: [gateway-policy.md](../gateway-policy.md#resuming-a-broken-stream), models.md, settings.md.
 - [ ] Same model only (no resuming on an alias's fallback). The broken copy's own usage is lost; the resumed call counts the text so far as prompt. The continuation may not be the words the broken copy would have written. An agent's tools are checked at run time, not when the agent is saved.
 
+## E67: Speech and tool calls priced by their unit; first-output timings for agents and voice (closes the feature-matrix non-gateway cost and agent/voice TTFT gaps)
+
+- [x] `cost_rates.unit_price` (migration `c9e1a3b5d7f8`): per audio minute for a transcription model, per million characters for a speech model, per call for a `tool:<name>` / `tool:*` rate. Token prices never price speech (seconds and characters used to be priced as tokens); the token default `*` never prices tools. A tool rate takes only `unit_price` and names a known tool.
+- [x] `ChargebackRepository.usage` splits rows by unit (from the endpoint); `tool_calls` aggregates agent tool calls that ran, by the agent's team and the run's user, with the rate chosen per call in SQL. Rows and totals gain `audio_seconds`, `speech_characters`, `speech_cost`, `tool_calls`, `tool_cost`, `unpriced_tool_calls` (CSV columns appended); `total_cost` includes them, so cost budgets do too. Console: *Per unit* in the rate form and rates table, *Speech* and *Tools* columns in the report.
+- [x] `agent:` streams record `ttft_ms` (first visible text, `AgentStreamAccounting.first_output_at`); voice turns record it on the speech row (`GatewayContext.waiting_since` = the end of the person's speech). `timing_columns(direct_only=True)` leaves both out of per-model figures (usage summary, chargeback by model).
+- [x] Tests: `tests/api/test_chargeback_units.py`, `tests/api/test_first_output_timings.py`. Docs: [chargeback.md](../chargeback.md#speech-and-tool-cost), [gateway-policy.md](../gateway-policy.md#timings), speech.md.
+- [ ] Workflow tool steps record no tool call and aren't priced; OCR isn't metered per page. Tool calls have no API key or end user to group by. No currency conversion. A buffered `agent:` call has no first-output time.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

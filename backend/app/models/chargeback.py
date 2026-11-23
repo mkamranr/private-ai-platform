@@ -4,6 +4,11 @@ A rate prices one model's traffic from a moment onwards: an amount per million p
 tokens, per million completion tokens and, optionally, per GPU-hour held by that model's
 deployments. ``model = '*'`` is the default for models that have no rate of their own.
 
+Not everything is counted in tokens (E67). ``unit_price`` prices the rest: an audio minute
+for a transcription model, a million characters for a speech model, and one call for an
+agent tool, whose rates are named ``tool:<tool name>`` with ``tool:*`` as their default.
+Token prices never apply to speech, and the token default ``*`` never to tools.
+
 Rates are a **schedule**, not a setting. A price change is a new row with a later
 ``effective_from``, so a report for last quarter still uses last quarter's price. The
 rate that applies to a call is the latest one for its model that had started when the call
@@ -45,6 +50,22 @@ DEFAULT_RATE_MODEL = "*"
 #: beyond any realistic month.
 RATE_PRECISION = (18, 6)
 
+#: E67: rates for agent tool calls are named ``tool:<tool name>``; ``tool:*`` is their
+#: default. They price calls (``unit_price``), never tokens.
+TOOL_RATE_PREFIX = "tool:"
+DEFAULT_TOOL_RATE = "tool:*"
+
+#: E67: what a usage row counts, by its endpoint. Speech rows keep their units where
+#: chat keeps tokens (``prompt_tokens``): seconds of audio transcribed, characters
+#: synthesised. Everything else counts tokens.
+UNIT_TOKENS = "tokens"
+UNIT_AUDIO_SECONDS = "audio_seconds"
+UNIT_CHARACTERS = "characters"
+UNIT_BY_ENDPOINT = {
+    "audio.transcriptions": UNIT_AUDIO_SECONDS,
+    "audio.speech": UNIT_CHARACTERS,
+}
+
 
 class CostRate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "cost_rates"
@@ -53,7 +74,8 @@ class CostRate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("model", "effective_from", name="uq_cost_rates_model_effective"),
         CheckConstraint(
             "prompt_per_million >= 0 AND completion_per_million >= 0 "
-            "AND (gpu_hour IS NULL OR gpu_hour >= 0)",
+            "AND (gpu_hour IS NULL OR gpu_hour >= 0) "
+            "AND (unit_price IS NULL OR unit_price >= 0)",
             name="cost_rate_non_negative",
         ),
     )
@@ -69,6 +91,9 @@ class CostRate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     #: Null: GPU time is not priced for this model (as opposed to priced at zero).
     gpu_hour: Mapped[Decimal | None] = mapped_column(Numeric(*RATE_PRECISION))
+    #: E67: per audio minute (transcription), per million characters (speech) or per call
+    #: (``tool:`` rates). Null: those units are not priced by this rate.
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(*RATE_PRECISION))
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")

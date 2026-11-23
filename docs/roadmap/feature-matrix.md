@@ -6,7 +6,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 
 | # | Feature | Plan priority | Status | Where | Gap to close |
 |---|---|---|---|---|---|
-| 1 | Unified dashboard | P0 | Existing (E8) | `api/v1/dashboard.py`, `services/dashboard.py`, `repositories/dashboard.py`, `frontend/admin` | TTFT and throughput recorded since E16 (streamed calls only) |
+| 1 | Unified dashboard | P0 | Existing (E8) | `api/v1/dashboard.py`, `services/dashboard.py`, `repositories/dashboard.py`, `frontend/admin` | TTFT and throughput recorded since E16 (streamed calls only); time to first output for `agent:` streams and voice turns, kept out of per-model figures (E67) |
 | 2 | Backend registry | P0 | Existing (E1) | `services/inference_backends.py`, `api/v1/backends.py`, `core/url_policy.py` | Gateway use of backend API keys (E2); deploy/stop/metrics capabilities |
 | 3 | Model registry | P0 | Existing (E3, E4) | `models/models_registry.py`, `services/model_registry.py`, [model-governance.md](../model-governance.md) | Grouping is by `family`, not a `model_versions` table (deliberate) |
 | 4 | OpenAI-compatible gateway | P0 | Existing | `api/v1/gateway.py`, `services/gateway.py`, `services/gateway_policy.py` | — (load balancing and pre-first-byte failover: E58; a stream broken mid-answer is resumed on another copy: E66) |
@@ -27,7 +27,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 19 | Workflow visual builder | P2 | Existing (E6) | `services/workflow_engine.py`, `services/workflows.py`, `workers/workflows.py`, Workflows page | Drag-and-drop canvas, typed node schemas, parallel branches |
 | 20 | OIDC / LDAP / AD | P2 | Existing | `services/auth_providers.py`, `fixtures/oidc` | none |
 | 21 | Multi-host management | P2 | Existing | node enrollment, `services/node_enrollment.py` | none |
-| 22 | Advanced chargeback | P2 | Existing (E9) | `services/chargeback.py`, `api/v1/chargeback.py`, Chargeback page | Currency budgets and cost alerts; non-gateway costs (ingestion, tools, voice) |
+| 22 | Advanced chargeback | P2 | Existing (E9) | `services/chargeback.py`, `api/v1/chargeback.py`, Chargeback page | — (currency budgets and cost alerts: E12; ingestion embeddings priced since E21; speech per unit and agent tool calls per call: E67) |
 | 23 | Large connector catalogue | P2 | Existing (E10) | `mcp/manifests/` (7), `services/connector_catalogue.py`, `services/connector_manifest.py`, Connector Catalogue page | More first-party connectors (read-only SQL and OpenAPI with a host allow-list: E57) |
 | 24 | Teams / tenant isolation | (5.12) | Existing (E3) | `models/teams.py`, `core/scope.py`, `services/teams.py`, Teams page | Agents and workflows checked against their own team at save, move and run time; memory, traces, voice and dashboard follow scope (E18) |
 | 25 | In-app alerts | (5.15) | Existing (E1) | `services/alerts.py`, `api/v1/alerts.py`, Alerts page | ~~GPU-threshold alerts~~ (E52), ~~notification channels~~ (E13) |

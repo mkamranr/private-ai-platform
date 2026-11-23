@@ -1763,7 +1763,7 @@
             periods keep their price. Amounts are in <strong class="rate-currency">USD</strong>.</p>
           <label class="form-label small text-secondary" for="rate-model">Model</label>
           <input class="form-control mb-3" id="rate-model" list="rate-models" required maxlength="128"
-                 placeholder="* for every model without its own rate" autocomplete="off" spellcheck="false">
+                 placeholder="* for every model, tool:<name> or tool:* for tool calls" autocomplete="off" spellcheck="false">
           <datalist id="rate-models"></datalist>
           <div class="row g-2 mb-3">
             <div class="col-sm-4">
@@ -1779,6 +1779,11 @@
               <input class="form-control" id="rate-gpu" type="number" min="0" step="any" placeholder="not priced">
             </div>
           </div>
+          <label class="form-label small text-secondary" for="rate-unit">Per unit</label>
+          <input class="form-control mb-1" id="rate-unit" type="number" min="0" step="any" placeholder="not priced">
+          <div class="form-text mb-3">For what isn't counted in tokens: an audio minute for a transcription
+            model, a million characters for a speech model, one call for a <code>tool:</code> rate (which
+            takes nothing else). Speech is never priced at token prices.</div>
           <label class="form-label small text-secondary" for="rate-from">Starts (your local time)</label>
           <input class="form-control mb-1" id="rate-from" type="datetime-local">
           <div class="form-text mb-3">Empty: now. A start in the past re-prices reports for that period,

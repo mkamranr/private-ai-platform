@@ -25,7 +25,7 @@ import datetime as dt
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.config.settings import VoiceSettings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -61,6 +61,9 @@ class TurnTimings:
     agent_ms: float = 0.0
     tts_ms: float = 0.0
     tool_ms: float = 0.0
+    #: E67: `time.perf_counter()` when the person finished speaking (the turn began), so
+    #: the speech row can record how long they waited for audio.
+    started: float = field(default_factory=time.perf_counter)
 
     @property
     def total_ms(self) -> float:

@@ -114,7 +114,7 @@ class TestExport:
         header = next(csv.reader(io.StringIO(response.text)))
         # The columns before E40 keep their places; the new ones come last.
         assert header[:17][-1] == "estimate"
-        assert tuple(header[17:]) == TIMING_FIELDS
+        assert tuple(header[17 : 17 + len(TIMING_FIELDS)]) == TIMING_FIELDS  # E67 columns follow
 
         rows: dict[str, Any] = {r["key"]: r for r in csv.DictReader(io.StringIO(response.text))}
         assert rows[streamed]["ttft_p50_ms"] == "40.0"

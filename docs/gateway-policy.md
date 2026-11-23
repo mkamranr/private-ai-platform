@@ -359,9 +359,15 @@ the Usage & Quotas page report percentiles from them:
   `timed_streams` says how many calls a figure rests on.
 - **What is excluded.**
   - Throughput leaves out client disconnects, failed streams and one-token answers.
-  - `agent:<slug>` calls are recorded, but without timings: an agent's first
-    token comes after its tool calls, and counting it would misstate the model's TTFT.
-  - Voice calls are not timed.
+  - **Agent and voice calls record time to first output**, what the caller waited:
+    a streamed `agent:<slug>` call from admission to the first text shown (narration
+    such as "Using lookup…", or the answer), and a voice turn's speech row from the end
+    of the person's speech to audio ready to play. A buffered `agent:` call has none.
+  - **Per-model figures leave those out** (the dashboard's model rows, chargeback by
+    model): an agent's first output follows its tool calls and a voice turn's wait spans
+    transcription, the agent and synthesis, so neither is the model's own time. Totals
+    and per-team, per-key and per-user figures include them. Agent calls have no
+    generation time, so they never count in throughput.
 - **Clock.** Times are taken in the gateway process, so they include network time to the
   backend but not the client's side of the connection. The clock starts after API-key
   checks and rate limits.
