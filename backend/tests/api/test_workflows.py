@@ -169,6 +169,20 @@ async def wf(app, session: AsyncSession, settings) -> SimpleNamespace:
     return ns
 
 
+def due(row: WorkflowRun) -> None:
+    """Make a paused run's delays due now: the run's resume_at and (E69) each waiting
+    delay's own due time."""
+    past = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+    row.resume_at = past
+    nodes = {
+        node_id: (
+            {**entry, "resume_at": past.isoformat()} if entry.get("wait") == "delay" else entry
+        )
+        for node_id, entry in ((row.state or {}).get("nodes") or {}).items()
+    }
+    row.state = {**(row.state or {}), "nodes": nodes}
+
+
 async def claim_until(service: WorkflowService, run_id: str) -> WorkflowRun | None:
     """Claim due runs until ``run_id`` comes up; None if it never does. The database is
     shared, so other due runs may be ahead of it in the queue; advancing them here is
@@ -508,7 +522,7 @@ class TestExecution:
         assert await claim_until(wf.service, result["id"]) is None
         row = await session.get(WorkflowRun, uuid.UUID(result["id"]))
         assert row is not None
-        row.resume_at = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+        due(row)
         await session.flush()
 
         advanced = await claim_until(wf.service, result["id"])

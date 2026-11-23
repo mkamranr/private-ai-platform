@@ -5,11 +5,19 @@ pauses. Everything it learns goes into ``run.state`` and a ``workflow_steps`` ro
 paused run can be continued by any process: an approval decided over HTTP, or the
 worker once a delay is due.
 
-**Which nodes run.** A node runs when every node before it is resolved and at least one
-of its incoming edges was taken. An edge is taken when its source succeeded and the edge's
-``when`` matches the branch the source produced (no ``when`` matches "on success"). A node
-with no taken edge is skipped, so an unchosen branch quietly does not happen, and joins
-work: a node after both arms of a condition runs once, after whichever arm ran.
+**Which nodes run.** A node runs when at least one of its incoming edges was taken. An
+edge is taken when its source succeeded and the edge's ``when`` matches the branch the
+source produced (no ``when`` matches "on success"). A node with no taken edge is skipped,
+so an unchosen branch quietly does not happen, and joins work: a node after both arms of
+a condition runs once, after whichever arm ran.
+
+**Parallel branches (E69).** A node is decided once the nodes leading into it, and any
+earlier node its templates read, are resolved; it no longer waits for unrelated steps.
+Nodes decided together run at the same time, so two branches out of one step overlap.
+The session can't be shared by concurrent coroutines, so database work takes turns
+behind ``self._db``: model and HTTP calls overlap, the rest of a step runs one at a time.
+An approval or delay on one branch doesn't stop the others; the run waits once nothing
+else can run. An ``end`` node runs only after every other node is resolved.
 
 **Failure.** Each node has its own attempts, backoff and timeout. A node that still fails
 follows its ``error`` edge if it has one (its error is then available as
@@ -58,6 +66,9 @@ from app.services.tool_pipeline import _truncate, executable_definition
 log = get_logger(__name__)
 
 MAX_STEPS: Final = 200
+#: E69: step types whose handlers take ``WorkflowEngine._db`` themselves, around their
+#: database work only, so their model or HTTP calls can overlap.
+_OWN_LOCKING: Final = frozenset({"llm", "http"})
 #: Characters of an HTTP response kept in a step's output.
 MAX_HTTP_BODY: Final = 16_000
 
@@ -84,6 +95,15 @@ class Outcome:
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
+
+
+def _parse_time(value: Any) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return dt.datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _jsonable(value: Any) -> Any:
@@ -119,6 +139,8 @@ class WorkflowEngine:
         self._executors = tool_executors or {}
         # Tests substitute a MockTransport; production uses the default.
         self._http_transport = http_transport
+        #: E69: database work by concurrent steps takes turns (one session).
+        self._db = asyncio.Lock()
         self._handlers: dict[str, Callable[..., Awaitable[Outcome]]] = {
             "start": self._start,
             "llm": self._llm,
@@ -143,74 +165,131 @@ class WorkflowEngine:
         state = dict(run.state or {})
         node_state: dict[str, dict[str, Any]] = dict(state.get("nodes") or {})
 
-        # A due delay completes before anything else.
+        # Due delays complete before anything else. Each delay keeps its own due time
+        # (E69: branches can wait at once); a run paused before that has only the run's.
+        now = _now()
         for node_id, entry in node_state.items():
             if entry.get("status") == "waiting" and entry.get("wait") == "delay":
-                if run.resume_at and run.resume_at > _now():
-                    return run
-                entry.update(status="succeeded", wait=None)
-                await self._close_waiting_step(run, node_id, entry.get("output") or {})
-        if any(e.get("status") == "waiting" for e in node_state.values()):
-            return run  # still waiting for an approval
+                due = _parse_time(entry.get("resume_at")) or run.resume_at
+                if due is None or due <= now:
+                    entry.update(status="succeeded", wait=None)
+                    entry.pop("resume_at", None)
+                    await self._close_waiting_step(run, node_id, entry.get("output") or {})
 
         if run.started_at is None:
             run.started_at = _now()
         run.status = RunStatus.RUNNING
+        paused_until = run.resume_at
         run.resume_at = None
 
         try:
             order = wd.execution_order(definition)
         except ValidationError as exc:
             return await self._fail(run, node_state, exc.message)
+        position = {node_id: index for index, node_id in enumerate(order)}
+        preds = {
+            node_id: {str(e.get("from")) for e in wd.incoming(definition, node_id)}
+            for node_id in order
+        }
+        # Earlier nodes a step's templates read: it waits for them too, so a value that
+        # an older, one-at-a-time run would have had is still there (and no deadlock, as
+        # only earlier nodes count).
+        read = {
+            node_id: {r for r in wd.reads(nodes[node_id]) if position.get(r, 1 << 30) < i}
+            for i, node_id in enumerate(order)
+        }
+        others = [n for n in order if nodes[n].get("type") != "end"]
 
-        for node_id in order:
+        def resolved(node_id: str) -> bool:
+            return node_state.get(node_id, {}).get("status") in ("succeeded", "failed", "skipped")
+
+        def ready(node_id: str) -> bool:
             if node_id in node_state:
+                return False
+            if not all(resolved(p) for p in preds[node_id] | read[node_id]):
+                return False
+            if nodes[node_id].get("type") == "end":
+                return all(resolved(n) for n in others)
+            return True
+
+        finished = False
+        while not finished:
+            batch = [n for n in order if ready(n)]
+            if not batch:
+                break
+            runnable = []
+            for node_id in batch:
+                if self._activated(definition, nodes[node_id], node_state):
+                    runnable.append(node_id)
+                else:
+                    node_state[node_id] = {"status": "skipped"}
+            if not runnable:
                 continue
-            node = nodes[node_id]
-            if not self._activated(definition, node, node_state):
-                node_state[node_id] = {"status": "skipped"}
-                continue
-            if run.step_count >= MAX_STEPS:
+            if nodes[runnable[0]].get("type") == "end":
+                runnable = runnable[:1]  # one end finishes the run
+            if run.step_count + len(runnable) > MAX_STEPS:
                 return await self._fail(run, node_state, f"The run exceeded {MAX_STEPS} steps.")
 
-            outcome, error = await self._execute(run, node, node_state)
-            if error is not None:
-                if any(e.get("when") == "error" for e in wd.outgoing(definition, node_id)):
-                    node_state[node_id] = {
-                        "status": "failed",
-                        "branch": "error",
-                        "output": {"error": error},
-                    }
+            results = await asyncio.gather(
+                *(self._execute(run, nodes[n], node_state) for n in runnable),
+                return_exceptions=True,
+            )
+            failure: str | None = None
+            for node_id, result in zip(runnable, results, strict=True):
+                if isinstance(result, BaseException):
+                    raise result
+                outcome, error = result
+                if error is not None:
+                    if any(e.get("when") == "error" for e in wd.outgoing(definition, node_id)):
+                        node_state[node_id] = {
+                            "status": "failed",
+                            "branch": "error",
+                            "output": {"error": error},
+                        }
+                    elif failure is None:
+                        failure = f"Step {node_id!r} failed: {error}"
                     continue
-                return await self._fail(run, node_state, f"Step {node_id!r} failed: {error}")
-
-            if outcome is None:  # pragma: no cover - _execute returns one or the other
-                return await self._fail(run, node_state, f"Step {node_id!r} produced no outcome.")
-            if outcome.wait:
+                if outcome is None:  # pragma: no cover - _execute returns one or the other
+                    failure = failure or f"Step {node_id!r} produced no outcome."
+                    continue
+                if outcome.wait:
+                    waiting_entry: dict[str, Any] = {
+                        "status": "waiting",
+                        "wait": outcome.wait,
+                        "output": outcome.output,
+                    }
+                    if outcome.resume_at is not None:
+                        waiting_entry["resume_at"] = outcome.resume_at.isoformat()
+                    node_state[node_id] = waiting_entry
+                    continue
                 node_state[node_id] = {
-                    "status": "waiting",
-                    "wait": outcome.wait,
+                    "status": "succeeded",
+                    "branch": outcome.branch,
                     "output": outcome.output,
                 }
-                run.state = {**state, "nodes": node_state}
-                if outcome.wait == "delay":
-                    run.status = RunStatus.WAITING
-                    run.resume_at = outcome.resume_at
-                else:
-                    run.status = RunStatus.WAITING_FOR_APPROVAL
-                await self._steps.flush()
-                return run
-
-            node_state[node_id] = {
-                "status": "succeeded",
-                "branch": outcome.branch,
-                "output": outcome.output,
-            }
-            if outcome.final:
-                run.output = outcome.output
-                break
+                if outcome.final:
+                    run.output = outcome.output
+                    finished = True
+            if failure is not None:
+                return await self._fail(run, node_state, failure)
 
         run.state = {**state, "nodes": node_state}
+        waiting = [e for e in node_state.values() if e.get("status") == "waiting"]
+        if waiting and not finished:
+            delays = [
+                due
+                for e in waiting
+                if e.get("wait") == "delay"
+                and (due := _parse_time(e.get("resume_at")) or paused_until) is not None
+            ]
+            run.resume_at = min(delays) if delays else None
+            run.status = (
+                RunStatus.WAITING_FOR_APPROVAL
+                if any(e.get("wait") != "delay" for e in waiting)
+                else RunStatus.WAITING
+            )
+            await self._steps.flush()
+            return run
         run.status = RunStatus.SUCCEEDED
         if run.output is None:
             run.output = self._last_output(order, node_state)
@@ -281,27 +360,33 @@ class WorkflowEngine:
         attempts, backoff = wd.retry_policy(node)
         timeout = wd.timeout_of(node)
 
-        run.step_count += 1
-        step = WorkflowStep(
-            run_id=run.id,
-            sequence=run.step_count,
-            node_id=node_id,
-            node_type=kind,
-            status=StepStatus.RUNNING,
-            input=_jsonable(self._step_input(kind, wd.render(config, context))),
-        )
-        self._steps.add(step)
-        await self._steps.flush()
+        async with self._db:
+            run.step_count += 1
+            step = WorkflowStep(
+                run_id=run.id,
+                sequence=run.step_count,
+                node_id=node_id,
+                node_type=kind,
+                status=StepStatus.RUNNING,
+                input=_jsonable(self._step_input(kind, wd.render(config, context))),
+            )
+            self._steps.add(step)
+            await self._steps.flush()
         started = time.perf_counter()
+        # Model and HTTP steps take the database lock only around their own database
+        # work, so their calls overlap; every other step holds it throughout.
+        own_locking = kind in _OWN_LOCKING
 
         error: str | None = None
         outcome: Outcome | None = None
         for attempt in range(1, attempts + 1):
             step.attempts = attempt
             try:
-                outcome = await asyncio.wait_for(
-                    handler(run, node, config, context, node_state), timeout=timeout
-                )
+                call = handler(run, node, config, context, node_state)
+                if own_locking:
+                    outcome = await asyncio.wait_for(call, timeout=timeout)
+                else:
+                    outcome = await asyncio.wait_for(self._locked(call), timeout=timeout)
                 error = None
                 break
             except TimeoutError:
@@ -317,25 +402,30 @@ class WorkflowEngine:
                 await asyncio.sleep(backoff * attempt)
 
         step.duration_ms = int((time.perf_counter() - started) * 1000)
-        if error is not None:
-            step.status = StepStatus.FAILED
-            step.error = error[:4000]
-            step.finished_at = _now()
-            await self._steps.flush()
-            return None, error
+        async with self._db:
+            if error is not None:
+                step.status = StepStatus.FAILED
+                step.error = error[:4000]
+                step.finished_at = _now()
+                await self._steps.flush()
+                return None, error
 
-        if outcome is None:  # pragma: no cover - the retry loop always sets one
-            return None, "The step produced no outcome."
-        outcome.output = _jsonable(outcome.output)
-        step.output = outcome.output
-        step.branch = outcome.branch
-        if outcome.wait:
-            step.status = StepStatus.WAITING
-        else:
-            step.status = StepStatus.SUCCEEDED
-            step.finished_at = _now()
-        await self._steps.flush()
-        return outcome, None
+            if outcome is None:  # pragma: no cover - the retry loop always sets one
+                return None, "The step produced no outcome."
+            outcome.output = _jsonable(outcome.output)
+            step.output = outcome.output
+            step.branch = outcome.branch
+            if outcome.wait:
+                step.status = StepStatus.WAITING
+            else:
+                step.status = StepStatus.SUCCEEDED
+                step.finished_at = _now()
+            await self._steps.flush()
+            return outcome, None
+
+    async def _locked(self, call: Awaitable[Outcome]) -> Outcome:
+        async with self._db:
+            return await call
 
     @staticmethod
     def _step_input(kind: str, rendered: Any) -> Any:
@@ -451,11 +541,12 @@ class WorkflowEngine:
         if self._provider_factory is None:
             raise NodeFailedError("Model calls are not available here.")
         rendered = wd.render(config, context)
-        await self._require_usable(run, models=[str(rendered["model"])])
-        await self._check_budget(run, str(rendered["model"]))
-        provider, served = await self._provider_factory(
-            str(rendered["model"]), needs=(Capability.CHAT,)
-        )
+        async with self._db:
+            await self._require_usable(run, models=[str(rendered["model"])])
+            await self._check_budget(run, str(rendered["model"]))
+            provider, served = await self._provider_factory(
+                str(rendered["model"]), needs=(Capability.CHAT,)
+            )
         started = time.perf_counter()
         messages = []
         if rendered.get("system"):
@@ -474,7 +565,8 @@ class WorkflowEngine:
                 "completion_tokens": completion.usage.completion_tokens,
                 "total_tokens": completion.usage.total_tokens,
             }
-        await self._record_usage(run, str(rendered["model"]), completion, started)
+        async with self._db:
+            await self._record_usage(run, str(rendered["model"]), completion, started)
         if rendered.get("parse_json"):
             try:
                 output["json"] = json.loads(output["text"])

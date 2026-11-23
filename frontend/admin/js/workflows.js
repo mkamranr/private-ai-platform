@@ -7,6 +7,11 @@
  * The builder edits a local copy of the draft (`wf.draft`). Nothing reaches the server
  * until "Save draft"; the 5-second poll refreshes the list and the runs table only, so it
  * never replaces edits in progress.
+ *
+ * E69: the builder is a canvas. Drag a step to move it (its `position` is saved with the
+ * draft), drag from a step's port to another step to connect them, click a step to edit
+ * it, click a connection to select it, Delete to remove the selection. The node forms are
+ * built from the schemas `GET /workflows/node-types` serves, falling back to WF_FIELDS.
  */
 'use strict';
 
@@ -20,7 +25,11 @@ const wf = {
   editing: null,      // node id in the node modal, or '' for a new node
   newType: null,
   nodeTypes: [],
+  // E69 canvas: the selection ({node} or {edge}), a drag or connection in progress, and
+  // whether saved positions are in use even while two boxes overlap mid-drag.
+  canvas: { sel: null, drag: null, connect: null, manual: false },
 };
+const WF_BOX = { W: 168, H: 56, GX: 64, GY: 26, PAD: 16, SNAP: 8 };
 
 Object.assign(PILL_TONE, {
   SUCCEEDED: 'ok', PUBLISHED: 'ok', APPROVED: 'ok',
@@ -165,16 +174,18 @@ async function loadDetail() {
   wf.draft.nodes = wf.draft.nodes || [];
   wf.draft.edges = wf.draft.edges || [];
   wf.dirty = false;
+  wf.canvas = { sel: null, drag: null, connect: null, manual: false };
   if (!wf.refs) await loadRefs();
   renderDetail();
 }
 
 async function loadRefs() {
   const safe = (p) => p.catch(() => null);
-  const [models, aliases, bases, tools] = await Promise.all([
+  const [models, aliases, bases, tools, types] = await Promise.all([
     safe(api('/models?limit=200')), safe(api('/model-aliases')),
-    safe(api('/knowledge-bases')), safe(api('/tools')),
+    safe(api('/knowledge-bases')), safe(api('/tools')), safe(api('/workflows/node-types')),
   ]);
+  wf.nodeTypes = types || [];
   wf.refs = {
     models: [...new Set([
       ...((aliases || []).map((a) => a.alias)),
@@ -296,24 +307,37 @@ function renderBuilder() {
   document.getElementById('wf-tab').innerHTML = `
     <div id="wf-problems"></div>
     <div class="card mb-3">
-      <div class="card-header py-2 small text-secondary d-flex align-items-center">
-        Graph <span class="ms-auto">${Object.entries(WF_TYPE_LABEL).filter(([t]) =>
-          nodes.some((n) => n.type === t)).map(([t, l]) =>
-          `<span class="wf-legend wf-t-${t}"></span>${esc(l)}`).join(' ')}</span>
+      <div class="card-header py-2 d-flex flex-wrap align-items-center gap-2">
+        ${edit ? `<span class="small text-secondary">Add</span>
+          <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="Add a step">
+            ${Object.entries(WF_TYPE_LABEL).filter(([t]) => t !== 'start').map(([t, l]) =>
+              `<button type="button" class="btn btn-outline-secondary wf-add wf-t-${t}" data-wf-add="${t}"
+                title="${esc((wf.nodeTypes.find((x) => x.type === t) || {}).description || l)}">
+                <span class="wf-legend"></span>${esc(l)}</button>`).join('')}
+          </div>
+          <span class="ms-auto d-flex gap-2 align-items-center">
+            <span id="wf-sel-actions"></span>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="wf-arrange"
+              title="Lay the steps out in columns by order">Auto-arrange</button>
+          </span>` : '<span class="small text-secondary">Graph</span>'}
       </div>
-      <div class="card-body wf-graph-wrap" id="wf-graph">${graphSvg(wf.draft)}</div>
+      <div class="card-body wf-graph-wrap p-2" id="wf-graph">${canvasSvg(wf.draft, edit)}</div>
+      ${edit ? `<div class="card-footer small text-secondary py-2">
+        Drag a step to move it. Drag from a dot on its right edge to another step to connect them
+        (a condition has <span class="mono">true</span>/<span class="mono">false</span> dots, an approval
+        <span class="mono">approved</span>/<span class="mono">rejected</span>); the red dot underneath
+        handles the step&rsquo;s failure. Click a step to edit it, a connection to select it;
+        <kbd>Delete</kbd> removes the selection. Steps that don&rsquo;t depend on each other run at the same time.
+      </div>` : ''}
     </div>
 
+    <details class="mb-3" id="wf-lists">
+    <summary class="small text-secondary mb-2">Steps and connections as a list</summary>
     <div class="row g-3">
       <div class="col-xl-7">
         <div class="card h-100">
           <div class="card-header py-2 d-flex align-items-center gap-2">
-            <span class="small text-secondary">Nodes</span>
-            ${edit ? `<select class="form-select form-select-sm ms-auto" id="wf-add-type" style="width:auto">
-              ${Object.entries(WF_TYPE_LABEL).filter(([t]) => t !== 'start').map(([t, l]) =>
-                `<option value="${t}">${esc(l)}</option>`).join('')}
-            </select>
-            <button class="btn btn-sm btn-outline-primary" id="wf-add-node">Add node</button>` : ''}
+            <span class="small text-secondary">Steps</span>
           </div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0">
@@ -344,6 +368,7 @@ function renderBuilder() {
         </div>
       </div>
     </div>
+    </details>
 
     <details class="card mt-3" id="wf-json-card">
       <summary class="card-header py-2 small text-secondary">Definition (JSON)</summary>
@@ -362,7 +387,10 @@ function renderBuilder() {
     </div>` : ''}`;
 
   showProblems(wf.dirty ? null : wf.detail.problems);
+  if (wf.listsOpen) document.getElementById('wf-lists').open = true;
+  document.getElementById('wf-lists').ontoggle = (e) => { wf.listsOpen = e.target.open; };
   wireBuilder();
+  wireCanvas(edit);
 }
 
 function nodeSummary(n) {
@@ -427,8 +455,16 @@ function wireBuilder() {
       rerender();
     };
   });
-  const add = document.getElementById('wf-add-node');
-  if (add) add.onclick = () => openNodeModal('', document.getElementById('wf-add-type').value);
+  document.querySelectorAll('[data-wf-add]').forEach((b) => {
+    b.onclick = () => openNodeModal('', b.dataset.wfAdd);
+  });
+  const arrange = document.getElementById('wf-arrange');
+  if (arrange) arrange.onclick = () => {
+    const { pos } = graphLayout(wf.draft, { auto: true });
+    wf.draft.nodes.forEach((n) => { n.position = { ...pos[n.id] }; });
+    wf.canvas.manual = true;
+    rerender();
+  };
   const addEdge = document.getElementById('wf-add-edge');
   if (addEdge) addEdge.onclick = () => {
     const ids = wf.draft.nodes.map((n) => n.id);
@@ -505,9 +541,26 @@ function showProblems(problems, order) {
 /* -------------------------------------------------------------------------- */
 /* Graph                                                                      */
 /* -------------------------------------------------------------------------- */
-/** Auto-layout: column = longest path from a source, rows in definition order. Saved
- *  positions are not used for layout, so a hand-edited JSON never draws overlapping. */
-function graphLayout(def) {
+/** Saved positions (E69), when every step has one and no two boxes overlap (or the canvas
+ *  is mid-edit); otherwise null, and the auto-layout is used. Old drafts stored grid
+ *  columns (0, 1, 2) rather than pixels: those overlap, so they are laid out afresh. */
+function savedPositions(nodes, trust = false) {
+  if (!nodes.length || !nodes.every((n) => Number.isFinite(n.position?.x) && Number.isFinite(n.position?.y))) return null;
+  const { W, H } = WF_BOX;
+  if (!trust) {
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const a = nodes[i].position, b = nodes[j].position;
+        if (Math.abs(a.x - b.x) < W && Math.abs(a.y - b.y) < H) return null;
+      }
+    }
+  }
+  return Object.fromEntries(nodes.map((n) => [n.id, { x: Math.max(0, n.position.x), y: Math.max(0, n.position.y) }]));
+}
+
+/** Layout: saved positions when usable, else column = longest path from a source and
+ *  rows in definition order. `auto` ignores saved positions (Auto-arrange). */
+function graphLayout(def, { auto = false, trust = false } = {}) {
   const nodes = def.nodes || [];
   const ids = nodes.map((n) => n.id);
   const edges = (def.edges || []).filter((e) => ids.includes(e.from) && ids.includes(e.to));
@@ -535,6 +588,12 @@ function graphLayout(def) {
   Object.entries(columns).forEach(([col, list]) => {
     list.forEach((id, row) => { pos[id] = { x: PAD + Number(col) * (W + GX), y: PAD + row * (H + GY) }; });
   });
+  const saved = auto ? null : savedPositions(nodes, trust);
+  if (saved) {
+    const right = Math.max(...Object.values(saved).map((p) => p.x)) + W + PAD;
+    const bottom = Math.max(...Object.values(saved).map((p) => p.y)) + H + GY + PAD;
+    return { pos: saved, edges, W, H, GX, GY, width: right, height: bottom, manual: true };
+  }
   const cols = Object.keys(columns).length;
   const rows = Math.max(1, ...Object.values(columns).map((l) => l.length));
   // A row of headroom below for edges routed under the boxes.
@@ -545,12 +604,13 @@ function graphLayout(def) {
 function graphSvg(def, status = null) {
   const nodes = def.nodes || [];
   if (!nodes.length) return '<div class="text-secondary small">Nothing to draw yet.</div>';
-  const { pos, edges, W, H, GY, GX, width, height } = graphLayout(def);
+  const { pos, edges, W, H, GY, GX, width, height, manual } = graphLayout(def);
   const lines = edges.map((e) => {
     const a = pos[e.from], b = pos[e.to];
     const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2;
     const back = x2 <= x1;
-    const skips = x2 - x1 > W + GX + 1;
+    // Routing under the boxes in between only makes sense for the column layout.
+    const skips = !manual && x2 - x1 > W + GX + 1;
     let d;
     if (skips) {
       // Over a column: run below the lowest box in between, so the line is never hidden
@@ -593,6 +653,319 @@ function graphSvg(def, status = null) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Canvas (E69)                                                               */
+/* -------------------------------------------------------------------------- */
+/** A step's outgoing ports: one per branch (or one "on success"), on the right edge,
+ *  and an `error` port underneath for every step but start. An end has none. */
+function outPorts(n) {
+  const { W, H } = WF_BOX;
+  if (n.type === 'end') return [];
+  const branches = WF_BRANCHES[n.type];
+  const ports = branches
+    ? branches.map((b, i) => ({ when: b, x: W, y: Math.round((H * (i + 1)) / (branches.length + 1)), side: 'right' }))
+    : [{ when: '', x: W, y: H / 2, side: 'right' }];
+  if (n.type !== 'start') ports.push({ when: 'error', x: W / 2, y: H, side: 'down' });
+  return ports;
+}
+
+function edgePath(a, port, b) {
+  const { H } = WF_BOX;
+  const x1 = a.x + port.x, y1 = a.y + port.y, x2 = b.x, y2 = b.y + H / 2;
+  const dx = Math.max(30, Math.abs(x2 - x1) / 2);
+  const c1 = port.side === 'down' ? `${x1},${y1 + Math.max(40, Math.abs(y2 - y1) / 2)}` : `${x1 + dx},${y1}`;
+  return { d: `M${x1},${y1} C${c1} ${x2 - dx},${y2} ${x2},${y2}`, mx: (x1 + x2) / 2, my: (y1 + y2) / 2 };
+}
+
+function canvasLayout(def) {
+  const layout = graphLayout(def, { trust: wf.canvas.manual });
+  layout.width = Math.max(layout.width + 120, 640);
+  layout.height = Math.max(layout.height + 60, 260);
+  return layout;
+}
+
+function canvasSvg(def, edit) {
+  const nodes = def.nodes || [];
+  if (!nodes.length) return '<div class="text-secondary small">Nothing to draw yet.</div>';
+  const { pos, W, H, width, height } = canvasLayout(def);
+  const sel = wf.canvas.sel || {};
+  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const edges = (def.edges || []).map((e, i) => {
+    const from = byId[e.from], to = byId[e.to];
+    if (!from || !to) return '';
+    const port = outPorts(from).find((p) => p.when === (e.when || '')) || outPorts(from)[0] || { x: W, y: H / 2, side: 'right' };
+    const { d, mx, my } = edgePath(pos[e.from], port, pos[e.to]);
+    const cls = e.when === 'error' ? 'wf-edge wf-edge-error'
+      : (e.when === 'false' || e.when === 'rejected') ? 'wf-edge wf-edge-neg' : 'wf-edge';
+    const chosen = sel.edge === i;
+    return `<g class="wf-conn ${chosen ? 'wf-sel' : ''}" data-edge="${i}">
+      <title>${esc(e.from)} → ${esc(e.to)}${e.when ? ` (${esc(e.when)})` : ''}</title>
+      <path class="wf-edge-hit" d="${d}"/>
+      <path class="${cls}" d="${d}" marker-end="url(#wf-arrow)"/>
+      ${e.when ? `<text class="wf-edge-label" x="${mx}" y="${my - 6}" text-anchor="middle">${esc(e.when)}</text>` : ''}
+      ${chosen && edit ? `<g class="wf-edge-del" data-edge-remove="${i}" transform="translate(${mx},${my + 10})">
+        <title>Remove this connection</title><circle r="9"/><path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5"/></g>` : ''}
+    </g>`;
+  }).join('');
+  const boxes = nodes.map((n) => {
+    const p = pos[n.id];
+    const name = String(n.name || n.id);
+    const chosen = sel.node === n.id;
+    const ports = edit ? outPorts(n).map((pt) => `<circle class="wf-port ${pt.when === 'error' ? 'wf-port-error'
+      : (pt.when === 'false' || pt.when === 'rejected') ? 'wf-port-neg' : ''}" data-port="${esc(pt.when)}"
+      cx="${pt.x}" cy="${pt.y}" r="5.5"><title>${pt.when ? `Drag to connect: ${esc(pt.when)}` : 'Drag to connect'}</title></circle>`).join('') : '';
+    return `<g class="wf-node wf-t-${esc(n.type)} ${chosen ? 'wf-sel' : ''}" data-node="${esc(n.id)}" tabindex="0"
+        role="button" aria-label="${esc(WF_TYPE_LABEL[n.type] || n.type)} step ${esc(name)}" transform="translate(${p.x},${p.y})">
+      <title>${esc(n.id)} (${esc(n.type)}): ${esc(nodeSummary(n))}</title>
+      <rect width="${W}" height="${H}" rx="10"/>
+      <rect class="wf-node-bar" width="5" height="${H}" rx="2.5"/>
+      <text x="16" y="23" class="wf-node-type">${esc((WF_TYPE_LABEL[n.type] || n.type).toUpperCase())}</text>
+      <text x="16" y="41" class="wf-node-name">${esc(name.length > 20 ? `${name.slice(0, 19)}…` : name)}</text>
+      ${edit && n.type !== 'start' ? `<circle class="wf-port-in" cx="0" cy="${H / 2}" r="3.5"/>` : ''}
+      ${ports}
+    </g>`;
+  }).join('');
+  return `<svg class="wf-graph wf-canvas ${edit ? 'wf-editable' : ''}" id="wf-canvas" viewBox="0 0 ${width} ${height}"
+      width="${width}" height="${height}" role="application" aria-label="Workflow canvas" tabindex="-1">
+    <defs><marker id="wf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="wf-arrow"/></marker></defs>
+    ${edges}${boxes}
+    <path id="wf-temp" class="wf-edge wf-edge-temp d-none" d=""/>
+  </svg>`;
+}
+
+/** Give every step a saved position (from the current layout) before one is moved. */
+function ensurePositions() {
+  const { pos } = graphLayout(wf.draft, { trust: wf.canvas.manual });
+  wf.draft.nodes.forEach((n) => { n.position = { ...pos[n.id] }; });
+  wf.canvas.manual = true;
+}
+
+/** Move `node` down (then right) until its box overlaps no other. */
+function settle(node) {
+  const { W, H, GY } = WF_BOX;
+  const others = wf.draft.nodes.filter((n) => n !== node && n.position);
+  const hits = () => others.some((o) => Math.abs(o.position.x - node.position.x) < W && Math.abs(o.position.y - node.position.y) < H);
+  for (let i = 0; hits() && i < 60; i += 1) node.position.y += H + GY;
+}
+
+function removeSelection() {
+  const sel = wf.canvas.sel;
+  if (!sel) return false;
+  if (sel.edge !== undefined) {
+    wf.draft.edges.splice(sel.edge, 1);
+  } else if (sel.node) {
+    const node = wf.draft.nodes.find((n) => n.id === sel.node);
+    if (!node || node.type === 'start') return false;
+    wf.draft.nodes = wf.draft.nodes.filter((n) => n.id !== sel.node);
+    wf.draft.edges = wf.draft.edges.filter((e) => e.from !== sel.node && e.to !== sel.node);
+  }
+  wf.canvas.sel = null;
+  return true;
+}
+
+function wireCanvas(edit) {
+  const svg = document.getElementById('wf-canvas');
+  if (!svg) return;
+  const redraw = () => {
+    const holder = document.createElement('div');
+    holder.innerHTML = canvasSvg(wf.draft, edit);
+    const fresh = holder.firstElementChild;
+    ['viewBox', 'width', 'height'].forEach((a) => svg.setAttribute(a, fresh.getAttribute(a)));
+    svg.innerHTML = fresh.innerHTML;
+    selectionActions();
+  };
+  const commit = () => { renderBuilder(); markDirty(); };
+  const point = (ev) => {
+    const r = svg.getBoundingClientRect();
+    return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+  };
+  const nodeAt = (p) => {
+    const { pos } = canvasLayout(wf.draft);
+    return wf.draft.nodes.find((n) => {
+      const q = pos[n.id];
+      return q && p.x >= q.x && p.x <= q.x + WF_BOX.W && p.y >= q.y && p.y <= q.y + WF_BOX.H;
+    });
+  };
+  const selectionActions = () => {
+    const host = document.getElementById('wf-sel-actions');
+    if (!host) return;
+    const sel = wf.canvas.sel;
+    const node = sel?.node && wf.draft.nodes.find((n) => n.id === sel.node);
+    host.innerHTML = node ? `<button type="button" class="btn btn-sm btn-outline-secondary" id="wf-sel-edit">Edit ${esc(node.id)}</button>
+        ${node.type !== 'start' ? '<button type="button" class="btn btn-sm btn-outline-danger" id="wf-sel-del">Remove</button>' : ''}`
+      : sel?.edge !== undefined ? '<button type="button" class="btn btn-sm btn-outline-danger" id="wf-sel-del">Remove connection</button>' : '';
+    const e = document.getElementById('wf-sel-edit');
+    if (e) e.onclick = () => openNodeModal(node.id);
+    const d = document.getElementById('wf-sel-del');
+    if (d) d.onclick = () => { if (removeSelection()) commit(); };
+  };
+  selectionActions();
+
+  svg.onpointerdown = (ev) => {
+    if (ev.button !== 0) return;
+    const remove = ev.target.closest('[data-edge-remove]');
+    if (remove && edit) {
+      wf.draft.edges.splice(Number(remove.dataset.edgeRemove), 1);
+      wf.canvas.sel = null;
+      commit();
+      return;
+    }
+    const port = ev.target.closest('[data-port]');
+    const box = ev.target.closest('[data-node]');
+    if (port && box && edit) {
+      ev.preventDefault();
+      wf.canvas.connect = { from: box.dataset.node, when: port.dataset.port };
+      svg.setPointerCapture(ev.pointerId);
+      return;
+    }
+    if (box) {
+      const id = box.dataset.node;
+      wf.canvas.sel = { node: id };
+      if (!edit) { openNodeModal(id); return; }
+      ev.preventDefault();
+      const { pos } = canvasLayout(wf.draft);
+      const p = point(ev);
+      wf.canvas.drag = { id, dx: p.x - pos[id].x, dy: p.y - pos[id].y, x0: p.x, y0: p.y, moved: false };
+      svg.setPointerCapture(ev.pointerId);
+      redraw();
+      return;
+    }
+    const conn = ev.target.closest('[data-edge]');
+    wf.canvas.sel = conn ? { edge: Number(conn.dataset.edge) } : null;
+    redraw();
+  };
+
+  svg.onpointermove = (ev) => {
+    const p = point(ev);
+    const drag = wf.canvas.drag;
+    if (drag) {
+      if (!drag.moved && Math.hypot(p.x - drag.x0, p.y - drag.y0) < 4) return;
+      if (!drag.moved) { ensurePositions(); drag.moved = true; }
+      const node = wf.draft.nodes.find((n) => n.id === drag.id);
+      const snap = (v) => Math.max(0, Math.round(v / WF_BOX.SNAP) * WF_BOX.SNAP);
+      node.position = { x: snap(p.x - drag.dx), y: snap(p.y - drag.dy) };
+      redraw();
+      return;
+    }
+    const connect = wf.canvas.connect;
+    if (connect) {
+      const from = wf.draft.nodes.find((n) => n.id === connect.from);
+      const { pos } = canvasLayout(wf.draft);
+      const port = outPorts(from).find((q) => q.when === connect.when);
+      const temp = document.getElementById('wf-temp');
+      const { d } = edgePath(pos[from.id], port, { x: p.x, y: p.y - WF_BOX.H / 2 });
+      temp.setAttribute('d', d);
+      temp.classList.remove('d-none');
+      const over = nodeAt(p);
+      svg.querySelectorAll('.wf-target').forEach((g) => g.classList.remove('wf-target'));
+      if (over && over.id !== from.id && over.type !== 'start') {
+        svg.querySelector(`[data-node="${CSS.escape(over.id)}"]`)?.classList.add('wf-target');
+      }
+    }
+  };
+
+  svg.onpointerup = (ev) => {
+    const drag = wf.canvas.drag;
+    const connect = wf.canvas.connect;
+    wf.canvas.drag = null;
+    wf.canvas.connect = null;
+    if (drag) {
+      if (!drag.moved) { openNodeModal(drag.id); return; }
+      settle(wf.draft.nodes.find((n) => n.id === drag.id));
+      commit();
+      return;
+    }
+    if (connect) {
+      const target = nodeAt(point(ev));
+      if (!target || target.id === connect.from || target.type === 'start') { redraw(); return; }
+      const when = connect.when || undefined;
+      const exists = wf.draft.edges.some((e) => e.from === connect.from && e.to === target.id && (e.when || undefined) === when);
+      if (!exists) wf.draft.edges.push({ from: connect.from, to: target.id, ...(when ? { when } : {}) });
+      wf.canvas.sel = null;
+      commit();
+    }
+  };
+
+  svg.onkeydown = (ev) => {
+    const box = ev.target.closest?.('[data-node]');
+    if (ev.key === 'Enter' && box) { ev.preventDefault(); openNodeModal(box.dataset.node); return; }
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && edit) {
+      if (box) wf.canvas.sel = { node: box.dataset.node };
+      if (removeSelection()) { ev.preventDefault(); commit(); }
+    }
+    if (ev.key === 'Escape') { wf.canvas.sel = null; redraw(); }
+  };
+  svg.onfocusin = (ev) => {
+    const box = ev.target.closest?.('[data-node]');
+    if (box && wf.canvas.sel?.node !== box.dataset.node) { wf.canvas.sel = { node: box.dataset.node }; selectionActions(); }
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Node schemas (E69)                                                         */
+/* -------------------------------------------------------------------------- */
+const WF_SCHEMA_KIND = {
+  text: 'text', template: 'textarea', integer: 'number', number: 'number', boolean: 'check',
+  enum: 'select', string_list: 'list', object: 'json', json: 'jsonish', model: 'model',
+  tool: 'tool', knowledge_bases: 'bases',
+};
+
+/** The form fields for a node type, from its served schema (WF_FIELDS as the fallback,
+ *  and for layout hints such as rows). */
+function fieldsFor(type) {
+  const schema = wf.nodeTypes.find((t) => t.type === type);
+  const legacy = Object.fromEntries((WF_FIELDS[type] || []).map((f) => [f.k, f]));
+  if (!schema?.fields?.length) return WF_FIELDS[type] || [];
+  return schema.fields.map((f) => {
+    const old = legacy[f.key] || {};
+    return {
+      ...old,
+      k: f.key,
+      kind: WF_SCHEMA_KIND[f.kind] || 'text',
+      label: `${f.label}${f.required ? ' *' : ''}`,
+      help: f.help || old.help,
+      placeholder: f.placeholder || old.placeholder,
+      options: f.options || old.options,
+      step: f.kind === 'number' ? 'any' : '1',
+      min: f.minimum,
+      max: f.maximum,
+      half: old.half ?? ['integer', 'number', 'enum'].includes(f.kind),
+    };
+  });
+}
+
+function isTimed(type) {
+  const schema = wf.nodeTypes.find((t) => t.type === type);
+  return schema ? Boolean(schema.timed) : WF_TIMED.has(type);
+}
+
+/** What `node` can read: `{{ input.* }}` and the outputs of the steps before it. */
+function readableFrom(nodeId, prevId = null) {
+  const parents = {};
+  wf.draft.edges.forEach((e) => { (parents[e.to] = parents[e.to] || []).push(e.from); });
+  const seen = new Set();
+  const queue = [...(parents[nodeId] || []), ...(prevId ? [prevId] : [])];
+  while (queue.length) {
+    const id = queue.shift();
+    if (seen.has(id) || id === nodeId) continue;
+    seen.add(id);
+    queue.push(...(parents[id] || []));
+  }
+  const out = [];
+  const start = wf.draft.nodes.find((n) => n.type === 'start');
+  ((start?.config || {}).required_inputs || []).forEach((k) => out.push(`input.${k}`));
+  wf.draft.nodes.filter((n) => seen.has(n.id)).forEach((n) => {
+    const schema = wf.nodeTypes.find((t) => t.type === n.type);
+    let outputs = schema ? schema.outputs : null;
+    if (n.type === 'transform' && n.config?.output && typeof n.config.output === 'object') outputs = Object.keys(n.config.output);
+    if (n.type === 'start') return;
+    (outputs || []).forEach((o) => out.push(`nodes.${n.id}.${o}`));
+    if (wf.draft.edges.some((e) => e.from === n.id && e.when === 'error')) out.push(`nodes.${n.id}.error`);
+  });
+  return out;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Node modal                                                                 */
 /* -------------------------------------------------------------------------- */
 function freshId(type) {
@@ -614,7 +987,9 @@ function openNodeModal(id, newType = null) {
   document.getElementById('wf-node-title').textContent =
     `${isNew ? 'Add' : edit ? 'Edit' : 'View'} ${WF_TYPE_LABEL[node.type] || node.type} node`;
   document.getElementById('wf-node-error').classList.add('d-none');
-  const fields = (WF_FIELDS[node.type] || []).map((f) => fieldHtml(f, c[f.k])).join('');
+  const fields = fieldsFor(node.type).map((f) => fieldHtml(f, c[f.k])).join('');
+  const prev = isNew ? [...wf.draft.nodes].reverse().find((n) => n.type !== 'end') : null;
+  const readable = node.type === 'start' ? [] : readableFrom(node.id, prev?.id);
   document.getElementById('wf-node-body').innerHTML = `
     <fieldset ${edit ? '' : 'disabled'}>
     <div class="row g-3">
@@ -629,7 +1004,11 @@ function openNodeModal(id, newType = null) {
         <input class="form-control" id="wfn-name" value="${esc(node.name || '')}">
       </div>
       ${fields}
-      ${WF_TIMED.has(node.type) ? `
+      ${readable.length && edit ? `<div class="col-12">
+        <div class="small text-secondary mb-1">Values from earlier steps: click one to insert it where the cursor is</div>
+        <div class="wf-refs">${readable.map((r) => `<button type="button" class="chip mono" data-wf-ref="${esc(r)}">{{ ${esc(r)} }}</button>`).join('')}</div>
+      </div>` : ''}
+      ${isTimed(node.type) ? `
         <div class="col-12"><hr class="my-1"><div class="small text-secondary">Reliability</div></div>
         <div class="col-md-4">
           <label class="form-label small text-secondary" for="wfn-attempts">Attempts</label>
@@ -650,6 +1029,22 @@ function openNodeModal(id, newType = null) {
       <span class="mono">{{ nodes.&lt;id&gt;.&lt;field&gt; }}</span>, <span class="mono">{{ run.id }}</span>.
       A value that is only a template keeps its type (a list stays a list).</div>`;
   document.querySelector('#wf-node-form [type=submit]').classList.toggle('d-none', !edit);
+  // The chips insert into the text field last focused.
+  let target = null;
+  const body = document.getElementById('wf-node-body');
+  body.onfocusin = (ev) => {
+    if (ev.target.matches('textarea, input[type=text], input:not([type])')) target = ev.target;
+  };
+  body.querySelectorAll('[data-wf-ref]').forEach((chip) => {
+    chip.onclick = () => {
+      if (!target || target.id === 'wfn-id' || target.id === 'wfn-name') return;
+      const text = `{{ ${chip.dataset.wfRef} }}`;
+      const at = target.selectionStart ?? target.value.length;
+      target.value = target.value.slice(0, at) + text + target.value.slice(target.selectionEnd ?? at);
+      target.focus();
+      target.selectionStart = target.selectionEnd = at + text.length;
+    };
+  });
   new bootstrap.Modal(document.getElementById('wf-node-modal')).show();
 }
 
@@ -665,7 +1060,9 @@ function fieldHtml(f, value) {
         <input class="form-check-input" type="checkbox" id="${id}" ${value ? 'checked' : ''}>
         <label class="form-check-label small" for="${id}">${esc(f.label)}</label></div>${help}</div>`;
     case 'number':
-      return `<div class="${col}">${label}<input class="form-control" type="number" step="${f.step || '1'}" id="${id}" value="${esc(value ?? '')}">${help}</div>`;
+      return `<div class="${col}">${label}<input class="form-control" type="number" step="${f.step || '1'}"
+        ${f.min !== undefined ? `min="${esc(f.min)}"` : ''} ${f.max !== undefined ? `max="${esc(f.max)}"` : ''}
+        id="${id}" value="${esc(value ?? '')}">${help}</div>`;
     case 'select':
       return `<div class="${col}">${label}<select class="form-select" id="${id}">${f.options.map((o) =>
         `<option ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>${help}</div>`;
@@ -729,12 +1126,12 @@ document.getElementById('wf-node-form').onsubmit = (event) => {
     if (!/^[a-z][a-z0-9_]{0,63}$/.test(id)) throw new Error('Id: lowercase letters, digits and underscores, starting with a letter.');
     if (wf.draft.nodes.some((n) => n.id === id && n !== old)) throw new Error(`Another node is already called ${id}.`);
     const config = {};
-    (WF_FIELDS[type] || []).forEach((f) => {
+    fieldsFor(type).forEach((f) => {
       const v = readField(f);
       if (v !== undefined && !(Array.isArray(v) && !v.length && f.kind === 'list')) config[f.k] = v;
     });
     const node = { ...(old || {}), id, type, name: document.getElementById('wfn-name').value.trim() || id, config };
-    if (WF_TIMED.has(type)) {
+    if (isTimed(type)) {
       const attempts = Number(document.getElementById('wfn-attempts').value || 1);
       const backoff = Number(document.getElementById('wfn-backoff').value || 0);
       const timeout = document.getElementById('wfn-timeout').value;
@@ -748,6 +1145,14 @@ document.getElementById('wf-node-form').onsubmit = (event) => {
       // steps one after another means; they can rewire it in the table.
       const prev = [...wf.draft.nodes].reverse().find((n) => n !== node && n.type !== 'end');
       if (prev && node.type !== 'start') wf.draft.edges.push({ from: prev.id, to: id });
+      // E69: on a canvas with saved positions, the new step goes to the right of it.
+      if (wf.canvas.manual || savedPositions(wf.draft.nodes.filter((n) => n !== node))) {
+        const anchor = prev?.position || { x: WF_BOX.PAD, y: WF_BOX.PAD };
+        if (!wf.canvas.manual) ensurePositions();
+        node.position = { x: anchor.x + WF_BOX.W + WF_BOX.GX, y: anchor.y };
+        settle(node);
+      }
+      wf.canvas.sel = { node: id };
     } else {
       Object.keys(old).forEach((k) => delete old[k]);
       Object.assign(old, node);

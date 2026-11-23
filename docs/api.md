@@ -728,7 +728,7 @@ Under `/api/v1`, authenticated with the platform JWT unless noted. See
 |---|---|---|
 | GET | `/workflows` | `workflow.view`. `?status=` |
 | POST | `/workflows` | `workflow.edit`. `name`, `display_name`, `description`, `template` (`blank`/`rag_answer`/`approval_http`) or `draft`, `team_id`. **201** |
-| GET | `/workflows/node-types` | `workflow.view` |
+| GET | `/workflows/node-types` | `workflow.view`. Each type's schema: `fields` (key, kind, label, required, templated, minimum, maximum, options, help, placeholder), `outputs` (null when any key may exist), `branches`, `timed`. See [workflows.md](workflows.md#node-schemas) |
 | GET / PATCH / DELETE | `/workflows/{id}` | `workflow.view` / `workflow.edit` / `workflow.edit`. PATCH: `display_name`, `description`, `draft`, `schedule_cron` (empty string removes it), `schedule_input`. DELETE is 409 while runs are in progress |
 | POST | `/workflows/{id}/validate` | `workflow.view`. `definition` (omit for the saved draft); returns `valid`, `problems`, `order` |
 | POST | `/workflows/{id}/publish` | `workflow.edit`. `note`; 422 with `details.problems` when the draft is invalid |

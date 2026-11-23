@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Workflows: a canvas, checked settings and parallel branches
+- **The Workflows builder is a canvas.** Drag steps to arrange them, drag from a step's dot to another step to connect them (conditions and approvals have one dot per branch, and every step a red one for its failure branch), click a step to edit it, and press Delete to remove a step or connection. Positions are saved with the draft; *Auto-arrange* tidies up.
+- **Settings are checked against each step type.** A misspelt or unknown setting, a value of the wrong type or out of range, and a template that reads a step that doesn't exist, runs later or has no such output are listed before publishing. The step form offers the values of earlier steps to insert.
+- **Independent branches run at the same time.** Two connections out of one step start two branches; a step after both waits for both. Model and HTTP calls overlap. An approval or delay on one branch no longer holds up the others, and an end step waits for every branch to finish.
+- **Upgrade.** No migration. Published versions keep running unchanged, but a draft may now list problems it didn't before (unknown settings, broken template paths). A workflow with a branch leading straight to an end step now finishes the other branches before ending, where it used to stop at the end step.
+
 ### Restore a whole team from a backup
 - **Restoring one team now brings back its setup too**: the team, its members, tools, agents (every version, with their tool grants), workflows, API clients and keys, and the quotas and cost budgets set for it or its keys, together with its knowledge bases. Choose *Only one team* on the Backup & Restore page, or `--team` on the host. A deleted team comes back whole, under the same ids, so its run history points at it again.
 - **Nothing made since is lost**: agents, workflows and keys created after the backup are kept, members who joined since stay, and run history isn't touched. A key revoked or deleted since stays unusable.

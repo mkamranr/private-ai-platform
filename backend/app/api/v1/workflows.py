@@ -145,10 +145,7 @@ async def _run_detail(service: WorkflowService, run_id: uuid.UUID) -> RunDetail:
 async def list_node_types(
     _actor: Annotated[User, require_permission(Perm.WORKFLOW_VIEW)],
 ) -> list[NodeType]:
-    return [
-        NodeType(type=kind, description=text, branches=sorted(wd.BRANCHES.get(kind, ())))
-        for kind, text in wd.NODE_TYPES.items()
-    ]
+    return [NodeType(**schema.as_dict()) for schema in wd.NODE_SCHEMAS.values()]
 
 
 @router.get("/workflows", response_model=list[WorkflowRead], summary="List workflows")

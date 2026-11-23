@@ -15,6 +15,27 @@ Code:
 - `backend/app/api/v1/workflows.py`: the API.
 - Console: the **Workflows** page, plus workflow steps on the **Approvals** page.
 
+## The canvas
+
+The *Builder* tab is a canvas:
+
+- **Add a step** with the buttons above it (Model, Retrieval, Tool, …). The form opens;
+  the new step is placed to the right of the last one and connected after it.
+- **Move a step** by dragging it. Positions snap to an 8-pixel grid and are saved with the
+  draft (each node's `position`, in pixels). *Auto-arrange* lays the steps out in columns
+  by order again.
+- **Connect two steps** by dragging from a dot on a step's right edge to the other step. A
+  condition has a `true` and a `false` dot, an approval `approved` and `rejected`; every
+  step but start has a red dot underneath for its `error` branch.
+- **Edit a step** by clicking it (or Tab to it and press Enter). The form lists the values
+  of the steps before it; click one to insert its template where the cursor is.
+- **Remove** a step or connection: click it, then *Remove* or <kbd>Delete</kbd>. The start
+  step can't be removed.
+
+The step and connection tables are still under *Steps and connections as a list*, and the
+JSON under *Definition (JSON)*. Drafts saved before the canvas stored grid columns rather
+than pixels; they are laid out automatically until a step is moved.
+
 ## Lifecycle
 
 | status | runs | editable |
@@ -60,6 +81,31 @@ Code:
 - `POST /workflows/{id}/validate` lists every problem, each tagged with its node, and
   returns the execution order. The console shows the same list above the graph.
 
+### Node schemas
+
+Each node type declares its settings and outputs, and `GET /workflows/node-types` serves
+them: for each type its `fields` (`key`, `kind`, `label`, `required`, `templated`, and
+`minimum`, `maximum`, `options`, `help`, `placeholder` where they apply), its `outputs`,
+its `branches` and whether it is `timed` (takes retries and a timeout). The console builds
+its forms from them. Validation follows the same schema:
+
+- **A setting the type doesn't have** is a problem, naming the ones it does have, so a
+  misspelt `temprature` doesn't silently do nothing.
+- **Types and ranges**: numbers are numbers (`temperature` 0–2, `top_k` 1–50, `seconds` up
+  to a week), lists are lists, choices are one of their options. A value that is only a
+  template (`"{{ input.t }}"`) stands in for a typed value where `templated` is true, and is
+  checked when the run renders it.
+- **Templates that can never resolve**: one that reads a step that doesn't exist, a step
+  that runs after this one, an output that step doesn't have
+  (`{{ nodes.search.contxt }}`: a retrieval step has `passages`, `count`, `context`,
+  `warnings`), a `run` field other than `id`, `workflow_id`, `trigger` and `version`, or
+  something other than `input`, `nodes` or `run`. Any step's `error` can be read, and the
+  start step's and a transform's outputs are whatever the input or the transform's keys
+  are.
+
+Already published versions keep running as they are; the stricter checks apply when a
+draft is checked or published.
+
 ### Node types
 
 | type | config | output |
@@ -103,6 +149,33 @@ to text, and objects become JSON. A missing path renders as empty.
 - A step runs when any one of its incoming edges is active. A step none of whose edges
   are active is skipped. That is how only one branch of a condition runs, and how two
   branches can meet at a shared step.
+
+### Parallel branches
+
+Steps that don't depend on each other run at the same time. Two connections out of one
+step without a `when` start two branches, and both run; a step they both lead to waits for
+both:
+
+```json
+"edges": [
+  {"from": "start", "to": "crm"}, {"from": "start", "to": "erp"},
+  {"from": "crm", "to": "merge"}, {"from": "erp", "to": "merge"}
+]
+```
+
+- **A step starts once the steps leading into it are done**, and any earlier step its
+  templates read. It doesn't wait for unrelated steps.
+- **Model and HTTP calls overlap.** The rest of a step's work (database lookups, recording
+  the step, retrieval and tool calls) takes turns, as the run has one database session.
+- **A pause on one branch doesn't stop the others.** An approval or delay waits while the
+  other branches carry on; the run pauses once nothing else can run. Each delay keeps its
+  own due time.
+- **An end step runs once every other step is done or skipped**, so a branch that goes
+  straight to an end no longer cuts its siblings short.
+- A failing step with no `error` branch fails the run once the steps running alongside it
+  have finished.
+
+Chains and condition branches run exactly as before: there is only ever one step to run.
 
 ### Retries and timeouts
 
@@ -306,11 +379,11 @@ Workflows take part in team scope ([teams.md](teams.md)):
 
 ## Not included
 
-- **Typed input and output schemas per node.** Outputs are documented per type, and
-  validation checks structure but not the paths a template uses.
-- **Drag-and-drop canvas.** The editor is a node list, a connection table and a
-  JSON view, with an auto-laid-out graph preview. Saved `position` values are kept for a
-  future canvas but not used for layout.
-- **Parallel execution of independent branches.** Steps run one at a time in topological
-  order.
+- **Output types.** Outputs are named per node type, not typed: a template reading
+  `nodes.search.count` is known to exist, not to be a number. Deeper paths
+  (`nodes.call.body.items`) aren't checked.
+- **Parallel retrieval and tool steps.** They take turns with the run's other database
+  work, so only model and HTTP calls truly overlap.
+- **Canvas niceties**: no zoom, multi-select, copy and paste, or undo (*Discard changes*
+  goes back to the saved draft).
 - **Sub-workflows and loops.**

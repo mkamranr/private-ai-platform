@@ -109,13 +109,18 @@ class WorkflowRunRepository(BaseRepository[WorkflowRun]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def claim_due(self, now: dt.datetime) -> WorkflowRun | None:
-        """A queued run, or one whose delay has elapsed, locked for this worker."""
+        """A queued run, or one whose delay has elapsed, locked for this worker.
+
+        E69: a run can wait for an approval on one branch and a delay on another; it is
+        WAITING_FOR_APPROVAL, with ``resume_at`` set for the delay, and is claimed when the
+        delay is due. A run waiting only for an approval has no ``resume_at``."""
         stmt = (
             select(WorkflowRun)
             .where(
                 or_(
                     WorkflowRun.status == RunStatus.QUEUED,
-                    (WorkflowRun.status == RunStatus.WAITING) & (WorkflowRun.resume_at <= now),
+                    WorkflowRun.status.in_([RunStatus.WAITING, RunStatus.WAITING_FOR_APPROVAL])
+                    & (WorkflowRun.resume_at <= now),
                 )
             )
             .order_by(WorkflowRun.created_at)

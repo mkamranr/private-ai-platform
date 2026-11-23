@@ -112,9 +112,19 @@ class ValidateResponse(BaseModel):
 
 
 class NodeType(BaseModel):
+    """A node type and (E69) its schema: the settings it takes and what it outputs."""
+
     type: str
+    label: str = ""
     description: str
     branches: list[str] = Field(default_factory=list)
+    #: ``{key, kind, label, required, templated, minimum?, maximum?, options?, help?,
+    #: placeholder?}``; see ``ConfigField`` in workflow_definition.py.
+    fields: list[dict[str, Any]] = Field(default_factory=list)
+    #: What later steps can read; null when any key may exist (start, transform).
+    outputs: list[str] | None = None
+    #: Takes ``retry`` and ``timeout_seconds``.
+    timed: bool = False
 
 
 class WebhookToken(BaseModel):

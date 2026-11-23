@@ -76,18 +76,23 @@ def starter_definition() -> dict[str, Any]:
                 "type": "start",
                 "name": "Start",
                 "config": {},
-                "position": {"x": 0, "y": 0},
+                "position": _at(0, 0),
             },
             {
                 "id": "end",
                 "type": "end",
                 "name": "End",
                 "config": {"output": "{{ input }}"},
-                "position": {"x": 1, "y": 0},
+                "position": _at(1, 0),
             },
         ],
         "edges": [{"from": "start", "to": "end"}],
     }
+
+
+def _at(column: int, row: int) -> dict[str, int]:
+    """E69: a canvas position in pixels, on the grid the console's auto-arrange uses."""
+    return {"x": 16 + column * 232, "y": 16 + row * 82}
 
 
 def _node(node_id: str, kind: str, name: str, x: int, y: int = 0, **config: Any) -> dict[str, Any]:
@@ -96,7 +101,7 @@ def _node(node_id: str, kind: str, name: str, x: int, y: int = 0, **config: Any)
         "type": kind,
         "name": name,
         "config": config,
-        "position": {"x": x, "y": y},
+        "position": _at(x, y),
     }
 
 
