@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Streams survive a copy failing mid-answer
+- **A stream that breaks after part of the answer was sent is finished by another copy of the model.** The gateway gives it the text so far to continue, so the caller gets one answer with no error, instead of a cut-off answer and an `upstream_error` event.
+- Works on vLLM, SGLang, llama.cpp and Ollama by default (a new `resume` capability); an external endpoint only when declared. Needs a second running copy and `gateway.replica_retries` of at least 1.
+- Not after a tool call has started streaming. Answers longer than `gateway.stream_resume_max_chars` (default 32,768 characters, Settings page) aren't resumed; 0 turns it off. See "Resuming a broken stream" in docs/gateway-policy.md.
+- **Agent runs check their model first.** An agent with tools on a model that can't call them, or on a model that can't chat, now fails before its first model call with the reason, instead of erroring or silently running without its tools. Workflow LLM steps check for chat too.
+- **Upgrade.** No migration. A model with a capability declaration already set doesn't resume until `resume` is added to it.
+
 ### Clear errors for requests a model can't serve
 - **Each runtime declares what it supports**: chat, streaming, tool calls, image input, embeddings and reranking. The model's type narrows that, so a text model doesn't take images and an embedding model doesn't chat.
 - **The gateway refuses anything else up front** with a 400 that names the model and what's missing, instead of a confusing runtime error or a silently ignored request. An alias's fallback that can't serve the request is skipped.

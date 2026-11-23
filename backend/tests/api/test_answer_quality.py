@@ -71,7 +71,7 @@ def models(app) -> SimpleNamespace:
     usage: list[dict[str, Any]] = []
     refused: set[str] = set()
 
-    async def factory(model: str):
+    async def factory(model: str, **_: Any):
         if model == "not-served":
             raise DependencyUnavailableError("Nothing is serving not-served.")
         return provider, f"served-{model}"

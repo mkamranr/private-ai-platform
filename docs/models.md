@@ -299,18 +299,19 @@ machine to pull and pin.
 The gateway speaks one OpenAI API to every runtime, but the runtimes differ. Each one
 **declares** what it can be asked to do, and the model's type narrows that:
 
-| Runtime | chat | streaming | tools | vision | embeddings | rerank |
-|---|---|---|---|---|---|---|
-| `vllm`, `external`, `mock` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `sglang` | ✓ | ✓ | ✓ | ✓ | ✓ | |
-| `tgi` | ✓ | ✓ | ✓ | ✓ | | |
-| `llamacpp` | ✓ | ✓ | | | ✓ | ✓ |
-| `ollama` | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| Runtime | chat | streaming | tools | vision | embeddings | rerank | resume |
+|---|---|---|---|---|---|---|---|
+| `vllm`, `mock` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `external` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| `sglang` | ✓ | ✓ | ✓ | ✓ | ✓ | | ✓ |
+| `tgi` | ✓ | ✓ | ✓ | ✓ | | | |
+| `llamacpp` | ✓ | ✓ | | | ✓ | ✓ | ✓ |
+| `ollama` | ✓ | ✓ | ✓ | ✓ | ✓ | | ✓ |
 
 | Model type | Allows |
 |---|---|
-| `LLM` | chat, streaming, tools |
-| `VISION`, `MULTIMODAL` | chat, streaming, tools, vision |
+| `LLM` | chat, streaming, tools, resume |
+| `VISION`, `MULTIMODAL` | chat, streaming, tools, vision, resume |
 | `EMBEDDING` | embeddings |
 | `RERANKER` | rerank |
 
@@ -323,6 +324,14 @@ error, tool definitions ignored, or an image dropped (the gateway flattened imag
 to their text). A model that declares vision now receives the image parts as sent. An
 alias's fallback that can't serve the request is skipped. The platform's own calls check
 too: a knowledge base's embedding model must declare embeddings, its reranker rerank.
+An agent run fails before its first model call when its model can't chat, or can't call
+tools and the agent has some; a workflow LLM step and the answer-quality judge need chat.
+
+`resume` is never asked for by a caller: it lets the gateway finish a stream that broke
+mid-answer on another copy (see
+[gateway-policy.md](gateway-policy.md#resuming-a-broken-stream)). An `external` endpoint
+doesn't resume unless declared: a server that doesn't continue a trailing assistant
+message would answer it with a new turn, repeating text the caller already has.
 
 `GET /v1/models` lists each entry's `capabilities`.
 

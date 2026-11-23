@@ -223,9 +223,20 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "gateway",
         "Retries on another copy",
         "How many other copies of the same model a failed call is tried on before the "
-        "alias's fallback. A stream is retried only if it failed before sending anything.",
+        "alias's fallback. A stream that already sent text is resumed on another copy "
+        "only if the model can resume (see gateway.stream_resume_max_chars).",
         "Next gateway request",
         _bounded(0, 5),
+    ),
+    RuntimeSetting(
+        "gateway.stream_resume_max_chars",
+        "gateway",
+        "Resume broken streams up to (characters)",
+        "A stream that breaks after sending text is finished by another copy of the model, "
+        "given the text sent so far to continue. Answers longer than this are not resumed; "
+        "0 turns resuming off.",
+        "Next gateway request",
+        _bounded(0, 1_000_000),
     ),
     RuntimeSetting(
         "gateway.concurrency_lease_seconds",

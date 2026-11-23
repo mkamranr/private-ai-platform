@@ -199,6 +199,8 @@ class StreamAccounting:
     #: `time.perf_counter()` at the latest content chunk (E16). With `first_token_at` it
     #: gives the generation time that output throughput is measured over.
     last_token_at: float | None = None
+    #: E66: times a broken stream was resumed on another copy.
+    resumed: int = 0
 
     def timings_ms(self, started: float) -> tuple[float | None, float | None]:
         """Time to first token and generation time in milliseconds, None if unmeasured."""
@@ -1172,17 +1174,37 @@ class GatewayService:
         stream_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         client_wants_usage = bool((body.get("stream_options") or {}).get("include_usage"))
 
-        # E58: set once anything has been sent; only before that can a failed stream
-        # move to another copy.
+        # E58: set once anything has been sent; before that a failed stream moves to
+        # another copy as if nothing had happened.
         sent = False
+        # E66: after that, it can still be resumed: the text sent so far is held (up to
+        # `stream_resume_max_chars`) and another copy is asked to continue it. None once
+        # resuming is impossible: the text outgrew the limit, a tool call or the finish
+        # was sent, or the usage report reached the caller.
+        cap = self._settings.gateway.stream_resume_max_chars
+        answer: list[str] | None = [] if cap > 0 else None
+        answer_chars = 0
+        # Content chunks sent, a stand-in for tokens (runtimes send about one per chunk),
+        # so a resumed call doesn't get the caller's whole `max_tokens` again.
+        pieces = 0
+        resume_from: str | None = None
         while True:
+            messages = self._messages(body.get("messages") or [], vision=has_images(body))
+            max_tokens = body.get("max_tokens")
+            extra: dict[str, Any] | None = None
+            if resume_from is not None:
+                messages.append(ChatMessage(role="assistant", content=resume_from))
+                extra = caps.resume_options(target.deployment.runtime or target.model.runtime)
+                if isinstance(max_tokens, int):
+                    max_tokens = max(1, max_tokens - pieces)
             try:
                 async for chunk in self._provider(target).chat_stream(
-                    messages=self._messages(body.get("messages") or [], vision=has_images(body)),
+                    messages=messages,
                     model=target.served_model_name,
                     temperature=body.get("temperature"),
-                    max_tokens=body.get("max_tokens"),
+                    max_tokens=max_tokens,
                     tools=body.get("tools"),
+                    extra=extra or None,
                 ):
                     if chunk.usage is not None:
                         accounting.prompt_tokens = chunk.usage.prompt_tokens
@@ -1191,7 +1213,7 @@ class GatewayService:
                             # Swallowed: the caller did not ask for it, and OpenAI clients
                             # that do not expect a usage chunk mishandle its empty choices.
                             continue
-                        sent = True
+                        sent, answer = True, None
                         yield _sse(
                             {
                                 "id": stream_id,
@@ -1227,6 +1249,18 @@ class GatewayService:
                             accounting.first_token_at = now
                         accounting.last_token_at = now
 
+                    if answer is not None:
+                        if chunk.tool_calls or chunk.finish_reason:
+                            # Half a tool call can't be continued, and a finished answer
+                            # has nothing left to add.
+                            answer = None
+                        elif chunk.delta:
+                            answer_chars += len(chunk.delta)
+                            answer = answer if answer_chars <= cap else None
+                            if answer is not None:
+                                answer.append(chunk.delta)
+                    if chunk.delta:
+                        pieces += 1
                     sent = True
                     yield _sse(
                         {
@@ -1250,6 +1284,26 @@ class GatewayService:
                 # this one had never been asked.
                 if not sent and await self._switch_replica(target, "stream"):
                     accounting.prompt_tokens = accounting.completion_tokens = 0
+                    continue
+                # E66: text has reached the caller, so another copy is asked to carry on
+                # from it, and the caller sees one answer.
+                if (
+                    sent
+                    and answer
+                    and caps.Capability.RESUME in target.model.effective_capabilities
+                    and await self._switch_replica(target, "stream_resume")
+                ):
+                    resume_from = "".join(answer)
+                    accounting.resumed += 1
+                    # The broken copy never reported its usage. The resumed call reports
+                    # the text so far as prompt, so the total still covers it.
+                    accounting.prompt_tokens = accounting.completion_tokens = 0
+                    log.info(
+                        "stream_resumed",
+                        model=target.requested_model,
+                        chars=len(resume_from),
+                        error=str(exc)[:200],
+                    )
                     continue
                 # Headers are already sent, so no status code is available. The OpenAI SDKs
                 # can surface a final error event, which is the best available signal.

@@ -182,14 +182,16 @@ class CopyProvider(FakeProvider):
             yield chunk
 
 
-async def _model_with_copies(session: AsyncSession, n: int) -> tuple[Model, list[str]]:
+async def _model_with_copies(
+    session: AsyncSession, n: int, runtime: str = "mock", **values: Any
+) -> tuple[Model, list[str]]:
     model = Model(
         name=f"replicated-{uuid.uuid4().hex[:8]}",
         display_name="Replicated",
-        type="LLM",
         storage_path="/x",
-        runtime="mock",
+        runtime=runtime,
         status=ModelStatus.AVAILABLE,
+        **{"type": "LLM", **values},
     )
     session.add(model)
     await session.flush()
@@ -202,7 +204,7 @@ async def _model_with_copies(session: AsyncSession, n: int) -> tuple[Model, list
                 model_id=model.id,
                 node_id=None,
                 state=DeploymentState.RUNNING,
-                runtime="mock",
+                runtime=runtime,
                 image="",
                 internal_port=8000,
                 internal_url=url,
@@ -225,10 +227,16 @@ def gateway(app, session: AsyncSession, settings, monkeypatch):
 
     providers: dict[str, CopyProvider] = {}
 
-    def build(strategy: str = "least_busy", retries: int = 1, redis: Any = None) -> GatewayService:
+    def build(
+        strategy: str = "least_busy",
+        retries: int = 1,
+        redis: Any = None,
+        resume_chars: int = 32_768,
+    ) -> GatewayService:
         local = settings.model_copy(deep=True)
         local.gateway.load_balancing = strategy
         local.gateway.replica_retries = retries
+        local.gateway.stream_resume_max_chars = resume_chars
         service = GatewayService(
             local,
             ModelRepository(session),
@@ -337,7 +345,7 @@ class TestGateway:
 
         providers[urls[0]] = Breaks("breaks0", served)
         providers[urls[1]] = Breaks("breaks1", served)
-        service = build()
+        service = build(resume_chars=0)  # E66 resuming off: the E58 behaviour
         body = {"model": model.name, "messages": MESSAGES, "stream": True}
         target = await service.prepare_stream(body, GatewayContext())
         accounting = StreamAccounting()

@@ -134,7 +134,7 @@ async def wf(app, session: AsyncSession, settings) -> SimpleNamespace:
         session=session,
     )
 
-    async def provider_factory(model: str):
+    async def provider_factory(model: str, **_: Any):
         ns.models.append(model)
         return ns.provider, f"served-{model}"
 

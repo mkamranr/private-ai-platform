@@ -67,6 +67,7 @@ class TestDeclarations:
             caps.Capability.CHAT,
             caps.Capability.STREAMING,
             caps.Capability.TOOLS,
+            caps.Capability.RESUME,
         }
         assert caps.Capability.TOOLS not in caps.default_for("llamacpp", "LLM")
         assert caps.default_for("tgi", "EMBEDDING") == frozenset()
@@ -173,7 +174,7 @@ class TestAdmin:
         headers = auth_header(tokens, model_admin)
         r = await client.get(url, headers=headers)
         assert r.json()["capabilities"] is None
-        assert r.json()["effective_capabilities"] == ["chat", "streaming"]
+        assert r.json()["effective_capabilities"] == ["chat", "streaming", "resume"]
 
         r = await client.patch(url, headers=headers, json={"capabilities": ["tools", "Chat"]})
         assert r.status_code == 200, r.text
@@ -185,4 +186,4 @@ class TestAdmin:
 
         r = await client.patch(url, headers=headers, json={"capabilities": None})
         assert r.json()["capabilities"] is None
-        assert r.json()["effective_capabilities"] == ["chat", "streaming"]
+        assert r.json()["effective_capabilities"] == ["chat", "streaming", "resume"]
