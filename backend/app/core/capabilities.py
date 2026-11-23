@@ -33,34 +33,45 @@ class Capability(enum.StrEnum):
     EMBEDDINGS = "embeddings"
     #: Reranking (knowledge-base retrieval).
     RERANK = "rerank"
+    #: E66: continue a partial answer given as a trailing assistant message, so a stream
+    #: that breaks after sending text can be finished by another copy. Never asked for by
+    #: a caller; the gateway uses it when a stream breaks.
+    RESUME = "resume"
 
 
 ALL: frozenset[Capability] = frozenset(Capability)
 _CHAT = frozenset({Capability.CHAT, Capability.STREAMING})
+#: A server that may not continue a trailing assistant message: it would answer it with a
+#: new turn instead, repeating what the caller already has.
+_NO_RESUME = ALL - {Capability.RESUME}
 
 #: What each runtime can serve at all, with the launch flags the platform uses.
 RUNTIME_CAPABILITIES: dict[str, frozenset[Capability]] = {
     "vllm": ALL,
-    "sglang": _CHAT | {Capability.TOOLS, Capability.VISION, Capability.EMBEDDINGS},
+    "sglang": _CHAT
+    | {Capability.TOOLS, Capability.VISION, Capability.EMBEDDINGS, Capability.RESUME},
     # Text Generation Inference: chat and tools; embeddings and reranking are a separate
     # server (TEI).
     "tgi": _CHAT | {Capability.TOOLS, Capability.VISION},
     # llama.cpp's server calls tools only when started with --jinja; declare TOOLS on the
-    # model if yours is.
-    "llamacpp": _CHAT | {Capability.EMBEDDINGS, Capability.RERANK},
-    # Ollama's OpenAI-compatible API has no rerank endpoint.
-    "ollama": _CHAT | {Capability.TOOLS, Capability.VISION, Capability.EMBEDDINGS},
+    # model if yours is. It continues a trailing assistant message by itself.
+    "llamacpp": _CHAT | {Capability.EMBEDDINGS, Capability.RERANK, Capability.RESUME},
+    # Ollama's OpenAI-compatible API has no rerank endpoint; it continues a trailing
+    # assistant message by itself.
+    "ollama": _CHAT
+    | {Capability.TOOLS, Capability.VISION, Capability.EMBEDDINGS, Capability.RESUME},
     # A server the platform points at and knows nothing about: assumed capable of
-    # everything, and narrowed with a per-model declaration.
-    "external": ALL,
+    # everything but resuming (which would repeat text if it isn't), and narrowed or
+    # widened with a per-model declaration.
+    "external": _NO_RESUME,
     "mock": ALL,
 }
 
 #: What a model of each type can do, whatever serves it.
 TYPE_CAPABILITIES: dict[str, frozenset[Capability]] = {
-    "LLM": _CHAT | {Capability.TOOLS},
-    "VISION": _CHAT | {Capability.TOOLS, Capability.VISION},
-    "MULTIMODAL": _CHAT | {Capability.TOOLS, Capability.VISION},
+    "LLM": _CHAT | {Capability.TOOLS, Capability.RESUME},
+    "VISION": _CHAT | {Capability.TOOLS, Capability.VISION, Capability.RESUME},
+    "MULTIMODAL": _CHAT | {Capability.TOOLS, Capability.VISION, Capability.RESUME},
     "EMBEDDING": frozenset({Capability.EMBEDDINGS}),
     "RERANKER": frozenset({Capability.RERANK}),
     # Speech and OCR have their own endpoints, which already route by type.
@@ -76,6 +87,15 @@ DESCRIPTIONS: dict[Capability, str] = {
     Capability.VISION: "image input",
     Capability.EMBEDDINGS: "embeddings",
     Capability.RERANK: "reranking",
+    Capability.RESUME: "resuming a broken stream",
+}
+
+#: E66: request options that make a runtime continue the trailing assistant message
+#: rather than start a new turn after it. Runtimes not listed need none (llama.cpp and
+#: Ollama do it by themselves; an external server declared RESUME is trusted to).
+RESUME_OPTIONS: dict[str, dict[str, bool]] = {
+    "vllm": {"continue_final_message": True, "add_generation_prompt": False},
+    "sglang": {"continue_final_message": True, "add_generation_prompt": False},
 }
 
 
@@ -108,6 +128,11 @@ def effective(
     if declared is None:
         return default_for(runtime, model_type)
     return frozenset(c for c in Capability if c.value in {str(v) for v in declared})
+
+
+def resume_options(runtime: str) -> dict[str, bool]:
+    """What to add to a request continuing a partial answer on ``runtime`` (E66)."""
+    return dict(RESUME_OPTIONS.get(runtime, {}))
 
 
 def ordered(capabilities: Iterable[Capability]) -> list[str]:

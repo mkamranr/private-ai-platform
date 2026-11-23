@@ -1647,6 +1647,7 @@ async function guard(button, action) {
 const CAPABILITIES = [
   ['chat', 'Chat'], ['streaming', 'Streaming'], ['tools', 'Tool calls'],
   ['vision', 'Image input'], ['embeddings', 'Embeddings'], ['rerank', 'Reranking'],
+  ['resume', 'Resume broken streams'],
 ];
 
 function showCapabilities(model) {

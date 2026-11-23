@@ -573,6 +573,10 @@ class GatewaySettings(BaseModel):
     #: E58: other copies of the same model a failed call is retried on, before the alias's
     #: fallback. A stream is retried only if it failed before sending anything.
     replica_retries: int = Field(default=1, ge=0, le=5)
+    #: E66: a stream that breaks after sending text is finished by another copy, which is
+    #: given the text sent so far to continue. That text is held while the stream runs, up
+    #: to this many characters; a longer answer is not resumed. 0 turns resuming off.
+    stream_resume_max_chars: int = Field(default=32_768, ge=0, le=1_000_000)
     #: E12: a daily or monthly token budget raises a WARNING alert at this share of its
     #: limit and a CRITICAL one when it is used up. The gateway refuses at 100% either way;
     #: the alert is the notice before that happens.

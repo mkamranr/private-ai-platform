@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from app.core.capabilities import Capability
 from app.core.interfaces.llm import ChatMessage
 from app.core.logging import get_logger
 from app.services.knowledge import SearchResult
@@ -217,7 +218,8 @@ def answer_prompt(question: str, passages: Sequence[SearchResult]) -> list[ChatM
     ]
 
 
-ProviderFactory = Callable[[str], Awaitable[tuple[Any, str]]]
+#: `GatewayService.provider_for_model`: (model, *, needs=()) -> (provider, served name).
+ProviderFactory = Callable[..., Awaitable[tuple[Any, str]]]
 
 
 @dataclass(slots=True)
@@ -303,7 +305,7 @@ class AnswerQualityService:
     ) -> tuple[Any, float]:
         if self._budget is not None:
             await self._budget(model, charge.team_id)
-        provider, served = await self._provider_factory(model)
+        provider, served = await self._provider_factory(model, needs=(Capability.CHAT,))
         started = time.perf_counter()
         completion = await provider.chat(
             messages, model=served, temperature=temperature, max_tokens=max_tokens

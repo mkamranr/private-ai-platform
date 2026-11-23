@@ -44,6 +44,7 @@ from typing import Any
 
 from app.config.settings import Settings
 from app.core import metrics
+from app.core.capabilities import Capability
 from app.core.interfaces.agent import (
     AgentRuntime,
     AgentSpec,
@@ -153,7 +154,10 @@ class PlatformAgentRuntime(AgentRuntime):
         try:
             # The served name, not `spec.model`: the agent is configured with an alias, and
             # the runtime upstream has never heard of it.
-            provider, served_model = await self._provider_factory(spec.model)
+            # E66: refused before the first model call when the model can't chat, or
+            # can't call tools and the agent has some, rather than failing oddly midway.
+            needs = (Capability.CHAT, Capability.TOOLS) if spec.tools else (Capability.CHAT,)
+            provider, served_model = await self._provider_factory(spec.model, needs=needs)
         except Exception as exc:
             # The agent's model is not serving. A run failure with the reason, not a
             # crash: the operator needs to know it was the model, not the agent.

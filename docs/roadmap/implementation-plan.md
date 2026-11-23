@@ -584,7 +584,15 @@ matrix still listed as missing.
 - [x] Gateway: chat (buffered and streamed) and embeddings refuse a request needing a missing capability with a 400 `capability_unsupported`, before admission, naming the requested model, never the runtime. Image parts are forwarded to a vision model instead of flattened. A runtime fallback lacking the capability is skipped. Internal embedding and rerank calls check too. `/v1/models` lists `capabilities`.
 - [x] Admin: `ModelRead.capabilities` and `effective_capabilities`; `PATCH /models/{id}` takes `capabilities` (audited as a model update). Console: capability checkboxes in the model's Edit dialog.
 - [x] Tests: `tests/api/test_model_capabilities.py`. Docs: [models.md](../models.md#capabilities), api.md.
-- [ ] The declarations are defaults, not probed from the runtime; JSON mode and other request options are not part of the contract (the gateway doesn't forward them).
+- [ ] The declarations are defaults, not probed from the runtime; JSON mode and other request options are not part of the contract (the gateway doesn't forward them). ~~Agent runs don't check tools~~ (E66).
+
+## E66: Resume a stream broken mid-answer; agent runs check capabilities (closes the feature-matrix mid-stream failover gap)
+
+- [x] `GatewayService.stream_chunks` holds the text sent (up to `gateway.stream_resume_max_chars`, default 32,768; runtime setting) and, when a stream breaks after sending some, moves it to another copy (`_switch_replica`, kind `stream_resume`, within `gateway.replica_retries`) with the text as a trailing assistant message, `max_tokens` less the chunks sent, and the runtime's continue options. One stream id, no error event. Not after a tool-call delta, the finish or the usage chunk.
+- [x] Capability `resume` (`app/core/capabilities.py`): vLLM, SGLang, llama.cpp, Ollama and `mock`; not TGI or `external` unless declared. `RESUME_OPTIONS`: `continue_final_message` and `add_generation_prompt: false` for vLLM and SGLang. Console: the checkbox in the model's Edit dialog. No migration.
+- [x] Agent runs ask `provider_for_model` for chat, plus tools when the agent has any, so the run fails before its first model call naming the capability. Workflow LLM steps and the answer-quality judge need chat.
+- [x] Tests: `tests/api/test_stream_resume.py`, `tests/api/test_agent_capabilities.py`. Docs: [gateway-policy.md](../gateway-policy.md#resuming-a-broken-stream), models.md, settings.md.
+- [ ] Same model only (no resuming on an alias's fallback). The broken copy's own usage is lost; the resumed call counts the text so far as prompt. The continuation may not be the words the broken copy would have written. An agent's tools are checked at run time, not when the agent is saved.
 
 ## Phase acceptance (applies to each)
 

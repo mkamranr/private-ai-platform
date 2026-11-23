@@ -146,16 +146,44 @@ page, *Gateway resilience*):
   copies still take turns (per control-plane process) and nothing is refused.
 - **A failed call moves to another copy.** A buffered call that fails is retried on up to
   `gateway.replica_retries` other copies (default 1) before the alias's fallback. A
-  stream is moved only if it failed **before sending anything**: once part of an answer
-  has reached the caller, replaying it elsewhere would send a different answer under the
-  same response, so the stream ends with an `upstream_error` event as before.
+  stream that failed **before sending anything** moves as if nothing had happened. One
+  that already sent part of its answer is **resumed** (below).
 - A retry on another copy is the same call: it is admitted and charged once, and the usage
   record names the copy that answered.
 - `ai_platform_gateway_replica_failovers_total{model,kind}` counts moves (`kind` is
-  `buffered` or `stream`).
+  `buffered`, `stream` or `stream_resume`).
 
-Not built: weights per copy, session affinity (one conversation pinned to one copy for
-prefix caching), and moving a stream that has already sent part of its answer.
+### Resuming a broken stream
+
+When a stream breaks after part of the answer has reached the caller (the copy crashed,
+was restarted, or the connection dropped), replaying the request elsewhere would send a
+second, different answer under the same response. Instead the gateway holds the text sent
+so far and asks another copy of the **same model** to *continue* it: the original messages
+plus that text as a trailing assistant message, with `continue_final_message` (vLLM and
+SGLang; llama.cpp and Ollama continue such a message by themselves). The caller sees one
+answer, under the same stream id, with no error.
+
+- Only when the model can resume ([capability](models.md#capabilities) `resume`: vLLM,
+  SGLang, llama.cpp and Ollama by default; an `external` endpoint only when declared), and
+  only within `gateway.replica_retries`. Not on an alias's fallback: another model would
+  write in another voice.
+- Not after a tool-call delta (half a call can't be continued), the finish, or the usage
+  report has been sent.
+- The text is held up to `gateway.stream_resume_max_chars` characters (default 32,768);
+  a longer answer is not resumed. `0` turns resuming off.
+- The resumed call's `max_tokens` is the caller's less the chunks already sent (runtimes
+  send about one token per chunk).
+- **Usage.** The broken copy never reports its usage. The resumed call reports the text so
+  far as prompt tokens and only the rest as completion tokens, so the total covers the
+  answer but the split leans to prompt.
+- If the copy taking over breaks too, the next one continues, while retries remain; then
+  the stream ends with an `upstream_error` event as before.
+
+The continuation is the same model's, but not necessarily the words the broken copy would
+have written; a sentence can change direction where it resumes.
+
+Not built: weights per copy, and session affinity (one conversation pinned to one copy
+for prefix caching).
 
 ## Fallback aliases
 
@@ -350,5 +378,5 @@ the Usage & Quotas page report percentiles from them:
 - `ai_platform_gateway_circuit_opens_total`
 - `ai_platform_gateway_fallbacks_total{reason}`, where `reason` is `unavailable` or
   `upstream_error`
-- `ai_platform_gateway_replica_failovers_total{model,kind}`, where `kind` is `buffered`
-  or `stream` (E58)
+- `ai_platform_gateway_replica_failovers_total{model,kind}`, where `kind` is `buffered`,
+  `stream` (E58) or `stream_resume` (E66)

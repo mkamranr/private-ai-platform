@@ -33,6 +33,7 @@ from typing import Any, Final
 import httpx
 
 from app.config.settings import Settings
+from app.core.capabilities import Capability
 from app.core.errors import RateLimitError, ValidationError
 from app.core.interfaces.llm import ChatMessage
 from app.core.interfaces.tools import ToolInvocation, ToolType
@@ -60,7 +61,8 @@ MAX_STEPS: Final = 200
 #: Characters of an HTTP response kept in a step's output.
 MAX_HTTP_BODY: Final = 16_000
 
-ProviderFactory = Callable[[str], Awaitable[tuple[Any, str]]]
+#: `GatewayService.provider_for_model`: (model, *, needs=()) -> (provider, served name).
+ProviderFactory = Callable[..., Awaitable[tuple[Any, str]]]
 
 
 class NodeFailedError(Exception):
@@ -451,7 +453,9 @@ class WorkflowEngine:
         rendered = wd.render(config, context)
         await self._require_usable(run, models=[str(rendered["model"])])
         await self._check_budget(run, str(rendered["model"]))
-        provider, served = await self._provider_factory(str(rendered["model"]))
+        provider, served = await self._provider_factory(
+            str(rendered["model"]), needs=(Capability.CHAT,)
+        )
         started = time.perf_counter()
         messages = []
         if rendered.get("system"):
