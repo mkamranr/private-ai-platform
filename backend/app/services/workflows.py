@@ -674,13 +674,7 @@ class WorkflowService:
 
     async def _cancel_tree(self, run: WorkflowRun, reason: str) -> None:
         """Cancel ``run`` and (E71) its unfinished child runs, depth first."""
-        for child in await self._runs.active_children(run.id):
-            await self._cancel_tree(child, "Its parent run was cancelled.")
-        for approval in await self._approvals.pending_for_run(run.id):
-            approval.status = ApprovalStatus.EXPIRED
-        run.status = RunStatus.CANCELLED
-        run.finished_at = dt.datetime.now(dt.UTC)
-        run.error = reason
+        await self._engine.cancel_tree(run, reason)
 
     # ------------------------------------------------------------------ approvals
     async def pending_approvals(self) -> list[WorkflowApproval]:

@@ -120,7 +120,7 @@ draft is checked or published.
 | `approval` | `message`, `details`, `allow_self_approval` | branches `approved` / `rejected` |
 | `delay` | `seconds` (up to a week) | `waited_seconds` |
 | `workflow` | `workflow_id`, `input` | `output` (the sub-workflow run's output), `run_id`. See [Sub-workflows and loops](#sub-workflows-and-loops) |
-| `foreach` | `items`, `workflow_id`, `input` (may use `{{ item }}`, `{{ index }}`), `max_items` | `results` (each run's output, in order), `count`, `run_ids` |
+| `foreach` | `items`, `workflow_id`, `input` (may use `{{ item }}`, `{{ index }}`), `max_items`, `concurrency`, `on_error` | `results` (each run's output, in order), `count`, `run_ids`, `failed`, `errors` |
 | `end` | `output` (empty: the last step's output) | becomes the run's output |
 
 Condition operators are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `not_contains`,
@@ -225,14 +225,19 @@ A **Sub-workflow** step (`workflow`) runs another workflow, and a **For each** s
 ```json
 {"id": "each", "type": "foreach",
  "config": {"items": "{{ nodes.search.passages }}", "workflow_id": "<uuid>",
-            "input": {"text": "{{ item.text }}", "position": "{{ index }}"}, "max_items": 20}}
+            "input": {"text": "{{ item.text }}", "position": "{{ index }}"}, "max_items": 20,
+            "concurrency": 4, "on_error": "continue"}}
 ```
 
 - **A run of its own.** The sub-workflow's published version runs as a separate run, with
   trigger `workflow`, `parent_run_id` and `parent_node_id` set, and the parent's starter
   and permissions. Its steps are in its own trace; the parent's step links to it in the
   console, and the child links back.
-- **One item at a time**, in order. `{{ item }}` and `{{ index }}` are available only in
+- **Items at once.** `concurrency` items run at the same time (1, one after another, when
+  empty; up to 10). Their runs advance side by side, so their model and HTTP calls
+  overlap. When one finishes, the next item starts in its place, even while others wait
+  for an approval. `results` keep the order of `items` whatever order the runs finish in.
+  `{{ item }}` and `{{ index }}` are available only in
   the foreach step's `input`. Without an `input`, each run gets `{"item": <the item>}`.
   `items` must render to a list of at most `max_items` (default 20, up to 100), or the
   step fails.
@@ -240,7 +245,11 @@ A **Sub-workflow** step (`workflow`) runs another workflow, and a **For each** s
   run is `WAITING`. When the child finishes, the parent continues; a foreach then starts
   its next item.
 - **A child that fails** (or is cancelled) fails the step, naming the run, and the step
-  follows its `error` branch if it has one. A foreach stops at the first failed item.
+  follows its `error` branch if it has one. A foreach (`on_error` `stop`, the default)
+  stops at the first failed item and cancels its items still running. With `on_error`
+  `continue` it runs every item and succeeds: a failed item's place in `results` is
+  `null`, `failed` counts them, and `errors` lists each one's `index`, `run_id`, `status`
+  and `error`. A condition on `{{ nodes.each.failed }}` can branch on them.
 - **Cancelling a parent** cancels its unfinished children (and their pending approvals).
 - **Not retried or timed out as a whole**: a retry would start the children again. The
   children's own steps have their own retries and timeouts.
@@ -424,5 +433,5 @@ Workflows take part in team scope ([teams.md](teams.md)):
 - **Canvas niceties**: no zoom, multi-select, copy and paste, or undo (*Discard changes*
   goes back to the saved draft).
 - **Loops inside a workflow.** Repetition is a foreach over a sub-workflow; edges can't
-  go back. Items run one at a time, not in parallel, and a foreach can't carry on past a
-  failed item.
+  go back. Items running at once share one database session, so only their model and
+  HTTP calls overlap (as for parallel branches).

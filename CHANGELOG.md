@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Workflows: parallel For each
+- A *For each* step can run up to 10 items at once (*At once*); results keep the order of the list. When an item finishes, the next one starts in its place, even while others wait for an approval.
+- *When an item fails*: `stop` (the default) fails the step and cancels the items still running; `continue` runs every item and reports the failures in `failed` and `errors`.
+- Fixed: with parallel branches, a step's attempt count or duration could go unrecorded.
+
 ### Workflows: sub-workflows and loops
 - **A workflow can run another.** A *Sub-workflow* step runs a published workflow as a run of its own and passes its output on. A *For each* step runs one once for each item of a list (`{{ item }}` and `{{ index }}` in its input), one item at a time, up to 100 items.
 - A sub-workflow that waits for an approval or a delay leaves its step waiting, and the parent carries on when it finishes. A failed sub-workflow fails the step, which can follow its error branch. Cancelling a run cancels its sub-workflow runs.

@@ -82,6 +82,10 @@ MAX_DELAY_SECONDS: Final = 7 * 24 * 3600
 #: E71: items one foreach step may run, and the default when it doesn't say.
 MAX_ITEMS: Final = 100
 DEFAULT_MAX_ITEMS: Final = 20
+#: E72: items of one foreach step that may run at once.
+MAX_CONCURRENCY: Final = 10
+#: E72: what a foreach does when an item's run fails: fail the step, or carry on.
+ON_ERROR: Final = ("stop", "continue")
 #: E71: how deeply sub-workflows nest. A run started by a trigger is depth 0.
 MAX_DEPTH: Final = 3
 #: E71: step types that start child runs. Not retried or timed out as a whole: a retry
@@ -402,7 +406,7 @@ NODE_SCHEMAS: Final[dict[str, NodeSchema]] = {
                     "Workflow",
                     required=True,
                     required_label="A workflow",
-                    help="Runs its published version once per item, one item at a time.",
+                    help="Runs its published version once per item.",
                     templated=False,
                 ),
                 ConfigField(
@@ -422,8 +426,26 @@ NODE_SCHEMAS: Final[dict[str, NodeSchema]] = {
                     help=f"A longer list fails the step. {DEFAULT_MAX_ITEMS} when empty.",
                     templated=False,
                 ),
+                ConfigField(
+                    "concurrency",
+                    "integer",
+                    "At once",
+                    minimum=1,
+                    maximum=MAX_CONCURRENCY,
+                    help="How many items run at the same time. 1 (one after another) when empty.",
+                    templated=False,
+                ),
+                ConfigField(
+                    "on_error",
+                    "enum",
+                    "When an item fails",
+                    options=ON_ERROR,
+                    help="stop: the step fails and the items still running are cancelled. "
+                    "continue: the step succeeds, with the failures in errors.",
+                    templated=False,
+                ),
             ),
-            outputs=("results", "count", "run_ids"),
+            outputs=("results", "count", "run_ids", "failed", "errors"),
         ),
         NodeSchema(
             "end",

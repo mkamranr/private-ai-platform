@@ -93,7 +93,15 @@ class TestDefinition:
         ident = str(uuid.uuid4())
         assert wd.validate(calls(ident)) == []
         assert wd.validate(loops(ident, input={"n": "{{ item }}", "i": "{{ index }}"})) == []
-        assert wd.node_outputs({"type": "foreach"}) == ("results", "count", "run_ids")
+        assert wd.node_outputs({"type": "foreach"}) == (
+            "results",
+            "count",
+            "run_ids",
+            "failed",
+            "errors",
+        )
+        problems = wd.validate(loops(ident, concurrency=11, on_error="maybe"))
+        assert {p.message.split(" ")[0] for p in problems} >= {"concurrency", "on_error"}
 
     def test_a_workflow_id_is_required_and_an_id(self) -> None:
         messages = [p.message for p in wd.validate(calls("not-an-id"))]
@@ -299,6 +307,113 @@ class TestForEach:
         after = await get_run(client, tokens, builder, result["id"])
         assert after["status"] == RunStatus.SUCCEEDED, after
         assert after["output"] == {"all": [{"refunded": True}, {"refunded": False}]}
+
+
+STRICT = chain(
+    node("start", "start", required_inputs=["needed"]),
+    node("done", "end", output={"echo": "{{ input.needed }}"}),
+)
+
+
+class TestParallel:
+    """E72: several items at once, and carrying on past a failed one."""
+
+    async def test_items_at_once_keep_their_order(self, client, tokens, builder, wf) -> None:
+        child = await published(client, tokens, builder, ECHO)
+        parent = await published(
+            client, tokens, builder, loops(child["id"], input={"n": "{{ item }}"}, concurrency=3)
+        )
+        result = await run(client, tokens, builder, parent["id"], {"list": [1, 2, 3, 4, 5]})
+        assert result["status"] == RunStatus.SUCCEEDED, result
+        assert result["output"] == {"all": [{"echo": n} for n in (1, 2, 3, 4, 5)]}
+        each = result["steps"][-2]["output"]
+        assert each["count"] == 5 and each["failed"] == 0 and each["errors"] == []
+
+    async def test_continue_records_the_failure(self, client, tokens, builder, wf) -> None:
+        child = await published(client, tokens, builder, STRICT)
+        parent = await published(
+            client,
+            tokens,
+            builder,
+            loops(child["id"], input={"needed": "{{ item }}"}, concurrency=2, on_error="continue"),
+        )
+        result = await run(client, tokens, builder, parent["id"], {"list": ["a", "", "c"]})
+        assert result["status"] == RunStatus.SUCCEEDED, result
+        assert result["output"] == {"all": [{"echo": "a"}, None, {"echo": "c"}]}
+        each = result["steps"][-2]["output"]
+        assert each["failed"] == 1
+        (error,) = each["errors"]
+        assert error["index"] == 1 and "Missing required input" in error["error"]
+
+    async def test_stop_fails_the_step_at_the_first_failure(
+        self, client, tokens, builder, wf
+    ) -> None:
+        child = await published(client, tokens, builder, STRICT)
+        parent = await published(
+            client,
+            tokens,
+            builder,
+            loops(child["id"], input={"needed": "{{ item }}"}, concurrency=2),
+        )
+        result = await run(client, tokens, builder, parent["id"], {"list": ["a", "", "c"]})
+        assert result["status"] == RunStatus.FAILED
+        assert "Item 1: the sub-workflow run" in result["error"]
+
+    async def test_paused_items_fill_the_free_slots(
+        self, client, tokens, builder, approver, wf, session
+    ) -> None:
+        child = await published(client, tokens, builder, approval_flow())
+        parent = await published(
+            client,
+            tokens,
+            builder,
+            loops(child["id"], input={"amount": "{{ item }}"}, concurrency=2),
+        )
+        result = await run(client, tokens, builder, parent["id"], {"list": [10, 20, 30]})
+        assert result["status"] == RunStatus.WAITING
+        rows = await children_of(session, result["id"])
+        assert sorted(r.input["amount"] for r in rows) == [10, 20]
+
+        # The second item finishes first; the third starts in its place.
+        second = next(r for r in rows if r.input["amount"] == 20)
+        await decide(
+            client, tokens, approver, str((await pending_approval(session, str(second.id))).id)
+        )
+        rows = await children_of(session, result["id"])
+        assert sorted(r.input["amount"] for r in rows) == [10, 20, 30]
+        assert (await get_run(client, tokens, builder, result["id"]))["status"] == RunStatus.WAITING
+
+        for amount, approved in ((30, False), (10, True)):
+            row = next(r for r in rows if r.input["amount"] == amount)
+            approval = await pending_approval(session, str(row.id))
+            await decide(client, tokens, approver, str(approval.id), approved=approved)
+        after = await get_run(client, tokens, builder, result["id"])
+        assert after["status"] == RunStatus.SUCCEEDED, after
+        assert after["output"] == {
+            "all": [{"refunded": True}, {"refunded": True}, {"refunded": False}]
+        }
+
+    async def test_a_failed_item_cancels_the_others(
+        self, client, tokens, builder, wf, session
+    ) -> None:
+        child = await published(client, tokens, builder, approval_flow())
+        parent = await published(
+            client,
+            tokens,
+            builder,
+            loops(child["id"], input={"amount": "{{ item }}"}, concurrency=2),
+        )
+        result = await run(client, tokens, builder, parent["id"], {"list": [10, 20]})
+        rows = await children_of(session, result["id"])
+        first = next(r for r in rows if r.input["amount"] == 10)
+        response = await client.post(
+            f"/api/v1/workflow-runs/{first.id}/cancel", headers=auth_header(tokens, builder)
+        )
+        assert response.status_code == 200, response.text
+        after = await get_run(client, tokens, builder, result["id"])
+        assert after["status"] == RunStatus.FAILED and "Item 0" in after["error"]
+        other = next(r for r in await children_of(session, result["id"]) if r.input["amount"] == 20)
+        assert other.status == RunStatus.CANCELLED and "foreach failed" in other.error
 
 
 class TestCancel:
