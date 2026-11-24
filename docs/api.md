@@ -587,6 +587,9 @@ Under `/api/v1`, authenticated with the platform JWT. See [backends.md](backends
 | DELETE | `/backends/{id}` | `backend.manage` — linked models keep working, `backend_id` becomes null |
 | POST | `/backends/{id}/test` | `backend.manage` — live check; updates status and raises/clears the alert |
 | GET | `/backends/{id}/models` | `backend.view` — models the server reports right now |
+| GET | `/backends/{id}/metrics` | `backend.view` — its load now as it reports it (`{fetched_at, values, models}`); vLLM and Ollama. See [backends.md](backends.md#load-and-loading-models) |
+| POST | `/backends/{id}/models/load` | `backend.manage` — `{model}`: Ollama loads a model it has and keeps it in memory. Audited |
+| POST | `/backends/{id}/models/unload` | `backend.manage` — `{model}`: Ollama unloads it from memory. Audited |
 | POST | `/backends/{id}/models/register` | `model.register` **and** `backend.manage` |
 | GET | `/alerts` | `alert.view` — filters `state`, `open`, `severity` |
 | GET | `/alerts/summary` | `alert.view` — open counts by severity |

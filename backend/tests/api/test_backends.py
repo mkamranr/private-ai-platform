@@ -106,7 +106,14 @@ class TestRegistry:
         assert created["status"] == "UNKNOWN"
         assert created["has_api_key"] is True
         assert "api_key" not in created and "api_key_encrypted" not in created
-        assert set(created["capabilities"]) == {"health", "list_models", "version"}
+        assert set(created["capabilities"]) == {
+            "health",
+            "list_models",
+            "version",
+            "metrics",
+            "deploy",
+            "stop",
+        }
 
         row = await session.get(InferenceBackend, uuid.UUID(str(created["id"])))
         assert row is not None

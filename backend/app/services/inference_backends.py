@@ -10,12 +10,15 @@ external model would be (runtime ``ollama`` or ``external``, an ``endpoint_url``
 ``backend_id`` recording where it came from. The gateway, deployment state machine and
 agents see an ordinary catalogue entry and need no change.
 
-**One known limit, stated rather than hidden.** The gateway attaches a credential in one
-place (`GatewayService._provider`) and only for the configured external provider. So a
-backend's own API key is used here — test, discovery, health — but not yet for inference
-through the gateway. Registering models from a backend that needs a key is therefore
-refused with that explanation, instead of producing catalogue entries that would fail on
-first use. Wiring backend credentials into the gateway is expansion phase E2.
+A backend's own API key is used here (test, discovery, health, metrics) and, since E2,
+by the gateway for inference to the models discovered on it.
+
+E76: adapters do more than list. vLLM reports its load from Prometheus ``/metrics``
+(requests running and waiting, KV-cache use, tokens so far, per model). Ollama reports
+the models in memory (``/api/ps``) and can **load** a model it already has and keep it
+there, or **unload** it (``/api/generate`` with ``keep_alive``). Nothing is ever pulled
+from the Internet: a model must already be on the backend. vLLM serves the one model it
+was started with, so it can't load or unload.
 """
 
 from __future__ import annotations
@@ -30,9 +33,11 @@ import httpx
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.interfaces.inference_backend import (
     BackendCapability,
+    BackendMetrics,
     ConnectionResult,
     DiscoveredModel,
     InferenceBackendAdapter,
+    UnsupportedBackendOperationError,
 )
 from app.core.logging import get_logger
 from app.core.security import SecretCipher
@@ -171,22 +176,147 @@ class _HttpAdapter(InferenceBackendAdapter):
         )
 
 
+class ModelNotOnBackendError(Exception):
+    """E76: the backend doesn't have the model asked for (it is never pulled for you)."""
+
+
+#: E76: vLLM's Prometheus series, and what they are called here. Gauges and counters are
+#: summed across label sets except the cache share, which is averaged.
+_VLLM_SERIES: dict[str, str] = {
+    "vllm:num_requests_running": "requests_running",
+    "vllm:num_requests_waiting": "requests_waiting",
+    "vllm:gpu_cache_usage_perc": "kv_cache_usage_percent",
+    "vllm:kv_cache_usage_perc": "kv_cache_usage_percent",
+    "vllm:prompt_tokens_total": "prompt_tokens_total",
+    "vllm:generation_tokens_total": "generation_tokens_total",
+    "vllm:num_preemptions_total": "preemptions_total",
+}
+_AVERAGED = frozenset({"kv_cache_usage_percent"})
+
+
+def parse_prometheus(text: str) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+    """E76: vLLM's ``/metrics`` to backend-wide values and values per ``model_name``."""
+    totals: dict[str, list[float]] = {}
+    per_model: dict[str, dict[str, list[float]]] = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        head, _, value = line.rpartition(" ")
+        name, _, labels = head.partition("{")
+        key = _VLLM_SERIES.get(name.strip())
+        if key is None:
+            continue
+        try:
+            number = float(value)
+        except ValueError:
+            continue
+        if key in _AVERAGED:
+            number *= 100  # vLLM reports a fraction
+        totals.setdefault(key, []).append(number)
+        model = None
+        for pair in labels.rstrip("}").split(","):
+            label, _, quoted = pair.partition("=")
+            if label.strip() == "model_name":
+                model = quoted.strip().strip('"')
+        if model:
+            per_model.setdefault(model, {}).setdefault(key, []).append(number)
+
+    def fold(found: dict[str, list[float]]) -> dict[str, float]:
+        return {
+            k: round(sum(v) / len(v) if k in _AVERAGED else sum(v), 2) for k, v in found.items()
+        }
+
+    return fold(totals), {model: fold(found) for model, found in per_model.items()}
+
+
 class VllmAdapter(_HttpAdapter):
     backend_type = BackendType.VLLM
     capabilities = frozenset(
-        {BackendCapability.LIST_MODELS, BackendCapability.VERSION, BackendCapability.HEALTH}
+        {
+            BackendCapability.LIST_MODELS,
+            BackendCapability.VERSION,
+            BackendCapability.HEALTH,
+            BackendCapability.METRICS,
+        }
     )
     models_path = "/v1/models"
     version_path = "/version"
+
+    async def metrics(self) -> BackendMetrics:
+        async with self._client() as client:
+            response = await client.get("/metrics")
+            response.raise_for_status()
+        values, per_model = parse_prometheus(response.text)
+        return BackendMetrics(
+            fetched_at=dt.datetime.now(dt.UTC),
+            values=values,
+            models=[{"name": name, **found} for name, found in sorted(per_model.items())],
+        )
 
 
 class OllamaAdapter(_HttpAdapter):
     backend_type = BackendType.OLLAMA
     capabilities = frozenset(
-        {BackendCapability.LIST_MODELS, BackendCapability.VERSION, BackendCapability.HEALTH}
+        {
+            BackendCapability.LIST_MODELS,
+            BackendCapability.VERSION,
+            BackendCapability.HEALTH,
+            BackendCapability.METRICS,
+            BackendCapability.DEPLOY,
+            BackendCapability.STOP,
+        }
     )
     models_path = "/api/tags"
     version_path = "/api/version"
+    #: Loading a large model from disk takes a while.
+    load_timeout_seconds: ClassVar[float] = 300.0
+
+    async def metrics(self) -> BackendMetrics:
+        """The models in memory (``/api/ps``)."""
+        async with self._client() as client:
+            payload = await self._get_json(client, "/api/ps")
+        rows = payload.get("models") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("expected an object with a 'models' list")
+        models = [
+            {
+                "name": str(row.get("name") or row.get("model")),
+                "size_bytes": row.get("size"),
+                "vram_bytes": row.get("size_vram"),
+                "expires_at": row.get("expires_at"),
+            }
+            for row in rows
+            if isinstance(row, dict) and (row.get("name") or row.get("model"))
+        ]
+        return BackendMetrics(
+            fetched_at=dt.datetime.now(dt.UTC),
+            values={
+                "models_loaded": float(len(models)),
+                "vram_bytes": float(sum(int(m["vram_bytes"] or 0) for m in models)),
+            },
+            models=models,
+        )
+
+    async def _keep_alive(self, name: str, keep_alive: int) -> None:
+        # A generate request with no prompt loads (or, at 0, unloads) the model and
+        # answers at once; nothing is generated.
+        async with self._client() as client:
+            response = await client.post(
+                "/api/generate",
+                json={"model": name, "keep_alive": keep_alive},
+                timeout=self.load_timeout_seconds,
+            )
+            if response.status_code == 404:
+                raise ModelNotOnBackendError(
+                    f"{name!r} is not on this Ollama; pull it there first."
+                )
+            response.raise_for_status()
+
+    async def load_model(self, name: str) -> None:
+        await self._keep_alive(name, -1)
+
+    async def unload_model(self, name: str) -> None:
+        await self._keep_alive(name, 0)
 
     def _parse_models(self, payload: Any) -> list[DiscoveredModel]:
         """Ollama shape: ``{"models": [{"name": "llama3.2:latest", "details": {...}}]}``."""
@@ -500,6 +630,54 @@ class InferenceBackendService:
         return results
 
     # -- discovery -------------------------------------------------------------
+    async def metrics(self, backend_id: uuid.UUID) -> BackendMetrics:
+        """E76: the backend's load now, from the backend itself."""
+        backend = await self.get(backend_id)
+        try:
+            return await self.adapter_for(backend).metrics()
+        except UnsupportedBackendOperationError as exc:
+            raise ValidationError(f"'{backend.name}': {exc}") from exc
+        except Exception as exc:
+            raise ValidationError(
+                f"Could not read metrics from '{backend.name}': {_describe_error(exc)}",
+                details={"backend_id": str(backend_id)},
+            ) from exc
+
+    async def set_loaded(
+        self, backend_id: uuid.UUID, model: str, *, loaded: bool, actor: User
+    ) -> None:
+        """E76: load a model the backend already has into memory and keep it there, or
+        unload it. Audited."""
+        backend = await self.get(backend_id)
+        if not backend.enabled:
+            raise ConflictError(f"'{backend.name}' is disabled.")
+        adapter = self.adapter_for(backend)
+        try:
+            if loaded:
+                await adapter.load_model(model)
+            else:
+                await adapter.unload_model(model)
+        except UnsupportedBackendOperationError as exc:
+            raise ValidationError(f"'{backend.name}': {exc}") from exc
+        except ModelNotOnBackendError as exc:
+            raise ValidationError(
+                f"'{backend.name}': {exc}", details={"backend_id": str(backend_id), "model": model}
+            ) from exc
+        except Exception as exc:
+            raise ValidationError(
+                f"Could not {'load' if loaded else 'unload'} {model!r} on '{backend.name}': "
+                f"{_describe_error(exc)}",
+                details={"backend_id": str(backend_id), "model": model},
+            ) from exc
+        await self._audit.record(
+            AuditAction.BACKEND_MODEL_LOADED if loaded else AuditAction.BACKEND_MODEL_UNLOADED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="inference_backend",
+            resource_id=str(backend_id),
+            metadata={"name": backend.name, "model": model},
+        )
+
     async def discover(self, backend_id: uuid.UUID) -> list[DiscoveredModel]:
         backend = await self.get(backend_id)
         try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, status
@@ -11,11 +12,13 @@ from app.api.deps import InferenceBackendServiceDep, ModelRegistryDep, require_p
 from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
-from app.schemas.common import Page
+from app.schemas.common import MessageResponse, Page
 from app.schemas.operations import (
     BackendCreateRequest,
     BackendDeletedResponse,
     BackendDetail,
+    BackendMetricsRead,
+    BackendModelAction,
     BackendRead,
     BackendUpdateRequest,
     ConnectionTestResponse,
@@ -168,6 +171,54 @@ async def discover_models(
             )
         )
     return rows
+
+
+@router.get(
+    "/{backend_id}/metrics",
+    response_model=BackendMetricsRead,
+    summary="The backend's load now, as it reports it",
+)
+async def backend_metrics(
+    service: InferenceBackendServiceDep,
+    _actor: Annotated[User, require_permission(Perm.BACKEND_VIEW)],
+    backend_id: uuid.UUID = Path(...),
+) -> BackendMetricsRead:
+    """E76: vLLM's requests, KV cache and tokens (from ``/metrics``); Ollama's models in
+    memory (``/api/ps``). 422 for a type that reports none, or an unreachable backend."""
+    return BackendMetricsRead(**asdict(await service.metrics(backend_id)))
+
+
+@router.post(
+    "/{backend_id}/models/load",
+    response_model=MessageResponse,
+    summary="Load a model the backend has and keep it in memory",
+)
+async def load_backend_model(
+    payload: BackendModelAction,
+    service: InferenceBackendServiceDep,
+    actor: Annotated[User, require_permission(Perm.BACKEND_MANAGE)],
+    backend_id: uuid.UUID = Path(...),
+) -> MessageResponse:
+    """E76: Ollama only. The model must already be on the backend; nothing is pulled."""
+    await service.set_loaded(backend_id, payload.model, loaded=True, actor=actor)
+    return MessageResponse(message=f"{payload.model} is loaded and kept in memory.")
+
+
+@router.post(
+    "/{backend_id}/models/unload",
+    response_model=MessageResponse,
+    summary="Unload a model from the backend's memory",
+)
+async def unload_backend_model(
+    payload: BackendModelAction,
+    service: InferenceBackendServiceDep,
+    actor: Annotated[User, require_permission(Perm.BACKEND_MANAGE)],
+    backend_id: uuid.UUID = Path(...),
+) -> MessageResponse:
+    """E76: Ollama only. It stays on the backend's disk and loads again on its next
+    request."""
+    await service.set_loaded(backend_id, payload.model, loaded=False, actor=actor)
+    return MessageResponse(message=f"{payload.model} is unloaded.")
 
 
 @router.post(
