@@ -2084,6 +2084,10 @@ function deploymentRow(deployment) {
     <td>
       <div class="fw-medium">${esc(deployment.model_name)}</div>
       <div class="small text-secondary mono">${esc(deployment.id.slice(0, 8))}</div>
+      ${deployment.traffic_weight != null && deployment.traffic_weight !== 100
+        ? `<div class="small"><span class="badge ${deployment.traffic_weight ? 'text-bg-warning' : 'text-bg-secondary'}"
+            title="Its share of new calls relative to the model's other copies">${
+            deployment.traffic_weight ? `traffic ${deployment.traffic_weight}` : 'no new calls'}</span></div>` : ''}
       ${deployment.replaces_id ? `<div class="small"><span class="badge text-bg-info">new copy</span>
         takes over from <span class="mono">${esc(deployment.replaces_id.slice(0, 8))}</span>
         once healthy</div>` : ''}
@@ -2261,6 +2265,18 @@ async function renderRevisions() {
   const manage = can('model.deploy');
   document.getElementById('revision-form').classList.toggle('d-none', !manage);
   await renderRolloutStatus();
+  // E77: this copy's share of traffic.
+  const copy = await api(`/deployments/${deploymentId}`).catch(() => null);
+  const weight = document.getElementById('rev-weight');
+  weight.value = copy?.traffic_weight ?? 100;
+  document.getElementById('rev-weight-set').onclick = (event) => guard(event.target, async () => {
+    const updated = await api(`/deployments/${deploymentId}/traffic-weight`, {
+      method: 'PUT', body: JSON.stringify({ traffic_weight: Number(weight.value) }),
+    });
+    alert(`This copy now takes ${updated.traffic_weight
+      ? `a share of ${updated.traffic_weight}` : 'no new calls while another copy can'}.`, 'success');
+    if (currentPage === 'deployments') await renderDeployments();
+  });
 
   document.getElementById('revisions-body').innerHTML = `
     <div class="table-responsive">
@@ -2307,10 +2323,17 @@ async function renderRolloutStatus() {
   const rollout = await api(`/models/${modelId}/rollout`).catch(() => null);
   if (!rollout) return;
   const total = rollout.deployment_ids.length;
+  const canary = rollout.canary || {};
+  const watching = canary.state === 'watching'
+    ? ` The first revised copy (<span class="mono">${esc(String(canary.deployment_id).slice(0, 8))}</span>)
+        takes ${esc(canary.percent)}% of calls until ${esc(new Date(canary.until).toLocaleTimeString())};
+        the others wait.` : '';
+  const passed = canary.state === 'passed'
+    ? ` Canary passed: ${esc(canary.errors)} of ${esc(canary.calls)} calls failed.` : '';
   if (rollout.state === 'RUNNING') {
     host.innerHTML = `<div class="alert alert-info py-2 small d-flex align-items-center gap-2">
       <span><b>Rolling out</b> to every copy: ${rollout.done_count} of ${total} done.
-        Each copy is changed once the one before it is healthy again.</span>
+        Each copy is changed once the one before it is healthy again.${watching}${passed}</span>
       ${can('model.deploy') ? '<button type="button" class="btn btn-sm btn-outline-danger ms-auto py-0" id="rollout-cancel">Cancel</button>' : ''}
     </div>`;
     document.getElementById('rollout-cancel')?.addEventListener('click', (event) =>
@@ -2337,11 +2360,20 @@ onModalSubmit('revision-form', 'revision-error', async (form) => {
     change_note: field('rev-note') || null,
   };
   if (document.getElementById('rev-all-copies').checked && modal.dataset.model) {
+    // E77: an optional canary: the first copy on a share of real calls before the rest.
+    const percent = numberField('rev-canary-percent');
+    const canary = percent ? {
+      canary_percent: percent,
+      canary_minutes: numberField('rev-canary-minutes') || 15,
+      canary_max_error_percent: numberField('rev-canary-errors') ?? 1,
+    } : {};
     const rollout = await api(`/models/${modal.dataset.model}/rollout`, {
-      method: 'POST', body: JSON.stringify(change),
+      method: 'POST', body: JSON.stringify({ ...change, ...canary }),
     });
     form.reset();
-    alert(`Rolling out to ${rollout.deployment_ids.length} copies, one at a time.`, 'success');
+    alert(`Rolling out to ${rollout.deployment_ids.length} copies, one at a time` +
+      (rollout.canary ? `, the first on ${rollout.canary.percent}% of calls for ` +
+        `${rollout.canary.minutes} minutes before the rest.` : '.'), 'success');
   } else {
     const revision = await api(`/deployments/${deploymentId}/revisions`, {
       method: 'POST',

@@ -64,6 +64,7 @@ from app.schemas.models_registry import (
     OllamaImportResponse,
     RolloutRead,
     RolloutRequest,
+    TrafficWeightRequest,
     UsageSummaryResponse,
     UsageSummaryRow,
 )
@@ -491,6 +492,36 @@ async def stop_deployment(
     return DeploymentRead.model_validate(await service.stop_deployment(deployment_id, actor=actor))
 
 
+@router.put(
+    "/deployments/{deployment_id}/traffic-weight",
+    response_model=DeploymentRead,
+    summary="Set a copy's share of the model's new calls",
+)
+async def set_traffic_weight(
+    payload: TrafficWeightRequest,
+    service: DeploymentServiceDep,
+    audit: AuditDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
+    deployment_id: uuid.UUID = Path(...),
+) -> DeploymentRead:
+    """E77: relative to the model's other copies; 0 takes no new calls while another copy
+    can. For a manual canary: give a revised copy a small share, then raise it."""
+    await guard.deployment(deployment_id)
+    deployment = await service.get_deployment(deployment_id)
+    before = deployment.traffic_weight
+    deployment.traffic_weight = payload.traffic_weight
+    await audit.record(
+        AuditAction.DEPLOYMENT_TRAFFIC_WEIGHT_CHANGED,
+        user_id=actor.id,
+        username=actor.username,
+        resource_type="deployment",
+        resource_id=str(deployment_id),
+        metadata={"traffic_weight": {"from": before, "to": payload.traffic_weight}},
+    )
+    return DeploymentRead.model_validate(deployment)
+
+
 @router.post(
     "/deployments/{deployment_id}/restart",
     response_model=DeploymentRead,
@@ -776,6 +807,7 @@ async def start_rollout(
             change_note=payload.change_note,
         ),
         actor=actor,
+        canary=payload.canary(),
     )
     return RolloutRead.model_validate(rollout)
 

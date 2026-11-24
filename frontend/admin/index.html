@@ -2451,6 +2451,26 @@
                 <label class="form-check-label small" for="rev-all-copies">Every copy, one at a time</label>
               </div>
             </div>
+            <div class="col-12 d-flex flex-wrap align-items-center gap-2 small" id="rev-canary-row">
+              <span class="text-secondary" title="Every copy, one at a time only">Canary first:</span>
+              <input class="form-control form-control-sm" id="rev-canary-percent" type="number"
+                     min="1" max="99" placeholder="off" style="width:5rem"
+                     title="The first revised copy gets this share (%) of new calls; blank for no canary">
+              <span>% of calls for</span>
+              <input class="form-control form-control-sm" id="rev-canary-minutes" type="number"
+                     min="1" max="1440" placeholder="15" style="width:5rem">
+              <span>minutes; stop if more than</span>
+              <input class="form-control form-control-sm" id="rev-canary-errors" type="number"
+                     min="0" max="100" step="0.1" placeholder="1" style="width:5rem">
+              <span>% fail</span>
+            </div>
+            <div class="col-12 d-flex flex-wrap align-items-center gap-2 small">
+              <span class="text-secondary"
+                    title="Relative to the model's other copies. 0 takes no new calls while another copy can.">This copy's share of traffic:</span>
+              <input class="form-control form-control-sm" id="rev-weight" type="number" min="0" max="100"
+                     style="width:5rem">
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="rev-weight-set">Set</button>
+            </div>
             <div class="col-12 small text-secondary">
               Automatic: with other copies running, this one restarts while they serve; as the
               only copy, a new copy starts on free GPUs and takes over once healthy; without
