@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Canary rollouts and weighted copies
+- **A rollout can try its change on a share of real calls first.** *Canary first* under *Every copy, one at a time*: the first revised copy takes, say, 10% of calls for 15 minutes; if more than the error limit of them fail, the rollout stops there and that copy takes no new calls. Otherwise the other copies follow. Needs two copies or more.
+- **Each copy has a share of traffic** (*This copy's share of traffic* in the Revisions dialog, 0–100). 0 drains a copy while keeping it as a fallback.
+- **Upgrade.** Migration `b6e8a0c2d4f5`. Existing copies get a share of 100, so calls spread as before.
+
 ### Inference backends: their load, and loading Ollama models
 - *Models* on a backend's tile shows its load: vLLM's requests running and waiting, KV-cache use and tokens; Ollama's models in memory and the GPU memory they use.
 - **Ollama models can be loaded and unloaded** from there: *Load* keeps a model it already has in memory, *Unload* frees it. Nothing is downloaded; audited.

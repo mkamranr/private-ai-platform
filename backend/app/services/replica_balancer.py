@@ -69,6 +69,11 @@ def _turn_key(model_id: uuid.UUID) -> str:
     return f"gw:turn:{model_id}"
 
 
+def _weight(deployment: object) -> int:
+    value = getattr(deployment, "traffic_weight", 100)
+    return max(0, int(value if value is not None else 100))
+
+
 class ReplicaBalancer:
     def __init__(self, redis: Any, lease_seconds: int, strategy: str = "least_busy") -> None:
         self._redis = redis
@@ -83,6 +88,11 @@ class ReplicaBalancer:
             return list(deployments)
         turn = await self._turn(model_id)
         offset = turn % len(candidates)
+        # E77: copies given different shares of the traffic are spread by share, under
+        # either strategy (a canary must get its share, not an equal turn).
+        weights = {d.id: _weight(d) for d in candidates}
+        if len(set(weights.values())) > 1:
+            return self._weighted(turn, candidates, weights)
         rotated = candidates[offset:] + candidates[:offset]
         if self._strategy == "round_robin":
             return rotated
@@ -91,6 +101,25 @@ class ReplicaBalancer:
             return rotated
         # Stable sort: equally busy copies keep their rotated order, so they take turns.
         return sorted(rotated, key=lambda d: busy.get(d.id, 0))
+
+    @staticmethod
+    def _weighted[T: _HasId](turn: int, candidates: list[T], weights: dict) -> list[T]:
+        """E77: copies with different traffic weights. Each turn picks the first copy in
+        proportion to its weight (a smooth deterministic spread: turn ``n`` lands at
+        ``n * golden ratio`` along the cumulative weights); the rest follow by weight,
+        and copies at weight 0 come last, as failover only."""
+        total = sum(weights.values())
+        if total <= 0:
+            return candidates
+        point = (turn * 0.6180339887498949 % 1.0) * total
+        chosen = next(c for c in reversed(candidates) if weights[c.id] > 0)
+        for candidate in candidates:
+            point -= weights[candidate.id]
+            if point < 0 and weights[candidate.id] > 0:
+                chosen = candidate
+                break
+        rest = sorted((c for c in candidates if c is not chosen), key=lambda c: -weights[c.id])
+        return [chosen, *rest]
 
     async def acquire(self, deployment_id: uuid.UUID) -> ReplicaLease | None:
         """Count a call against a deployment until ``release``. None when Valkey is down:

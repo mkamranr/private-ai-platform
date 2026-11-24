@@ -343,6 +343,12 @@ class ModelDeployment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     healthy_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     stopped_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
+    #: E77: this copy's share of new calls relative to the model's other copies, 0 to
+    #: 100. 0 takes no new calls while another copy can (it is still tried when the
+    #: others fail). A canary rollout sets it on the copy under watch.
+    traffic_weight: Mapped[int] = mapped_column(
+        Integer, default=100, server_default="100", nullable=False
+    )
     #: E61: set on a *new copy* started to take over this deployment's work without
     #: downtime (blue/green). When it is healthy its container moves into the original
     #: row, which keeps its id and revision history, and this row is removed.
@@ -664,6 +670,11 @@ class DeploymentRollout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     progress: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     current_deployment_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
     done_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: E77: watch the first revised copy on a share of real traffic before the rest:
+    #: ``percent``, ``minutes``, ``max_error_percent``, then what happened (``state``
+    #: watching / passed / failed, ``deployment_id``, ``started_at``, ``until``,
+    #: ``calls``, ``errors``). Null: no canary.
+    canary: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")

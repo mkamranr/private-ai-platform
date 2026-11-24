@@ -257,6 +257,8 @@ class DeploymentRead(ORMModel):
     current_revision: int = 1
     #: E61: set on a new copy taking over from that deployment once it is healthy.
     replaces_id: uuid.UUID | None = None
+    #: E77: share of new calls relative to the model's other copies (0 to 100).
+    traffic_weight: int = 100
     error_message: str | None = None
     started_at: dt.datetime | None = None
     healthy_at: dt.datetime | None = None
@@ -397,6 +399,26 @@ class RolloutRequest(BaseModel):
     max_model_len: int | None = Field(default=None, ge=1)
     gpu_memory_utilization: float | None = Field(default=None, gt=0.0, le=1.0)
     change_note: str | None = Field(default=None, max_length=2000)
+    #: E77: watch the first copy on this share of new calls before the rest (null: none).
+    canary_percent: int | None = Field(default=None, ge=1, le=99)
+    canary_minutes: int = Field(default=15, ge=1, le=1440)
+    #: More failed calls (5xx) than this share stops the rollout at the canary.
+    canary_max_error_percent: float = Field(default=1.0, ge=0.0, le=100.0)
+
+    def canary(self) -> dict[str, Any] | None:
+        if self.canary_percent is None:
+            return None
+        return {
+            "percent": self.canary_percent,
+            "minutes": self.canary_minutes,
+            "max_error_percent": self.canary_max_error_percent,
+        }
+
+
+class TrafficWeightRequest(BaseModel):
+    """E77: a copy's share of new calls relative to the model's other copies."""
+
+    traffic_weight: int = Field(ge=0, le=100)
 
 
 class RolloutRead(ORMModel):
@@ -411,6 +433,8 @@ class RolloutRead(ORMModel):
     progress: dict[str, int | None]
     current_deployment_id: uuid.UUID | None = None
     done_count: int
+    #: E77: the canary's settings and what happened.
+    canary: dict[str, Any] | None = None
     error: str | None = None
     created_by: uuid.UUID | None = None
     created_at: dt.datetime

@@ -549,7 +549,7 @@ matrix still listed as missing.
 - [x] `deployment_rollouts` and `services/deployment_rollout.py`: every running copy checked up front, then revised in turn with `auto`, each once the previous is healthy at its new revision; a failure stops it. `POST/GET/DELETE /models/{id}/rollout`; audit `DEPLOYMENT_ROLLOUT_STARTED`/`_FINISHED`. Migration `e5a7c9b1d3f4`.
 - [x] Console: strategy choice and *Every copy, one at a time* in the Revisions dialog, rollout progress with Cancel, a *new copy* badge on a copy taking over.
 - [x] Tests: `tests/api/test_zero_downtime_revisions.py` (strategies, handover, failed copy, stuck old container, GPU placement and release, rollouts). Docs: [model-governance.md](../model-governance.md#without-downtime), api.md.
-- [ ] No weighted or gradual traffic shift: the switch happens when the new copy is healthy. Health is the runtime's readiness check, not a canary of real traffic. A rollout runs one copy at a time, never several. External runtimes are not managed, so not revised.
+- [ ] ~~No weighted or gradual traffic shift~~ (E77): the switch happens when the new copy is healthy. Health is the runtime's readiness check, not a canary of real traffic. A rollout runs one copy at a time, never several. External runtimes are not managed, so not revised.
 
 ## E62: Answer faithfulness and question history (closes the feature-matrix judge and history gap)
 
@@ -674,6 +674,14 @@ matrix still listed as missing.
 - [x] `GET /backends/{id}/metrics` (`backend.view`), `POST /backends/{id}/models/load|unload` (`backend.manage`, audited `BACKEND_MODEL_LOADED` / `BACKEND_MODEL_UNLOADED`).
 - [x] Console: the backend's load above its model list, and *Load* / *Unload* per Ollama model. Checked in Chromium. Tests: `tests/api/test_backend_operations.py`. Docs: [backends.md](../backends.md#load-and-loading-models), api.md.
 - [ ] Load is read when asked: no history, no alert. Models are never pulled onto a backend; vLLM can't change the model it serves.
+
+## E77: Weighted copies and canary rollouts
+
+- [x] `model_deployments.traffic_weight` (0–100, default 100) and `deployment_rollouts.canary` (migration `b6e8a0c2d4f5`). `ReplicaBalancer.order`: with unequal weights, under either strategy, the first copy is picked in proportion to its weight (turn × golden ratio along the cumulative weights); weight 0 goes last, failover only.
+- [x] `RolloutService.start(canary=)` (two copies at least). `_canary` sets the first revised copy's weight to `percent` and holds the rollout for `minutes`, then counts its usage records since (5xx share): over `max_error_percent` fails the rollout and sets it to 0, else back to 100 and the rest follow. Cancel during the watch restores 100.
+- [x] `PUT /deployments/{id}/traffic-weight` (`model.deploy`, audited `DEPLOYMENT_TRAFFIC_WEIGHT_CHANGED`); `RolloutRequest.canary_*`; `RolloutRead.canary`; `DeploymentRead.traffic_weight`.
+- [x] Console: *Canary first* fields, the watch in the rollout status, *This copy's share of traffic*, and a badge on the Deployments page. Checked in Chromium. Tests: `tests/api/test_canary_rollouts.py`. Docs: [model-governance.md](../model-governance.md#a-canary-first), api.md.
+- [ ] One canary copy, judged on 5xx share only (not latency or answer quality); weights are per copy, not per revision.
 
 ## Phase acceptance (applies to each)
 

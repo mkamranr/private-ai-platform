@@ -665,7 +665,8 @@ Under `/api/v1`, authenticated with the platform JWT. See
 | GET | `/deployments/{id}/revisions` | `model.view` — newest first, `current` marks the applied one |
 | POST | `/deployments/{id}/revisions` | `model.deploy` — `image`, `tensor_parallel_size`, `max_model_len`, `gpu_memory_utilization`, `change_note`, `strategy` (`auto`/`in_place`/`blue_green`); **202**. The response adds `strategy`, `downtime`, `message` and, for a new copy, `successor_id` (`current` is false until it takes over) |
 | POST | `/deployments/{id}/rollback` | `model.deploy` — `revision`, optional `change_note`, `strategy`; appends a copy; **202** |
-| POST | `/models/{id}/rollout` | `model.deploy` — the same settings as a revision; revises every running copy in turn; **202**. 422 if a copy can't take the change, 409 while one runs |
+| POST | `/models/{id}/rollout` | `model.deploy` — the same settings as a revision; revises every running copy in turn; **202**. 422 if a copy can't take the change, 409 while one runs. Optional canary: `canary_percent` (1–99), `canary_minutes` (default 15), `canary_max_error_percent` (default 1); needs two copies. See [model-governance.md](model-governance.md#a-canary-first) |
+| PUT | `/deployments/{id}/traffic-weight` | `model.deploy` — `{traffic_weight}` 0–100, the copy's share of the model's new calls; 0 is failover only. Audited |
 | GET | `/models/{id}/rollout` | `model.view` — the running rollout, else the latest; `null` if none |
 | DELETE | `/models/{id}/rollout` | `model.deploy` — cancel before the next copy; 404 if none is running |
 | GET | `/deployments/{id}/logs/stream` | `model.view` — `text/event-stream`: `lines` events, then `end` |

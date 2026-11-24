@@ -15,12 +15,23 @@ Rolling on regardless would take the whole model down for a bad image.
 
 **Driven by the deployment worker**, one step per pass, with the rollout's state in the
 database, so a control-plane restart resumes it.
+
+**A canary first (E77).** With ``canary``, the first copy, once revised and healthy, gets
+``percent`` of the model's new calls (its ``traffic_weight``) for ``minutes``. Then its
+calls in that time are counted from the usage records: if more than
+``max_error_percent`` of them failed (a 5xx), the rollout stops there and the copy is set
+to take no new calls (weight 0) until someone rolls it back or raises it again;
+otherwise its weight goes back to 100 and the other copies follow. It needs at least two
+copies, so the old configuration keeps serving the rest.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Any
+
+from sqlalchemy import case, func, select
 
 from app.core.errors import AppError, ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
@@ -30,6 +41,7 @@ from app.models.models_registry import (
     DeploymentRollout,
     DeploymentState,
     RolloutState,
+    UsageRecord,
 )
 from app.repositories.models_registry import DeploymentRolloutRepository
 from app.repositories.user import UserRepository
@@ -73,7 +85,12 @@ class RolloutService:
         return await self._rollouts.latest_for_model(model_id)
 
     async def start(
-        self, model_id: uuid.UUID, change: RevisionChange, *, actor: User
+        self,
+        model_id: uuid.UUID,
+        change: RevisionChange,
+        *,
+        actor: User,
+        canary: dict[str, Any] | None = None,
     ) -> DeploymentRollout:
         if await self._rollouts.running_for_model(model_id):
             raise ConflictError("A rollout of this model is already running.")
@@ -105,6 +122,13 @@ class RolloutService:
                 "The change cannot be applied to every copy: " + "; ".join(problems),
                 details={"copies": problems},
             )
+        if canary and len(copies) < 2:
+            raise ValidationError(
+                "A canary needs at least two running copies, so the old configuration keeps "
+                "serving while the first is watched. Revise a single copy with the auto "
+                "strategy instead.",
+                details={"field": "canary_percent"},
+            )
         copies.sort(key=lambda d: (d.created_at, str(d.id)))
         rollout = DeploymentRollout(
             model_id=model_id,
@@ -115,6 +139,7 @@ class RolloutService:
             progress={},
             done_count=0,
             created_by=actor.id,
+            canary=dict(canary) if canary else None,
         )
         self._rollouts.add(rollout)
         await self._rollouts.flush()
@@ -125,7 +150,12 @@ class RolloutService:
             resource_type="model",
             resource_id=str(model_id),
             message=change.change_note,
-            metadata={"rollout_id": str(rollout.id), "changes": target, "copies": len(copies)},
+            metadata={
+                "rollout_id": str(rollout.id),
+                "changes": target,
+                "copies": len(copies),
+                "canary": canary,
+            },
         )
         return rollout
 
@@ -134,6 +164,11 @@ class RolloutService:
         rollout = await self._rollouts.running_for_model(model_id)
         if rollout is None:
             raise NotFoundError("No rollout of this model is running.")
+        canary = rollout.canary or {}
+        if canary.get("state") == "watching":
+            # The copy under watch is healthy; it goes back to its full share.
+            await self._set_weight(canary.get("deployment_id"), 100)
+            rollout.canary = {**canary, "state": "cancelled"}
         await self._finish(rollout, RolloutState.CANCELLED, None, actor=actor)
         return rollout
 
@@ -157,6 +192,11 @@ class RolloutService:
             settled = await self._settle(rollout)
             if not settled:
                 return False
+        if rollout.state != RolloutState.RUNNING:
+            return True
+        held = await self._canary(rollout)
+        if held is not None:
+            return held
         remaining = [i for i in rollout.deployment_ids if i not in rollout.progress]
         while remaining:
             ident = remaining.pop(0)
@@ -210,6 +250,75 @@ class RolloutService:
             f"Copy {ident[:8]} did not come back with revision {wanted}: {detail}"[:1000],
         )
         return False
+
+    async def _canary(self, rollout: DeploymentRollout) -> bool | None:
+        """E77: None to carry on with the next copy; otherwise the canary holds the
+        rollout (False) or has just stopped it (True)."""
+        canary = dict(rollout.canary or {})
+        if not canary or canary.get("state") in ("passed", "failed", "cancelled"):
+            return None
+        now = dt.datetime.now(dt.UTC)
+        if canary.get("state") is None:
+            if rollout.done_count < 1:
+                return None
+            first = next((i for i in rollout.deployment_ids if rollout.progress.get(i)), None)
+            if first is None:
+                return None
+            await self._set_weight(first, int(canary["percent"]))
+            rollout.canary = {
+                **canary,
+                "state": "watching",
+                "deployment_id": first,
+                "started_at": now.isoformat(),
+                "until": (now + dt.timedelta(minutes=int(canary["minutes"]))).isoformat(),
+            }
+            await self._rollouts.flush()
+            log.info("rollout_canary_started", rollout=str(rollout.id), deployment=first)
+            return False
+        if now < dt.datetime.fromisoformat(canary["until"]):
+            return False
+        calls, errors = await self._calls(
+            canary["deployment_id"], dt.datetime.fromisoformat(canary["started_at"])
+        )
+        share = errors * 100 / calls if calls else 0.0
+        limit = float(canary.get("max_error_percent") or 0)
+        results = {**canary, "calls": calls, "errors": errors}
+        if calls and share > limit:
+            await self._set_weight(canary["deployment_id"], 0)
+            rollout.canary = {**results, "state": "failed"}
+            await self._finish(
+                rollout,
+                RolloutState.FAILED,
+                f"Canary copy {str(canary['deployment_id'])[:8]}: {errors} of {calls} calls "
+                f"failed ({share:.1f}%, limit {limit:g}%). It takes no new calls now; roll it "
+                "back from its revisions, or give it its share again.",
+            )
+            return True
+        await self._set_weight(canary["deployment_id"], 100)
+        rollout.canary = {**results, "state": "passed"}
+        await self._rollouts.flush()
+        log.info("rollout_canary_passed", rollout=str(rollout.id), calls=calls, errors=errors)
+        return None
+
+    async def _set_weight(self, ident: Any, weight: int) -> None:
+        if not ident:
+            return
+        copy = await self._deployments.find_deployment(uuid.UUID(str(ident)))
+        if copy is not None:
+            copy.traffic_weight = weight
+            await self._rollouts.flush()
+
+    async def _calls(self, ident: Any, since: dt.datetime) -> tuple[int, int]:
+        """Calls served by the copy since ``since``, and how many failed (5xx)."""
+        stmt = select(
+            func.count(UsageRecord.id),
+            func.coalesce(func.sum(case((UsageRecord.status_code >= 500, 1), else_=0)), 0),
+        ).where(
+            UsageRecord.deployment_id == uuid.UUID(str(ident)),
+            UsageRecord.recorded_at >= since,
+        )
+        total, failed = (await self._rollouts.session.execute(stmt)).one()
+        return int(total or 0), int(failed or 0)
 
     async def _finish(
         self,

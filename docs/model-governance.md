@@ -218,6 +218,49 @@ serving, and a single-copy model gets a new copy that takes over.
 In the console, the Revisions dialog has a strategy choice and *Every copy, one at a
 time*, and shows a running rollout's progress with *Cancel*.
 
+### A canary first
+
+A rollout can watch its first revised copy on a share of real calls before it touches
+the rest:
+
+```http
+POST /api/v1/models/{id}/rollout
+{"image": "vllm/vllm-openai:v0.12.0", "canary_percent": 10, "canary_minutes": 30,
+ "canary_max_error_percent": 1}
+```
+
+* Once the first copy is revised and healthy, it gets `canary_percent` of the model's
+  new calls (1–99) for `canary_minutes` (default 15). The other copies, still on the old
+  configuration, take the rest and wait.
+* Then its calls in that time are counted from the usage records. If more than
+  `canary_max_error_percent` (default 1) failed with a 5xx, the rollout stops (`FAILED`,
+  naming the count) and the copy is set to take **no new calls**; roll it back from its
+  revisions, or give it its share again. Otherwise it goes back to a full share and the
+  other copies follow one at a time. A canary that got no calls passes.
+* It needs at least two running copies (422 otherwise), so the old configuration keeps
+  serving. Cancelling during the watch gives the copy its full share back.
+* The rollout's `canary` shows the settings and what happened: `state` (`watching`,
+  `passed`, `failed`, `cancelled`), `deployment_id`, `until`, `calls`, `errors`.
+
+In the console: *Canary first* under *Every copy, one at a time*.
+
+### A copy's share of traffic
+
+Each copy has a `traffic_weight`, 0 to 100 (default 100): its share of the model's new
+calls relative to the other copies. Copies with equal weights are spread as before (the
+least busy first); with different weights, each copy is first for its share of calls. A
+copy at 0 takes no new calls while another copy can, but is still tried when the others
+fail. Set it by hand for a manual canary (a small share, then more), or to drain a copy
+before stopping it:
+
+```http
+PUT /api/v1/deployments/{id}/traffic-weight      {"traffic_weight": 10}
+```
+
+`model.deploy`, audited as `DEPLOYMENT_TRAFFIC_WEIGHT_CHANGED`. In the console: *This
+copy's share of traffic* in the Revisions dialog; the Deployments page marks a copy not at
+100.
+
 To roll out a newer engine image:
 
 1. Load the image on the nodes.
