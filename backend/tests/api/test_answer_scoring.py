@@ -16,7 +16,7 @@ from app.models.agents import Agent, AgentAnswerScore, AgentRun, AgentVersion, R
 from app.repositories.agents import AgentAnswerScoreRepository
 from app.services.agent_runtime import PlatformAgentRuntime
 from app.services.answer_quality import Claim, JudgeError, Verdict
-from app.services.answer_scoring import AnswerScoringService
+from app.services.answer_scoring import AnswerScoringService, retry_delay
 from app.services.knowledge import SearchResult
 from app.services.retrieval import Retrieved
 from tests.api.conftest import FakeProvider
@@ -275,3 +275,93 @@ class TestApi:
         }
         assert "passages" not in item
         assert body["sampling_percent"] == 0  # off in these settings
+
+
+# ---------------------------------------------------------------------------
+# E83: retries, and runs that paused for an approval
+# ---------------------------------------------------------------------------
+def with_retries(settings, retries: int = 2) -> Any:
+    scoring = with_scoring(settings)
+    agents = scoring.agents.model_copy(
+        update={"answer_judge_retries": retries, "answer_judge_retry_minutes": 5}
+    )
+    return scoring.model_copy(update={"agents": agents})
+
+
+class TestRetries:
+    def test_delay_doubles_with_some_spread(self) -> None:
+        first = retry_delay(1, 5).total_seconds()
+        second = retry_delay(2, 5).total_seconds()
+        assert 300 <= first <= 375 and 600 <= second <= 750
+
+    async def test_a_judge_that_is_down_is_retried_later(
+        self, session: AsyncSession, settings, superuser
+    ) -> None:
+        queued = await _queued(session, superuser)
+        down = Judge(RuntimeError("judge unreachable"))
+        service = _service(session, with_retries(settings), down)
+        row = await _drain_until(service, queued.id)
+        assert row.status == "PENDING" and row.attempts == 1
+        assert row.next_attempt_at > dt.datetime.now(dt.UTC) + dt.timedelta(minutes=4)
+        assert row.passages and "unreachable" in row.error
+        # Not claimed again before its time.
+        for _ in range(50):
+            other = await service.score_next()
+            if other is None:
+                break
+            assert other.id != queued.id
+        # Its time comes, and the judge is back.
+        row.next_attempt_at = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+        await session.flush()
+        row = await _drain_until(
+            _service(session, with_retries(settings), Judge(VERDICT)), queued.id
+        )
+        assert row.status == "SCORED" and row.attempts == 2 and row.error is None
+        assert row.passages is None
+
+    async def test_failed_after_the_last_retry(
+        self, session: AsyncSession, settings, superuser
+    ) -> None:
+        queued = await _queued(session, superuser, attempts=2)
+        service = _service(session, with_retries(settings, 2), Judge(RuntimeError("down")))
+        row = await _drain_until(service, queued.id)
+        assert row.status == "FAILED" and row.attempts == 3 and row.passages is None
+
+    async def test_no_retries_fails_at_once(
+        self, session: AsyncSession, settings, superuser
+    ) -> None:
+        queued = await _queued(session, superuser)
+        service = _service(session, with_retries(settings, 0), Judge(RuntimeError("down")))
+        row = await _drain_until(service, queued.id)
+        assert row.status == "FAILED"
+
+
+class TestPausedRuns:
+    async def test_a_paused_run_keeps_what_the_judge_needs(self, settings) -> None:
+        scoring = with_scoring(settings)
+        runs = Runs()
+        first = PlatformAgentRuntime(scoring, runs, None, None, None, None, None)
+        first._retrieved[str(runs.run.id)] = (
+            "How do I reset my password?",
+            [{"text": "Reset from the profile page.", "document": "it-guide.md"}],
+        )
+        await first._suspend(
+            runs.run,
+            conversation=[{"role": "user", "content": "How?"}],
+            pending_call={"id": "c1"},
+            iteration=1,
+            sequence=4,
+        )
+        stored = runs.run.checkpoint["scoring"]
+        assert stored["passages"][0]["document"] == "it-guide.md"
+
+        # Resumed by another request: a new runtime, with nothing in memory.
+        collected = Collected()
+        second = PlatformAgentRuntime(
+            scoring, runs, None, None, None, None, None, answer_scores=collected
+        )
+        second._restore_scoring(str(runs.run.id), runs.run.checkpoint)
+        second._queue_scoring(runs.run, "From the profile page.")
+        (row,) = collected.rows
+        assert row.question == "How do I reset my password?"
+        assert row.passages[0]["document"] == "it-guide.md"

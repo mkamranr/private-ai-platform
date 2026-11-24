@@ -19,11 +19,18 @@ E75: after each judged answer, the agent's average over its last
 ``agents.answer_faithfulness_alert_answers`` scored answers is compared with
 ``agents.answer_faithfulness_alert_below``. Below it, a WARNING alert for the agent's team
 is raised (or updated); at or above it, the alert clears.
+
+E83: **a judge call that fails is retried** ``agents.answer_judge_retries`` times, the
+first after ``agents.answer_judge_retry_minutes`` and each further one twice as long, with
+up to a quarter more at random, so a backlog left by an outage reaches the judge spread
+out rather than at once. The passages stay until the last try. A reply that came back but
+could not be read (``JudgeError``) is not retried: asking again rarely reads better.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import secrets
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +43,7 @@ from app.repositories.agents import AgentAnswerScoreRepository
 from app.services.alerts import AlertService
 from app.services.answer_quality import AnswerQualityService, Charge, JudgeError
 from app.services.knowledge import SearchResult
+from app.services.runtime_settings import RUNTIME
 
 log = get_logger(__name__)
 
@@ -69,6 +77,13 @@ def _passages(stored: list[dict[str, Any]] | None) -> list[SearchResult]:
     ]
 
 
+def retry_delay(attempt: int, minutes: int) -> dt.timedelta:
+    """E83: the wait after failed try ``attempt`` (1-based): ``minutes`` doubling, plus up
+    to a quarter of it at random."""
+    base = minutes * 60 * 2 ** max(attempt - 1, 0)
+    return dt.timedelta(seconds=base + secrets.randbelow(base // 4 + 1))
+
+
 class AnswerScoringService:
     def __init__(
         self,
@@ -89,7 +104,8 @@ class AnswerScoringService:
         row = await self._scores.claim_pending()
         if row is None:
             return None
-        model = self._settings.agents.answer_judge_model
+        agents = RUNTIME.latest(self._settings).agents
+        model = agents.answer_judge_model
         now = dt.datetime.now(dt.UTC)
         if not model:
             # Turned off after it was queued: nothing will judge it.
@@ -105,6 +121,8 @@ class AnswerScoringService:
             team_id=agent.team_id if agent else None,
             label=f"agent-judge:{agent.slug if agent else row.agent_id}",
         )
+        row.attempts = (row.attempts or 0) + 1
+        row.next_attempt_at = None
         try:
             verdict = await self._answers.judge(
                 row.question, row.answer, _passages(row.passages), model=model, charge=charge
@@ -113,13 +131,21 @@ class AnswerScoringService:
             row.status = AnswerScoreStatus.FAILED
             row.error = f"The judge's reply could not be read: {exc}"[:2000]
         except Exception as exc:
-            # A model that is down or over budget. The answer is not retried: a backlog
-            # of retries after an outage would all land on the judge at once.
-            row.status = AnswerScoreStatus.FAILED
+            # A model that is down or over budget: tried again later, spread out.
             row.error = f"{type(exc).__name__}: {getattr(exc, 'message', None) or exc}"[:2000]
+            if row.attempts <= agents.answer_judge_retries:
+                row.status = AnswerScoreStatus.PENDING
+                row.next_attempt_at = now + retry_delay(
+                    row.attempts, agents.answer_judge_retry_minutes
+                )
+                await self._scores.flush()
+                log.info("answer_scoring_retry", score=str(row.id), attempt=row.attempts)
+                return row
+            row.status = AnswerScoreStatus.FAILED
             log.info("answer_scoring_failed", score=str(row.id), error=row.error[:200])
         else:
             row.status = AnswerScoreStatus.SCORED
+            row.error = None
             row.faithfulness = verdict.faithfulness
             row.verdict = verdict.as_dict()
         row.judge_model = model

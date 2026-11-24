@@ -697,6 +697,10 @@ class AgentsSettings(BaseModel):
     #: ``answer_faithfulness_alert_answers`` scored answers falls below this (0: off).
     answer_faithfulness_alert_below: float = Field(default=0.0, ge=0.0, le=1.0)
     answer_faithfulness_alert_answers: int = Field(default=20, ge=3, le=500)
+    #: E83: a judge call that fails (model down, over budget) is tried again this many
+    #: times, later each time (``answer_judge_retry_minutes`` doubling), before FAILED.
+    answer_judge_retries: int = Field(default=2, ge=0, le=10)
+    answer_judge_retry_minutes: int = Field(default=5, ge=1, le=1440)
     # Tool types deliberately disabled: §M12 lists them but §25 forbids
     # unrestricted shell execution. They stay off until a hardened executor
     # exists (see docs/security.md).
