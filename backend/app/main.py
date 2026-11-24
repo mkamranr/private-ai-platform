@@ -122,7 +122,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # APScheduler job: the HEALTH_CHECK phase blocks for as long as a model takes to
     # load — minutes — and a scheduled job that overruns its interval fights its own
     # next firing.
-    deployment_worker = DeploymentWorker(settings, database.sessionmaker, app.state.secret_cipher)
+    deployment_worker = DeploymentWorker(
+        settings, database.sessionmaker, app.state.secret_cipher, redis=app.state.redis.client
+    )
     app.state.deployment_worker = deployment_worker
     deployment_task: asyncio.Task[None] | None = None
 

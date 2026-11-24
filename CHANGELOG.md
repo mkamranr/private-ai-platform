@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Models: capabilities read when a copy starts
+- When a copy of a model becomes healthy, the platform asks the runtime what the model can do (tools, vision...), as *Ask the runtime* does, so a model relaunched without tool calling stops being offered tools. Off with `MODELS__PROBE_CAPABILITIES_ON_DEPLOY=false`.
+- **Upgrade.** No migration.
+
 ### Connectors: Elasticsearch, Jira and Confluence
 - **Two more connectors in the Connector Catalogue**: *Elasticsearch* (search an internal Elasticsearch or OpenSearch; its write operations are switched off) and *Jira and Confluence* (search and read issues and pages on Server or Data Center, in read-only mode). Set their `MCP_` variables in `.env`, vendor and start them as usual; their tools arrive disabled.
 - **Upgrade.** No migration. Run `make mcp-vendor` on the build machine to include them in the bundle.
