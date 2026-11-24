@@ -713,6 +713,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_backend_load.py`. Docs: [backends.md](../backends.md#load-over-time-and-alerts-on-it), settings.md, api.md, `.env.example`.
 - [ ] Levels are the same for every backend; Ollama reports no queue, so only its samples are kept.
 
+## E82: Smarter canary checks
+
+- [x] `canary_copies` (default 1): that many copies revised first, each on the canary's share once healthy (`deployment_ids` in the canary), then watched together; at least one copy stays on the old configuration (422). Errors summed across them; a failed watch puts each on weight 0; cancelling restores each to 100.
+- [x] `canary_max_latency_ratio`: `percentile_cont(0.95)` of successful calls' `latency_ms` on the canaries against the other copies since the watch began; judged only with `LATENCY_MIN_CALLS` (10) on each side, otherwise `latency_note`.
+- [x] Console: copies and latency fields under *Canary first*; the status names every canary and shows both p95s.
+- [x] Tests: `tests/api/test_canary_rollouts.py::TestSmarterCanary`. Docs: [model-governance.md](../model-governance.md#a-canary-first), api.md.
+- [ ] Latency is end to end (`latency_ms`), so a canary that happens to get longer prompts looks slower; time to first token is not compared.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

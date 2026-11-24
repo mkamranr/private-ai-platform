@@ -23,6 +23,15 @@ calls in that time are counted from the usage records: if more than
 to take no new calls (weight 0) until someone rolls it back or raises it again;
 otherwise its weight goes back to 100 and the other copies follow. It needs at least two
 copies, so the old configuration keeps serving the rest.
+
+**More than one canary copy, and latency (E82).** ``copies`` (default 1) copies are
+revised before the watch starts, each on ``percent`` as soon as it is healthy, so a fault
+that shows only under some load, or on one node, has more calls to show up in; at least
+one copy keeps the old configuration. With ``max_latency_ratio``, the canary copies' p95
+latency over the watch is compared with the old copies' over the same minutes, on calls
+that did not fail: more than that many times slower stops the rollout as errors do. Too
+few calls on either side (``LATENCY_MIN_CALLS``) and latency isn't judged; the result
+says so.
 """
 
 from __future__ import annotations
@@ -54,6 +63,9 @@ from app.services.deployment import (
 )
 
 log = get_logger(__name__)
+
+#: Fewer successful calls than this on the canary or the old copies: latency not judged.
+LATENCY_MIN_CALLS = 10
 
 #: States in which a copy is still on its way to RUNNING or FAILED.
 _SETTLING = frozenset(
@@ -129,6 +141,12 @@ class RolloutService:
                 "strategy instead.",
                 details={"field": "canary_percent"},
             )
+        if canary and int(canary.get("copies") or 1) >= len(copies):
+            raise ValidationError(
+                f"This model runs {len(copies)} copies, so at most {len(copies) - 1} can be "
+                "canaries: at least one keeps the old configuration while they are watched.",
+                details={"field": "canary_copies"},
+            )
         copies.sort(key=lambda d: (d.created_at, str(d.id)))
         rollout = DeploymentRollout(
             model_id=model_id,
@@ -165,9 +183,10 @@ class RolloutService:
         if rollout is None:
             raise NotFoundError("No rollout of this model is running.")
         canary = rollout.canary or {}
-        if canary.get("state") == "watching":
-            # The copy under watch is healthy; it goes back to its full share.
-            await self._set_weight(canary.get("deployment_id"), 100)
+        if canary and canary.get("state") in (None, "watching"):
+            # The copies under watch (or given their share already) go back to full.
+            for ident in _canary_ids(canary):
+                await self._set_weight(ident, 100)
             rollout.canary = {**canary, "state": "cancelled"}
         await self._finish(rollout, RolloutState.CANCELLED, None, actor=actor)
         return rollout
@@ -259,42 +278,70 @@ class RolloutService:
             return None
         now = dt.datetime.now(dt.UTC)
         if canary.get("state") is None:
-            if rollout.done_count < 1:
+            wanted = int(canary.get("copies") or 1)
+            # Each revised copy takes the canary's share as soon as it is healthy, so
+            # the first doesn't serve at full share while the next one is revised.
+            revised = [i for i in rollout.deployment_ids if rollout.progress.get(i)][:wanted]
+            for ident in revised:
+                if ident not in _canary_ids(canary):
+                    await self._set_weight(ident, int(canary["percent"]))
+            canary["deployment_ids"] = revised
+            if len(revised) < wanted:
+                rollout.canary = canary
+                await self._rollouts.flush()
                 return None
-            first = next((i for i in rollout.deployment_ids if rollout.progress.get(i)), None)
-            if first is None:
-                return None
-            await self._set_weight(first, int(canary["percent"]))
             rollout.canary = {
                 **canary,
                 "state": "watching",
-                "deployment_id": first,
+                "deployment_id": revised[0],
                 "started_at": now.isoformat(),
                 "until": (now + dt.timedelta(minutes=int(canary["minutes"]))).isoformat(),
             }
             await self._rollouts.flush()
-            log.info("rollout_canary_started", rollout=str(rollout.id), deployment=first)
+            log.info("rollout_canary_started", rollout=str(rollout.id), deployments=revised)
             return False
         if now < dt.datetime.fromisoformat(canary["until"]):
             return False
-        calls, errors = await self._calls(
-            canary["deployment_id"], dt.datetime.fromisoformat(canary["started_at"])
-        )
+        watched = _canary_ids(canary)
+        since = dt.datetime.fromisoformat(canary["started_at"])
+        calls, errors = await self._calls(watched, since)
         share = errors * 100 / calls if calls else 0.0
         limit = float(canary.get("max_error_percent") or 0)
-        results = {**canary, "calls": calls, "errors": errors}
+        results: dict[str, Any] = {**canary, "calls": calls, "errors": errors}
+        names = ", ".join(i[:8] for i in watched)
+        label = f"Canary cop{'ies' if len(watched) > 1 else 'y'} {names}"
+        failure = None
         if calls and share > limit:
-            await self._set_weight(canary["deployment_id"], 0)
+            failure = f"{errors} of {calls} calls failed ({share:.1f}%, limit {limit:g}%)"
+        ratio_limit = canary.get("max_latency_ratio")
+        if ratio_limit:
+            others = [i for i in rollout.deployment_ids if i not in watched]
+            mine, mine_n = await self._p95(watched, since)
+            theirs, theirs_n = await self._p95(others, since)
+            results.update(latency_p95_ms=mine, baseline_p95_ms=theirs)
+            if min(mine_n, theirs_n) < LATENCY_MIN_CALLS or not theirs:
+                results["latency_note"] = (
+                    f"Latency not judged: {mine_n} successful calls on the canary and "
+                    f"{theirs_n} on the other copies (needs {LATENCY_MIN_CALLS} each)."
+                )
+            elif mine is not None and mine > theirs * float(ratio_limit) and failure is None:
+                failure = (
+                    f"p95 latency {mine:.0f} ms against {theirs:.0f} ms on the other copies "
+                    f"({mine / theirs:.2f}x, limit {float(ratio_limit):g}x)"
+                )
+        if failure:
+            for ident in watched:
+                await self._set_weight(ident, 0)
             rollout.canary = {**results, "state": "failed"}
             await self._finish(
                 rollout,
                 RolloutState.FAILED,
-                f"Canary copy {str(canary['deployment_id'])[:8]}: {errors} of {calls} calls "
-                f"failed ({share:.1f}%, limit {limit:g}%). It takes no new calls now; roll it "
-                "back from its revisions, or give it its share again.",
+                f"{label}: {failure}. They take no new calls now; roll them back from their "
+                "revisions, or give them their share again.",
             )
             return True
-        await self._set_weight(canary["deployment_id"], 100)
+        for ident in watched:
+            await self._set_weight(ident, 100)
         rollout.canary = {**results, "state": "passed"}
         await self._rollouts.flush()
         log.info("rollout_canary_passed", rollout=str(rollout.id), calls=calls, errors=errors)
@@ -308,17 +355,32 @@ class RolloutService:
             copy.traffic_weight = weight
             await self._rollouts.flush()
 
-    async def _calls(self, ident: Any, since: dt.datetime) -> tuple[int, int]:
-        """Calls served by the copy since ``since``, and how many failed (5xx)."""
+    async def _calls(self, idents: list[str], since: dt.datetime) -> tuple[int, int]:
+        """Calls served by the copies since ``since``, and how many failed (5xx)."""
         stmt = select(
             func.count(UsageRecord.id),
             func.coalesce(func.sum(case((UsageRecord.status_code >= 500, 1), else_=0)), 0),
         ).where(
-            UsageRecord.deployment_id == uuid.UUID(str(ident)),
+            UsageRecord.deployment_id.in_([uuid.UUID(i) for i in idents]),
             UsageRecord.recorded_at >= since,
         )
         total, failed = (await self._rollouts.session.execute(stmt)).one()
         return int(total or 0), int(failed or 0)
+
+    async def _p95(self, idents: list[str], since: dt.datetime) -> tuple[float | None, int]:
+        """E82: p95 latency of the copies' successful calls since ``since``, and how many."""
+        if not idents:
+            return None, 0
+        stmt = select(
+            func.percentile_cont(0.95).within_group(UsageRecord.latency_ms),
+            func.count(UsageRecord.id),
+        ).where(
+            UsageRecord.deployment_id.in_([uuid.UUID(i) for i in idents]),
+            UsageRecord.recorded_at >= since,
+            UsageRecord.status_code < 400,
+        )
+        p95, count = (await self._rollouts.session.execute(stmt)).one()
+        return (float(p95) if p95 is not None else None), int(count or 0)
 
     async def _finish(
         self,
@@ -352,3 +414,11 @@ class RolloutService:
     def _note(rollout: DeploymentRollout) -> str:
         note = f"Rollout {str(rollout.id)[:8]}"
         return f"{note}: {rollout.change_note}" if rollout.change_note else note
+
+
+def _canary_ids(canary: dict[str, Any]) -> list[str]:
+    """The canary copies: E82 keeps a list; an E77 rollout kept one ``deployment_id``."""
+    ids = canary.get("deployment_ids")
+    if ids:
+        return [str(i) for i in ids]
+    return [str(canary["deployment_id"])] if canary.get("deployment_id") else []

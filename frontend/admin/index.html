@@ -2463,6 +2463,15 @@
               <input class="form-control form-control-sm" id="rev-canary-errors" type="number"
                      min="0" max="100" step="0.1" placeholder="1" style="width:5rem">
               <span>% fail</span>
+              <span>· on</span>
+              <input class="form-control form-control-sm" id="rev-canary-copies" type="number"
+                     min="1" max="64" placeholder="1" style="width:4.5rem"
+                     title="How many copies are revised and watched together; at least one keeps the old configuration">
+              <span>copies; or if p95 latency is over</span>
+              <input class="form-control form-control-sm" id="rev-canary-latency" type="number"
+                     min="1.1" max="100" step="0.1" placeholder="off" style="width:4.5rem"
+                     title="Times the other copies' p95 latency over the same minutes; blank to not compare">
+              <span>× the others'</span>
             </div>
             <div class="col-12 d-flex flex-wrap align-items-center gap-2 small">
               <span class="text-secondary"
