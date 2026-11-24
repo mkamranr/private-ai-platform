@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -90,6 +90,20 @@ class ConnectionTestResponse(BaseModel):
     model_count: int | None = None
     error: str | None = None
     status: str
+
+
+class BackendMetricsRead(BaseModel):
+    """E76: a backend's load now, as the backend reports it."""
+
+    fetched_at: dt.datetime
+    values: dict[str, float] = Field(default_factory=dict)
+    models: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class BackendModelAction(BaseModel):
+    """E76: a model the backend already has, by its name there."""
+
+    model: str = Field(min_length=1, max_length=255)
 
 
 class DiscoveredModelRead(BaseModel):

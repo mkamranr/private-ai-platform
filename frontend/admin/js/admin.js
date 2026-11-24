@@ -4565,7 +4565,8 @@ function backendTile(b) {
       <div class="tile-actions">
         ${manage ? `<button class="btn btn-sm btn-primary" data-be-test="${esc(b.id)}">Test</button>` : ''}
         <button class="btn btn-sm btn-outline-primary" data-be-models="${esc(b.id)}"
-                data-be-name="${esc(b.name)}" ${b.enabled ? '' : 'disabled'}>Models</button>
+                data-be-name="${esc(b.name)}" data-be-caps="${esc((b.capabilities || []).join(' '))}"
+                ${b.enabled ? '' : 'disabled'}>Models</button>
         ${manage ? `
           <button class="btn btn-sm btn-outline-secondary" data-be-toggle="${esc(b.id)}"
                   data-be-enabled="${b.enabled}">${b.enabled ? 'Disable' : 'Enable'}</button>
@@ -4609,11 +4610,49 @@ function wireBackendActions() {
     });
   });
   document.querySelectorAll('[data-be-models]').forEach((button) => {
-    button.onclick = () => guard(button, () => openDiscover(button.dataset.beModels, button.dataset.beName));
+    button.onclick = () => guard(button, () => openDiscover(
+      button.dataset.beModels, button.dataset.beName, (button.dataset.beCaps || '').split(' ')));
   });
 }
 
-async function openDiscover(backendId, backendName) {
+/** E76: what a backend's load figures are called on screen. */
+const BACKEND_METRIC_LABEL = {
+  requests_running: 'requests running',
+  requests_waiting: 'requests waiting',
+  kv_cache_usage_percent: 'KV cache used (%)',
+  prompt_tokens_total: 'prompt tokens so far',
+  generation_tokens_total: 'tokens generated so far',
+  preemptions_total: 'pre-emptions so far',
+  models_loaded: 'models in memory',
+  vram_bytes: 'GPU memory used',
+};
+
+function backendMetricValue(key, value) {
+  if (value == null) return '—';
+  if (key.endsWith('bytes')) return mib(value / 1048576);
+  return Number.isInteger(value) ? value.toLocaleString() : fmtRate(value);
+}
+
+/** E76: the backend's load now, above its model list. Null when it reports none. */
+async function backendLoad(backendId) {
+  try {
+    return await api(`/backends/${backendId}/metrics`);
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+function backendLoadPanel(load) {
+  if (!load) return '';
+  if (load.error) return `<div class="alert alert-warning small" id="be-load">${esc(load.error)}</div>`;
+  const tiles = Object.entries(load.values).map(([key, value]) => `
+    <div><div class="v">${esc(backendMetricValue(key, value))}</div>
+         <div class="k">${esc(BACKEND_METRIC_LABEL[key] || key)}</div></div>`).join('');
+  return `<div class="tile-meta mb-3" id="be-load">${tiles ||
+    '<div class="small text-secondary">The backend reported nothing yet.</div>'}</div>`;
+}
+
+async function openDiscover(backendId, backendName, capabilities = []) {
   document.getElementById('discover-title').textContent = `Models on ${backendName}`;
   const body = document.getElementById('discover-body');
   const register = document.getElementById('discover-register');
@@ -4621,20 +4660,53 @@ async function openDiscover(backendId, backendName) {
   register.classList.toggle('d-none', !(can('backend.manage') && can('model.register')));
   bootstrap.Modal.getOrCreateInstance(document.getElementById('discover-modal')).show();
 
-  try {
-    const models = await api(`/backends/${backendId}/models`);
-    body.innerHTML = models.length ? `
+  // E76: Ollama can load a model it has into memory and unload it; vLLM and Ollama report
+  // their load.
+  const canLoad = capabilities.includes('deploy') && can('backend.manage');
+  const show = async () => {
+    const [models, load] = await Promise.all([
+      api(`/backends/${backendId}/models`),
+      capabilities.includes('metrics') ? backendLoad(backendId) : null,
+    ]);
+    const inMemory = new Set(capabilities.includes('deploy') && load?.models
+      ? load.models.map((m) => m.name) : []);
+    const memoryColumn = capabilities.includes('deploy');
+    body.innerHTML = backendLoadPanel(load) + (models.length ? `
       <table class="table table-sm align-middle">
-        <thead><tr><th>Served as</th><th>Catalogue name</th><th>In catalogue</th></tr></thead>
+        <thead><tr><th>Served as</th><th>Catalogue name</th><th>In catalogue</th>
+          ${memoryColumn ? '<th>In memory</th><th></th>' : ''}</tr></thead>
         <tbody>${models.map((m) => `
           <tr>
             <td class="mono">${esc(m.id)}</td>
             <td class="mono small">${esc(m.platform_name)}</td>
             <td>${m.registered ? pill('AVAILABLE', 'Registered') : pill('UNKNOWN', 'Not yet')}</td>
+            ${memoryColumn ? `<td>${inMemory.has(m.id) ? pill('HEALTHY', 'Loaded') : pill('UNKNOWN', 'No')}</td>
+              <td class="text-end">${canLoad ? `<button class="btn btn-sm btn-outline-secondary"
+                data-be-load="${esc(m.id)}" data-be-loaded="${inMemory.has(m.id)}">${
+                inMemory.has(m.id) ? 'Unload' : 'Load'}</button>` : ''}</td>` : ''}
           </tr>`).join('')}
         </tbody>
-      </table>` : empty('This backend reports no models.');
+      </table>` : empty('This backend reports no models.'));
     register.disabled = !models.length;
+    body.querySelectorAll('[data-be-load]').forEach((button) => {
+      button.onclick = () => guard(button, async () => {
+        const action = button.dataset.beLoaded === 'true' ? 'unload' : 'load';
+        if (action === 'load') button.textContent = 'Loading…';
+        try {
+          const result = await api(`/backends/${backendId}/models/${action}`, {
+            method: 'POST', body: JSON.stringify({ model: button.dataset.beLoad }),
+          });
+          await show();
+          body.insertAdjacentHTML('afterbegin', `<div class="alert alert-success small">${esc(result.message)}</div>`);
+        } catch (err) {
+          body.insertAdjacentHTML('afterbegin', `<div class="alert alert-danger small">${esc(err.message)}</div>`);
+          button.textContent = action === 'load' ? 'Load' : 'Unload';
+        }
+      });
+    });
+  };
+  try {
+    await show();
   } catch (err) {
     body.innerHTML = `<div class="alert alert-danger small mb-0">${esc(err.message)}</div>`;
     register.disabled = true;

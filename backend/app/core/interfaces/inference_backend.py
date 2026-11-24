@@ -40,6 +40,22 @@ class DiscoveredModel:
 
 
 @dataclass(frozen=True, slots=True)
+class BackendMetrics:
+    """E76: what a backend reports about its load right now.
+
+    ``values`` are backend-wide (``requests_running``, ``kv_cache_usage_percent``...);
+    ``models`` are per model, each with a ``name``. Only what the backend reported."""
+
+    fetched_at: dt.datetime
+    values: dict[str, float] = field(default_factory=dict)
+    models: list[dict[str, Any]] = field(default_factory=list)
+
+
+class UnsupportedBackendOperationError(Exception):
+    """The backend type can't do this (E76)."""
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectionResult:
     """The outcome of one connection test. Never raised — always returned."""
 
@@ -64,3 +80,15 @@ class InferenceBackendAdapter(ABC):
     @abstractmethod
     async def list_models(self) -> list[DiscoveredModel]:
         """Models the backend serves. Raises on an unreachable backend."""
+
+    async def metrics(self) -> BackendMetrics:
+        """E76 (METRICS): its load now. Raises on an unreachable backend."""
+        raise UnsupportedBackendOperationError("This backend type reports no metrics.")
+
+    async def load_model(self, name: str) -> None:
+        """E76 (DEPLOY): load a model it already has into memory, and keep it there."""
+        raise UnsupportedBackendOperationError("This backend type can't load models on request.")
+
+    async def unload_model(self, name: str) -> None:
+        """E76 (STOP): unload a model from memory. It stays on the backend's disk."""
+        raise UnsupportedBackendOperationError("This backend type can't unload models on request.")

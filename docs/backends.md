@@ -7,15 +7,44 @@ way to put its models in the registry.
 
 ## Backend types
 
-| type | model list | version | notes |
-|---|---|---|---|
-| `vllm` | `GET /v1/models` | `GET /version` | a trailing `/v1` on the URL is stripped |
-| `ollama` | `GET /api/tags` | `GET /api/version` | |
-| `openai_compatible` | `GET /v1/models` | — | a trailing `/v1` on the URL is stripped |
+| type | model list | version | load now | load / unload | notes |
+|---|---|---|---|---|---|
+| `vllm` | `GET /v1/models` | `GET /version` | `GET /metrics` | — | a trailing `/v1` on the URL is stripped |
+| `ollama` | `GET /api/tags` | `GET /api/version` | `GET /api/ps` | `POST /api/generate` with `keep_alive` | |
+| `openai_compatible` | `GET /v1/models` | — | — | — | a trailing `/v1` on the URL is stripped |
 
 Adapters live in `backend/app/services/inference_backends.py` and implement
 `InferenceBackendAdapter` (`backend/app/core/interfaces/inference_backend.py`), which
-declares its capabilities so deploy/stop/metrics can be added per type.
+declares its capabilities (`health`, `list_models`, `version`, `metrics`, `deploy`,
+`stop`); a backend's `capabilities` list says which it has.
+
+## Load, and loading models
+
+*Models* on a backend's tile shows what it reports about its load above its model list:
+
+- **vLLM**: requests running and waiting, the share of the KV cache in use, and prompt
+  and generated tokens since it started, read from its Prometheus `/metrics`, for the
+  backend and per model (`model_name`).
+- **Ollama**: the models in memory and the GPU memory they use (`/api/ps`).
+
+`GET /backends/{id}/metrics` (`backend.view`) returns the same: `{fetched_at, values,
+models}`. A backend type that reports nothing, or a backend that can't be reached, is a
+422.
+
+**Ollama can load and unload models.** *Load* puts a model the Ollama already has into
+memory and keeps it there, so its first request isn't slow; *Unload* frees its memory (it
+stays on disk and loads again on its next request).
+
+```http
+POST /api/v1/backends/{id}/models/load     {"model": "llama3.2:latest"}
+POST /api/v1/backends/{id}/models/unload   {"model": "llama3.2:latest"}
+```
+
+Both need `backend.manage`, an enabled backend, and are audited
+(`BACKEND_MODEL_LOADED`, `BACKEND_MODEL_UNLOADED`). Nothing is pulled: a model that isn't
+on the Ollama is refused (*pull it there first*), since the platform never downloads from
+the Internet. vLLM serves the one model it was started with, so it can't load or unload;
+to run models on GPUs the platform manages, deploy them from the Model Registry instead.
 
 ## Outbound URL policy
 
@@ -49,4 +78,5 @@ skipped. Calls the gateway makes to these models share one circuit breaker per b
 - The gateway sends a backend's API key to that backend (and only to it). See
   [gateway-policy.md](gateway-policy.md#backend-api-keys).
 - Existing models are not backfilled with a `backend_id`.
+- Backend load is read when asked, not kept: there's no history and no alert on it.
 - GPU-threshold alerts and the MCP URL check are not wired to the shared policy yet.

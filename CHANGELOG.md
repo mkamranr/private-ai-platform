@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Inference backends: their load, and loading Ollama models
+- *Models* on a backend's tile shows its load: vLLM's requests running and waiting, KV-cache use and tokens; Ollama's models in memory and the GPU memory they use.
+- **Ollama models can be loaded and unloaded** from there: *Load* keeps a model it already has in memory, *Unload* frees it. Nothing is downloaded; audited.
+- **Upgrade.** No migration.
+
 ### Per-GPU alert levels, busy and power alerts, and falling faithfulness
 - **A GPU can have its own alert levels**, over its node's and the platform's: *Alert levels* on each row of the GPUs page. Empty fields use the level shown greyed (the node's, else the platform's).
 - **A GPU that is busy or near its power limit can raise a WARNING**: `gpu.alert_utilization_warning_percent` and `gpu.alert_power_warning_percent` (share of the card's power limit) on the Settings page, or per node or GPU. Both are off (0) by default; the sustain time and margins apply as for temperature.

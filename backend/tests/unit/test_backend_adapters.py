@@ -162,12 +162,23 @@ async def test_redirects_are_not_followed() -> None:
     assert not result.ok
 
 
-def test_no_adapter_claims_lifecycle_control() -> None:
-    """Plan §5.2: do not pretend a backend can deploy or stop models."""
+def test_no_adapter_claims_what_it_cannot_do() -> None:
+    """Plan §5.2: do not pretend a backend can deploy or stop models. Since E76 an adapter
+    may claim DEPLOY, STOP or METRICS only when it implements them (Ollama loads and
+    unloads; vLLM and Ollama report metrics)."""
+    from app.core.interfaces.inference_backend import InferenceBackendAdapter as Base
+
+    claims = {
+        BackendCapability.DEPLOY: "load_model",
+        BackendCapability.STOP: "unload_model",
+        BackendCapability.METRICS: "metrics",
+    }
     for adapter in ADAPTERS.values():
-        assert BackendCapability.DEPLOY not in adapter.capabilities
-        assert BackendCapability.STOP not in adapter.capabilities
         assert BackendCapability.LIST_MODELS in adapter.capabilities
+        for capability, method in claims.items():
+            implemented = getattr(adapter, method) is not getattr(Base, method)
+            assert (capability in adapter.capabilities) == implemented, (adapter, capability)
+    assert BackendCapability.DEPLOY not in ADAPTERS["vllm"].capabilities
 
 
 @pytest.mark.parametrize(

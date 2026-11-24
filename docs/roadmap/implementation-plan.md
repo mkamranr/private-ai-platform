@@ -668,6 +668,13 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_gpu_levels.py`. Docs: [gpu.md](../gpu.md#a-gpus-own-levels), [agents.md](../agents.md#answer-quality), api.md, settings.md.
 - [ ] No PCIe replay alert; the faithfulness alert is checked only when an answer is judged (an agent that stops being used keeps its alert).
 
+## E76: More from a backend: its load, and loading and unloading models
+
+- [x] `InferenceBackendAdapter.metrics`, `load_model`, `unload_model` (default: `UnsupportedBackendOperationError`) and `BackendMetrics`. vLLM: `METRICS` from Prometheus `/metrics` (`parse_prometheus`: requests running and waiting, KV-cache share, token counters, per `model_name`). Ollama: `METRICS` (`/api/ps`), `DEPLOY` and `STOP` (`/api/generate` with `keep_alive` -1 or 0; a 404 means the model isn't there).
+- [x] `GET /backends/{id}/metrics` (`backend.view`), `POST /backends/{id}/models/load|unload` (`backend.manage`, audited `BACKEND_MODEL_LOADED` / `BACKEND_MODEL_UNLOADED`).
+- [x] Console: the backend's load above its model list, and *Load* / *Unload* per Ollama model. Checked in Chromium. Tests: `tests/api/test_backend_operations.py`. Docs: [backends.md](../backends.md#load-and-loading-models), api.md.
+- [ ] Load is read when asked: no history, no alert. Models are never pulled onto a backend; vLLM can't change the model it serves.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and
