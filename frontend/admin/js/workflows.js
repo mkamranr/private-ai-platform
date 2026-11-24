@@ -12,6 +12,12 @@
  * draft), drag from a step's port to another step to connect them, click a step to edit
  * it, click a connection to select it, Delete to remove the selection. The node forms are
  * built from the schemas `GET /workflows/node-types` serves, falling back to WF_FIELDS.
+ *
+ * E79: zoom (buttons, Ctrl + wheel, Ctrl +/-/0), several steps selected at once (Shift or
+ * Ctrl + click, or drag a box around them on empty canvas) and moved together, copy, cut,
+ * paste and duplicate (Ctrl + C / X / V / D; pasted steps get new ids and their references
+ * to each other follow), and undo / redo (Ctrl + Z / Shift + Ctrl + Z or Ctrl + Y) of every
+ * change to the draft since it was loaded.
  */
 'use strict';
 
@@ -28,8 +34,15 @@ const wf = {
   // E69 canvas: the selection ({node} or {edge}), a drag or connection in progress, and
   // whether saved positions are in use even while two boxes overlap mid-drag.
   canvas: { sel: null, drag: null, connect: null, manual: false },
+  // E79: the draft as JSON before each change, and after undoing.
+  history: { past: [], future: [], last: null },
+  zoom: 1,
 };
 const WF_BOX = { W: 168, H: 56, GX: 64, GY: 26, PAD: 16, SNAP: 8 };
+const WF_ZOOM = { MIN: 0.4, MAX: 2, STEP: 1.2 };
+const WF_HISTORY_MAX = 100;
+/** E79: copied steps, kept across workflows so they can be pasted into another. */
+let wfClipboard = null;
 
 Object.assign(PILL_TONE, {
   SUCCEEDED: 'ok', PUBLISHED: 'ok', APPROVED: 'ok',
@@ -191,6 +204,7 @@ async function loadDetail() {
   wf.draft.edges = wf.draft.edges || [];
   wf.dirty = false;
   wf.canvas = { sel: null, drag: null, connect: null, manual: false };
+  resetHistory();
   if (!wf.refs) await loadRefs();
   renderDetail();
 }
@@ -297,7 +311,9 @@ async function publishWorkflow() {
   await refresh({ force: true });
 }
 
-function markDirty() {
+function markDirty(record = true) {
+  if (record) recordHistory();
+  historyButtons();
   wf.dirty = true;
   const chip = document.getElementById('wf-dirty-chip');
   if (chip) { chip.textContent = 'unsaved changes'; chip.classList.remove('d-none'); }
@@ -308,6 +324,142 @@ function markDirty() {
   const discard = document.getElementById('wf-discard');
   if (discard) discard.disabled = false;
 }
+
+/* E79: undo and redo. Every change to the draft ends in markDirty, which records the
+ * draft as it was before; a drag is one change (recorded when the step is dropped). */
+function resetHistory() {
+  wf.history = { past: [], future: [], last: wf.draft ? JSON.stringify(wf.draft) : null };
+  historyButtons();
+}
+
+function recordHistory() {
+  if (!wf.draft) return;
+  const now = JSON.stringify(wf.draft);
+  const h = wf.history;
+  if (h.last === null) { h.last = now; return; }
+  if (now === h.last) return;
+  h.past.push(h.last);
+  if (h.past.length > WF_HISTORY_MAX) h.past.shift();
+  h.last = now;
+  h.future = [];
+}
+
+function stepHistory(back) {
+  const h = wf.history;
+  const from = back ? h.past : h.future;
+  if (!from.length) return false;
+  (back ? h.future : h.past).push(h.last);
+  h.last = from.pop();
+  wf.draft = JSON.parse(h.last);
+  wf.canvas.sel = null;
+  renderBuilder();
+  markDirty(false);
+  return true;
+}
+
+function historyButtons() {
+  const undo = document.getElementById('wf-undo');
+  const redo = document.getElementById('wf-redo');
+  if (undo) undo.disabled = !wf.history.past.length;
+  if (redo) redo.disabled = !wf.history.future.length;
+}
+
+function wfEditable() {
+  return Boolean(wf.detail) && can('workflow.edit') && wf.detail.status !== 'ARCHIVED';
+}
+
+/* E79: the selected steps, and copy and paste. */
+function selIds() {
+  return wf.canvas.sel?.nodes || [];
+}
+
+function copySelection() {
+  const ids = new Set(selIds().filter((id) => wf.draft.nodes.find((n) => n.id === id && n.type !== 'start')));
+  if (!ids.size) return 0;
+  const { pos } = canvasLayout(wf.draft);
+  wfClipboard = {
+    nodes: wf.draft.nodes.filter((n) => ids.has(n.id)).map((n) => ({ ...structuredClone(n), position: { ...pos[n.id] } })),
+    edges: wf.draft.edges.filter((e) => ids.has(e.from) && ids.has(e.to)).map((e) => ({ ...e })),
+    pastes: 0,
+  };
+  return ids.size;
+}
+
+/** A free id near `id`: `summarise` becomes `summarise_2`, `summarise_2` becomes `summarise_3`. */
+function copyId(id, taken) {
+  const base = id.replace(/_\d+$/, '');
+  let n = 2, next = `${base}_${n}`;
+  while (taken.has(next)) next = `${base}_${(n += 1)}`;
+  return next;
+}
+
+function pasteClipboard() {
+  if (!wfClipboard?.nodes.length) return 0;
+  ensurePositions();
+  wfClipboard.pastes += 1;
+  const shift = 32 * wfClipboard.pastes;
+  const taken = new Set(wf.draft.nodes.map((n) => n.id));
+  const rename = {};
+  wfClipboard.nodes.forEach((n) => { rename[n.id] = copyId(n.id, taken); taken.add(rename[n.id]); });
+  // References between the pasted steps ({{ nodes.<id>... }}) follow them to their new ids.
+  const refs = new RegExp(`(\\bnodes\\.)(${Object.keys(rename).map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`, 'g');
+  const added = wfClipboard.nodes.map((n) => {
+    const { id, position, ...rest } = n;
+    const body = JSON.parse(JSON.stringify(rest).replace(refs, (_, pre, old) => `${pre}${rename[old]}`));
+    return { id: rename[id], ...body, position: { x: position.x + shift, y: position.y + shift } };
+  });
+  wf.draft.nodes.push(...added);
+  added.forEach(settle);
+  wfClipboard.edges.forEach((e) => wf.draft.edges.push({ ...e, from: rename[e.from], to: rename[e.to] }));
+  wf.canvas.sel = { nodes: added.map((n) => n.id) };
+  return added.length;
+}
+
+function setZoom(zoom) {
+  wf.zoom = Math.min(WF_ZOOM.MAX, Math.max(WF_ZOOM.MIN, Math.round(zoom * 100) / 100));
+  const label = document.getElementById('wf-zoom-reset');
+  if (label) label.textContent = `${Math.round(wf.zoom * 100)}%`;
+  wf.canvas.redraw?.();
+}
+
+function fitZoom() {
+  const wrap = document.getElementById('wf-graph');
+  if (!wrap || !wf.draft?.nodes.length) return;
+  const { width } = canvasLayout(wf.draft);
+  setZoom(Math.min(1, (wrap.clientWidth - 16) / width));
+}
+
+/* E79: the builder's keyboard shortcuts, wherever the focus is on the page (except in a
+ * form field or an open dialog). */
+document.addEventListener('keydown', (ev) => {
+  if (currentPage !== 'workflows' || wf.tab !== 'builder' || !wf.draft) return;
+  if (!document.getElementById('wf-canvas') || document.querySelector('.modal.show')) return;
+  if (ev.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
+  const key = ev.key.toLowerCase();
+  const edit = wfEditable();
+  const commit = () => { renderBuilder(); markDirty(); };
+  let done = true;
+  if (key === 'z' && edit) stepHistory(!ev.shiftKey);
+  else if (key === 'y' && edit) stepHistory(false);
+  else if (key === 'c' && !String(window.getSelection?.() || '')) {
+    const n = copySelection();
+    if (n) alert(`Copied ${n} step${n === 1 ? '' : 's'}.`, 'success'); else done = false;
+  } else if (key === 'x' && edit) {
+    if (copySelection() && removeSelection()) commit(); else done = false;
+  } else if (key === 'v' && edit) {
+    if (pasteClipboard()) commit(); else done = false;
+  } else if (key === 'd' && edit) {
+    if (copySelection() && pasteClipboard()) commit(); else done = false;
+  } else if (key === 'a') {
+    wf.canvas.sel = { nodes: wf.draft.nodes.map((n) => n.id) };
+    wf.canvas.redraw?.();
+  } else if (key === '=' || key === '+') setZoom(wf.zoom * WF_ZOOM.STEP);
+  else if (key === '-') setZoom(wf.zoom / WF_ZOOM.STEP);
+  else if (key === '0') setZoom(1);
+  else done = false;
+  if (done) ev.preventDefault();
+});
 
 async function saveDraft() {
   wf.detail = await api(`/workflows/${wf.selected}`, {
@@ -335,9 +487,21 @@ function renderBuilder() {
           </div>
           <span class="ms-auto d-flex gap-2 align-items-center">
             <span id="wf-sel-actions"></span>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Undo and redo">
+              <button type="button" class="btn btn-outline-secondary" id="wf-undo" title="Undo (Ctrl+Z)"
+                aria-label="Undo">&#x21B6;</button>
+              <button type="button" class="btn btn-outline-secondary" id="wf-redo" title="Redo (Ctrl+Shift+Z)"
+                aria-label="Redo">&#x21B7;</button>
+            </div>
             <button type="button" class="btn btn-sm btn-outline-secondary" id="wf-arrange"
               title="Lay the steps out in columns by order">Auto-arrange</button>
-          </span>` : '<span class="small text-secondary">Graph</span>'}
+          </span>` : '<span class="small text-secondary me-auto">Graph</span>'}
+        <div class="btn-group btn-group-sm" role="group" aria-label="Zoom">
+          <button type="button" class="btn btn-outline-secondary" id="wf-zoom-out" title="Zoom out (Ctrl+-)" aria-label="Zoom out">&minus;</button>
+          <button type="button" class="btn btn-outline-secondary" id="wf-zoom-reset" title="Actual size (Ctrl+0)">${Math.round(wf.zoom * 100)}%</button>
+          <button type="button" class="btn btn-outline-secondary" id="wf-zoom-in" title="Zoom in (Ctrl++)" aria-label="Zoom in">+</button>
+          <button type="button" class="btn btn-outline-secondary" id="wf-zoom-fit" title="Fit the width">Fit</button>
+        </div>
       </div>
       <div class="card-body wf-graph-wrap p-2" id="wf-graph">${canvasSvg(wf.draft, edit)}</div>
       ${edit ? `<div class="card-footer small text-secondary py-2">
@@ -345,7 +509,11 @@ function renderBuilder() {
         (a condition has <span class="mono">true</span>/<span class="mono">false</span> dots, an approval
         <span class="mono">approved</span>/<span class="mono">rejected</span>); the red dot underneath
         handles the step&rsquo;s failure. Click a step to edit it, a connection to select it;
-        <kbd>Delete</kbd> removes the selection. Steps that don&rsquo;t depend on each other run at the same time.
+        <kbd>Delete</kbd> removes the selection. Shift-click or drag a box around steps to select
+        several and move them together; <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> /
+        <kbd>D</kbd> copy, cut, paste and duplicate them, <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes and
+        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes, <kbd>Ctrl</kbd>+wheel zooms.
+        Steps that don&rsquo;t depend on each other run at the same time.
       </div>` : ''}
     </div>
 
@@ -485,6 +653,15 @@ function wireBuilder() {
   document.querySelectorAll('[data-wf-add]').forEach((b) => {
     b.onclick = () => openNodeModal('', b.dataset.wfAdd);
   });
+  const undo = document.getElementById('wf-undo');
+  if (undo) undo.onclick = () => stepHistory(true);
+  const redo = document.getElementById('wf-redo');
+  if (redo) redo.onclick = () => stepHistory(false);
+  historyButtons();
+  document.getElementById('wf-zoom-in').onclick = () => setZoom(wf.zoom * WF_ZOOM.STEP);
+  document.getElementById('wf-zoom-out').onclick = () => setZoom(wf.zoom / WF_ZOOM.STEP);
+  document.getElementById('wf-zoom-reset').onclick = () => setZoom(1);
+  document.getElementById('wf-zoom-fit').onclick = fitZoom;
   const arrange = document.getElementById('wf-arrange');
   if (arrange) arrange.onclick = () => {
     const { pos } = graphLayout(wf.draft, { auto: true });
@@ -736,7 +913,7 @@ function canvasSvg(def, edit) {
   const boxes = nodes.map((n) => {
     const p = pos[n.id];
     const name = String(n.name || n.id);
-    const chosen = sel.node === n.id;
+    const chosen = (sel.nodes || []).includes(n.id);
     const ports = edit ? outPorts(n).map((pt) => `<circle class="wf-port ${pt.when === 'error' ? 'wf-port-error'
       : (pt.when === 'false' || pt.when === 'rejected') ? 'wf-port-neg' : ''}" data-port="${esc(pt.when)}"
       cx="${pt.x}" cy="${pt.y}" r="5.5"><title>${pt.when ? `Drag to connect: ${esc(pt.when)}` : 'Drag to connect'}</title></circle>`).join('') : '';
@@ -752,11 +929,13 @@ function canvasSvg(def, edit) {
     </g>`;
   }).join('');
   return `<svg class="wf-graph wf-canvas ${edit ? 'wf-editable' : ''}" id="wf-canvas" viewBox="0 0 ${width} ${height}"
-      width="${width}" height="${height}" role="application" aria-label="Workflow canvas" tabindex="-1">
+      width="${Math.round(width * wf.zoom)}" height="${Math.round(height * wf.zoom)}" role="application"
+      aria-label="Workflow canvas" tabindex="-1">
     <defs><marker id="wf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" class="wf-arrow"/></marker></defs>
     ${edges}${boxes}
     <path id="wf-temp" class="wf-edge wf-edge-temp d-none" d=""/>
+    <rect id="wf-band" class="wf-band d-none" x="0" y="0" width="0" height="0"/>
   </svg>`;
 }
 
@@ -780,11 +959,12 @@ function removeSelection() {
   if (!sel) return false;
   if (sel.edge !== undefined) {
     wf.draft.edges.splice(sel.edge, 1);
-  } else if (sel.node) {
-    const node = wf.draft.nodes.find((n) => n.id === sel.node);
-    if (!node || node.type === 'start') return false;
-    wf.draft.nodes = wf.draft.nodes.filter((n) => n.id !== sel.node);
-    wf.draft.edges = wf.draft.edges.filter((e) => e.from !== sel.node && e.to !== sel.node);
+  } else if (sel.nodes) {
+    // The start step stays whatever else is selected.
+    const gone = new Set(sel.nodes.filter((id) => wf.draft.nodes.find((n) => n.id === id && n.type !== 'start')));
+    if (!gone.size) return false;
+    wf.draft.nodes = wf.draft.nodes.filter((n) => !gone.has(n.id));
+    wf.draft.edges = wf.draft.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to));
   }
   wf.canvas.sel = null;
   return true;
@@ -801,10 +981,13 @@ function wireCanvas(edit) {
     svg.innerHTML = fresh.innerHTML;
     selectionActions();
   };
+  wf.canvas.redraw = redraw;
   const commit = () => { renderBuilder(); markDirty(); };
+  // In the canvas's own units, whatever the zoom (or CSS) scales it to on screen.
   const point = (ev) => {
     const r = svg.getBoundingClientRect();
-    return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    const scale = r.width / (svg.viewBox.baseVal.width || r.width) || 1;
+    return { x: (ev.clientX - r.left) / scale, y: (ev.clientY - r.top) / scale };
   };
   const nodeAt = (p) => {
     const { pos } = canvasLayout(wf.draft);
@@ -817,12 +1000,19 @@ function wireCanvas(edit) {
     const host = document.getElementById('wf-sel-actions');
     if (!host) return;
     const sel = wf.canvas.sel;
-    const node = sel?.node && wf.draft.nodes.find((n) => n.id === sel.node);
+    const ids = selIds();
+    const node = ids.length === 1 && wf.draft.nodes.find((n) => n.id === ids[0]);
+    const copyable = ids.some((id) => wf.draft.nodes.find((n) => n.id === id && n.type !== 'start'));
+    const copy = copyable ? '<button type="button" class="btn btn-sm btn-outline-secondary" id="wf-sel-copy" title="Copy, then paste with Ctrl+V">Copy</button>' : '';
     host.innerHTML = node ? `<button type="button" class="btn btn-sm btn-outline-secondary" id="wf-sel-edit">Edit ${esc(node.id)}</button>
-        ${node.type !== 'start' ? '<button type="button" class="btn btn-sm btn-outline-danger" id="wf-sel-del">Remove</button>' : ''}`
+        ${copy}${node.type !== 'start' ? '<button type="button" class="btn btn-sm btn-outline-danger" id="wf-sel-del">Remove</button>' : ''}`
+      : ids.length > 1 ? `<span class="small text-secondary">${ids.length} steps</span> ${copy}
+        ${copyable ? '<button type="button" class="btn btn-sm btn-outline-danger" id="wf-sel-del">Remove</button>' : ''}`
       : sel?.edge !== undefined ? '<button type="button" class="btn btn-sm btn-outline-danger" id="wf-sel-del">Remove connection</button>' : '';
     const e = document.getElementById('wf-sel-edit');
     if (e) e.onclick = () => openNodeModal(node.id);
+    const c = document.getElementById('wf-sel-copy');
+    if (c) c.onclick = () => { const n = copySelection(); alert(`Copied ${n} step${n === 1 ? '' : 's'}.`, 'success'); };
     const d = document.getElementById('wf-sel-del');
     if (d) d.onclick = () => { if (removeSelection()) commit(); };
   };
@@ -845,32 +1035,78 @@ function wireCanvas(edit) {
       svg.setPointerCapture(ev.pointerId);
       return;
     }
+    wf.canvas.pointer = true;
     if (box) {
       const id = box.dataset.node;
-      wf.canvas.sel = { node: id };
-      if (!edit) { openNodeModal(id); return; }
+      const ids = selIds();
+      // E79: Shift or Ctrl + click adds a step to the selection or takes it out.
+      if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+        ev.preventDefault();
+        const next = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
+        wf.canvas.sel = next.length ? { nodes: next } : null;
+        redraw();
+        return;
+      }
+      if (!ids.includes(id)) wf.canvas.sel = { nodes: [id] };
+      if (!edit) { wf.canvas.sel = { nodes: [id] }; openNodeModal(id); return; }
       ev.preventDefault();
-      const { pos } = canvasLayout(wf.draft);
       const p = point(ev);
-      wf.canvas.drag = { id, dx: p.x - pos[id].x, dy: p.y - pos[id].y, x0: p.x, y0: p.y, moved: false };
+      // Dragging a selected step moves every selected step.
+      wf.canvas.drag = { id, ids: selIds(), x0: p.x, y0: p.y, moved: false, from: null };
       svg.setPointerCapture(ev.pointerId);
       redraw();
       return;
     }
     const conn = ev.target.closest('[data-edge]');
+    if (!conn && edit) {
+      // E79: a box dragged on empty canvas selects the steps it touches.
+      const p = point(ev);
+      wf.canvas.band = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, add: ev.shiftKey || ev.ctrlKey || ev.metaKey, keep: selIds() };
+      svg.setPointerCapture(ev.pointerId);
+      return;
+    }
     wf.canvas.sel = conn ? { edge: Number(conn.dataset.edge) } : null;
     redraw();
   };
 
+  const bandRect = (b) => ({ x: Math.min(b.x0, b.x1), y: Math.min(b.y0, b.y1), w: Math.abs(b.x1 - b.x0), h: Math.abs(b.y1 - b.y0) });
+  const inBand = (b) => {
+    const r = bandRect(b);
+    const { pos } = canvasLayout(wf.draft);
+    return wf.draft.nodes.filter((n) => {
+      const q = pos[n.id];
+      return q && q.x < r.x + r.w && q.x + WF_BOX.W > r.x && q.y < r.y + r.h && q.y + WF_BOX.H > r.y;
+    }).map((n) => n.id);
+  };
+
   svg.onpointermove = (ev) => {
     const p = point(ev);
+    const band = wf.canvas.band;
+    if (band) {
+      band.x1 = p.x; band.y1 = p.y;
+      const r = bandRect(band);
+      const rect = document.getElementById('wf-band');
+      rect.setAttribute('x', r.x); rect.setAttribute('y', r.y);
+      rect.setAttribute('width', r.w); rect.setAttribute('height', r.h);
+      rect.classList.remove('d-none');
+      const hit = new Set(inBand(band));
+      svg.querySelectorAll('[data-node]').forEach((g) => g.classList.toggle('wf-sel',
+        hit.has(g.dataset.node) || (band.add && band.keep.includes(g.dataset.node))));
+      return;
+    }
     const drag = wf.canvas.drag;
     if (drag) {
       if (!drag.moved && Math.hypot(p.x - drag.x0, p.y - drag.y0) < 4) return;
-      if (!drag.moved) { ensurePositions(); drag.moved = true; }
-      const node = wf.draft.nodes.find((n) => n.id === drag.id);
+      if (!drag.moved) {
+        ensurePositions();
+        drag.moved = true;
+        drag.from = Object.fromEntries(wf.draft.nodes.filter((n) => drag.ids.includes(n.id)).map((n) => [n.id, { ...n.position }]));
+      }
       const snap = (v) => Math.max(0, Math.round(v / WF_BOX.SNAP) * WF_BOX.SNAP);
-      node.position = { x: snap(p.x - drag.dx), y: snap(p.y - drag.dy) };
+      wf.draft.nodes.filter((n) => drag.from[n.id]).forEach((n) => {
+        const o = drag.from[n.id];
+        n.position = { x: snap(o.x + p.x - drag.x0), y: snap(o.y + p.y - drag.y0) };
+      });
       redraw();
       return;
     }
@@ -894,11 +1130,24 @@ function wireCanvas(edit) {
   svg.onpointerup = (ev) => {
     const drag = wf.canvas.drag;
     const connect = wf.canvas.connect;
+    const band = wf.canvas.band;
     wf.canvas.drag = null;
     wf.canvas.connect = null;
+    wf.canvas.band = null;
+    wf.canvas.pointer = false;
+    if (band) {
+      const r = bandRect(band);
+      const hit = r.w < 4 && r.h < 4 ? [] : inBand(band);
+      const ids = band.add ? [...new Set([...band.keep, ...hit])] : hit;
+      wf.canvas.sel = ids.length ? { nodes: ids } : null;
+      redraw();
+      return;
+    }
     if (drag) {
-      if (!drag.moved) { openNodeModal(drag.id); return; }
-      settle(wf.draft.nodes.find((n) => n.id === drag.id));
+      if (!drag.moved) { wf.canvas.sel = { nodes: [drag.id] }; openNodeModal(drag.id); return; }
+      // The moved steps keep their places among themselves; each then clears the others.
+      const moved = new Set(Object.keys(drag.from));
+      wf.draft.nodes.filter((n) => moved.has(n.id)).forEach(settle);
       commit();
       return;
     }
@@ -917,14 +1166,25 @@ function wireCanvas(edit) {
     const box = ev.target.closest?.('[data-node]');
     if (ev.key === 'Enter' && box) { ev.preventDefault(); openNodeModal(box.dataset.node); return; }
     if ((ev.key === 'Delete' || ev.key === 'Backspace') && edit) {
-      if (box) wf.canvas.sel = { node: box.dataset.node };
+      if (box && !selIds().includes(box.dataset.node)) wf.canvas.sel = { nodes: [box.dataset.node] };
       if (removeSelection()) { ev.preventDefault(); commit(); }
     }
     if (ev.key === 'Escape') { wf.canvas.sel = null; redraw(); }
   };
   svg.onfocusin = (ev) => {
+    // Keyboard focus selects the step; a click has already chosen the selection.
     const box = ev.target.closest?.('[data-node]');
-    if (box && wf.canvas.sel?.node !== box.dataset.node) { wf.canvas.sel = { node: box.dataset.node }; selectionActions(); }
+    if (box && !wf.canvas.pointer && !selIds().includes(box.dataset.node)) {
+      wf.canvas.sel = { nodes: [box.dataset.node] };
+      svg.querySelectorAll('[data-node]').forEach((g) => g.classList.toggle('wf-sel', g === box));
+      selectionActions();
+    }
+  };
+  // E79: Ctrl + wheel zooms.
+  svg.onwheel = (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey)) return;
+    ev.preventDefault();
+    setZoom(wf.zoom * (ev.deltaY < 0 ? WF_ZOOM.STEP : 1 / WF_ZOOM.STEP));
   };
 }
 
@@ -1186,7 +1446,7 @@ document.getElementById('wf-node-form').onsubmit = (event) => {
         node.position = { x: anchor.x + WF_BOX.W + WF_BOX.GX, y: anchor.y };
         settle(node);
       }
-      wf.canvas.sel = { node: id };
+      wf.canvas.sel = { nodes: [id] };
     } else {
       Object.keys(old).forEach((k) => delete old[k]);
       Object.assign(old, node);
@@ -1573,6 +1833,7 @@ onModalSubmit('wf-form', 'wf-error', async (form) => {
   wf.detail = created;
   wf.draft = structuredClone(created.draft);
   wf.dirty = false;
+  resetHistory();
   if (!wf.refs) await loadRefs();
   renderDetail();
   alert(`Created ${created.display_name}. ${created.problems.length ? 'Fill in the highlighted steps, then publish.' : ''}`, 'success');

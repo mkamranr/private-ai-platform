@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Workflows: zoom, multi-select, copy and paste, undo
+- **The canvas zooms** (buttons, *Fit*, Ctrl + wheel, Ctrl +/-/0).
+- **Select several steps** with Shift-click or by dragging a box around them, then move, remove, copy, cut, paste or duplicate them together (Ctrl + C / X / V / D). Pasted steps get new ids, and their references to each other follow. Copied steps can be pasted into another workflow.
+- **Undo and redo** (Ctrl + Z, Ctrl + Shift + Z, or the arrows above the canvas) for every change since the draft was loaded.
+- Fixed: a dragged step could drift away from the pointer as the canvas grew.
+- **Upgrade.** No migration.
+
 ### Connectors: Elasticsearch, Jira and Confluence
 - **Two more connectors in the Connector Catalogue**: *Elasticsearch* (search an internal Elasticsearch or OpenSearch; its write operations are switched off) and *Jira and Confluence* (search and read issues and pages on Server or Data Center, in read-only mode). Set their `MCP_` variables in `.env`, vendor and start them as usual; their tools arrive disabled.
 - **Upgrade.** No migration. Run `make mcp-vendor` on the build machine to include them in the bundle.
