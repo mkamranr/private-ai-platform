@@ -25,6 +25,7 @@ from pathlib import Path
 import yaml
 
 from app.config.settings import Settings
+from app.core.capabilities import Capability
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.interfaces.agent import AgentSpec
 from app.core.interfaces.tools import RiskLevel, ToolDefinition, ToolType
@@ -49,6 +50,7 @@ from app.repositories.agents import (
     SkillRepository,
     ToolRepository,
 )
+from app.repositories.models_registry import ModelAliasRepository, ModelRepository
 from app.schemas.agents import AgentVersionRead
 from app.services import connector_manifest
 from app.services.audit import AuditService
@@ -953,6 +955,8 @@ class AgentRegistryService:
         for skill_id in skill_ids:
             if await self._skills.get(skill_id) is None:
                 raise ValidationError(f"No skill with id {skill_id}.")
+        if tool_ids:
+            await self._require_tool_calls(model)
 
         row = AgentVersion(
             agent_id=agent.id,
@@ -975,6 +979,24 @@ class AgentRegistryService:
             self._versions.session.add(AgentSkill(agent_version_id=row.id, skill_id=skill_id))
         await self._versions.flush()
         return row
+
+    async def _require_tool_calls(self, name: str) -> None:
+        """E73: an agent with tools needs a model that calls them, checked when it is
+        saved rather than on its first run. A name the catalogue doesn't know is left to
+        run time (an alias may be created later)."""
+        session = self._versions.session
+        alias = await ModelAliasRepository(session).get_by_alias(name)
+        model = (
+            alias.model if alias is not None else await ModelRepository(session).get_by_name(name)
+        )
+        if model is None or Capability.TOOLS in model.effective_capabilities:
+            return
+        raise ValidationError(
+            f"{name!r} can't call tools, and this agent has some. Choose a model that "
+            "can, or remove the tools. (If it can, declare tool calls on the model, or ask "
+            "its runtime from the Models page.)",
+            details={"field": "model", "unsupported": [Capability.TOOLS.value]},
+        )
 
     async def current_version(self, agent_id: uuid.UUID) -> AgentVersion | None:
         return await self._versions.get_current(agent_id)

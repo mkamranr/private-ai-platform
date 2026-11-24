@@ -9,15 +9,17 @@ without a word. So each runtime **declares** what it supports, the model's type 
 that, and the gateway refuses anything outside it up front with a 400 that names the
 model and the missing capability.
 
-The declaration is a default, not a probe. A deployment launched with different flags,
-or an external endpoint the platform knows nothing about, can be described exactly with
-a per-model declaration (``Model.capabilities``), which replaces the default.
+The declaration is a default. Since E73 a probe of the serving runtime
+(`app.services.capability_probe`) can correct it per model (``Model.probed_capabilities``),
+and a per-model declaration (``Model.capabilities``) still replaces both: for a
+deployment launched with different flags, or an endpoint a probe can't read.
 """
 
 from __future__ import annotations
 
 import enum
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 
 class Capability(enum.StrEnum):
@@ -117,16 +119,46 @@ def default_for(runtime: str, model_type: str) -> frozenset[Capability]:
     return RUNTIME_CAPABILITIES.get(runtime, ALL) & TYPE_CAPABILITIES.get(model_type, ALL)
 
 
-def effective(
-    runtime: str, model_type: str, declared: Iterable[str] | None
+def corrected(
+    base: frozenset[Capability],
+    found: Mapping[str, Any] | None,
+    allowed: frozenset[Capability],
 ) -> frozenset[Capability]:
-    """A model's capabilities: its own declaration if it has one, else the default.
+    """E73: ``base`` corrected by a probe's findings (capability name to yes or no).
+
+    A capability found is added only if ``allowed`` (the model's type) permits it; one
+    found missing is removed. A model that can't chat can't stream, resume, call tools or
+    look at images either."""
+    if not found:
+        return base
+    out = set(base)
+    for capability in Capability:
+        value = found.get(capability.value)
+        if value is True and capability in allowed:
+            out.add(capability)
+        elif value is False:
+            out.discard(capability)
+    if Capability.CHAT not in out:
+        out -= {Capability.STREAMING, Capability.RESUME, Capability.TOOLS, Capability.VISION}
+    return frozenset(out)
+
+
+def effective(
+    runtime: str,
+    model_type: str,
+    declared: Iterable[str] | None,
+    probed: Mapping[str, Any] | None = None,
+) -> frozenset[Capability]:
+    """A model's capabilities: its own declaration if it has one, else the default
+    corrected by what a probe of its runtime found (E73).
 
     A stored declaration with a name this version doesn't know (written by a newer one)
     keeps the names it does know rather than failing every request to the model.
     """
     if declared is None:
-        return default_for(runtime, model_type)
+        return corrected(
+            default_for(runtime, model_type), probed, TYPE_CAPABILITIES.get(model_type, ALL)
+        )
     return frozenset(c for c in Capability if c.value in {str(v) for v in declared})
 
 

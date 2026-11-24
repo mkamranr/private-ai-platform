@@ -11,7 +11,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 3 | Model registry | P0 | Existing (E3, E4) | `models/models_registry.py`, `services/model_registry.py`, [model-governance.md](../model-governance.md) | Grouping is by `family`, not a `model_versions` table (deliberate) |
 | 4 | OpenAI-compatible gateway | P0 | Existing | `api/v1/gateway.py`, `services/gateway.py`, `services/gateway_policy.py` | — (load balancing and pre-first-byte failover: E58; a stream broken mid-answer is resumed on another copy: E66) |
 | 5 | API key management | P0 | Existing | `services/api_keys.py`, `frontend/developer` | Expiry and allowed-alias scopes: verify against `test_api_key_scopes.py` |
-| 6 | vLLM / Ollama adapters | P0 | Existing | `services/llm_provider.py`; `ollama` is an external runtime | ~~Declared-capability contract per adapter~~ (E65); declarations are defaults, not probed from the runtime |
+| 6 | vLLM / Ollama adapters | P0 | Existing | `services/llm_provider.py`; `ollama` is an external runtime | ~~Declared-capability contract per adapter~~ (E65), ~~probed from the runtime~~ (E73) |
 | 7 | Basic RBAC | P0 | Existing (E3) | `core/permissions.py`, `models/auth.py`, `services/seed.py` | Mapped to the plan's 8 roles in E3 (`KNOWLEDGE_ADMIN` added); see `docs/teams.md` |
 | 8 | Audit trail | P0 | Existing | `models/audit.py`, `services/audit.py`, `services/audit_export.py` | ~~Export, correlation-ID filter in UI~~ (E54) |
 | 9 | Offline installation | P0 | Existing (E7) | `offline/`, `scripts/build_bundle.py`, `scripts/bundle_signing.py`, `scripts/sbom.py`, Offline Updates page | ~~Key rotation and revocation~~ (E63); no offline root key or key expiry |

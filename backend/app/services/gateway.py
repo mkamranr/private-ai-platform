@@ -46,6 +46,7 @@ from app.core import metrics
 from app.core.errors import (
     AgentsStoppedError,
     AuthenticationError,
+    ConflictError,
     DependencyUnavailableError,
     NotFoundError,
     PermissionDeniedError,
@@ -74,6 +75,7 @@ from app.repositories.models_registry import (
     UsageRepository,
 )
 from app.repositories.operations import GatewayQuotaRepository, InferenceBackendRepository
+from app.services import capability_probe
 from app.services.gateway_policy import BREAKERS, Admission, GatewayPolicy
 from app.services.identity import self_reported_identity
 from app.services.inference_backends import backend_api_key
@@ -904,6 +906,54 @@ class GatewayService:
         require_capabilities(target, needs)
         return self._provider(target), target.served_model_name
 
+    async def probe_capabilities(self, model: Model) -> Model:
+        """E73: ask the runtime serving ``model`` what it can do, through the copy and
+        with the credential the gateway itself would use, and keep what it found.
+
+        A probe that can't reach the runtime keeps the previous findings and says why in
+        ``capabilities_probe_detail``. Raises ConflictError when nothing serves it."""
+        try:
+            target = await self.resolve(model.name)
+        except (DependencyUnavailableError, ModelBlockedError) as exc:
+            raise ConflictError(
+                f"Nothing is serving {model.name!r} to ask; deploy it first. ({exc.message})"
+            ) from exc
+        if target.model.id != model.id:
+            raise ConflictError(f"{model.name!r} resolves to another model; probe that one.")
+        now = dt.datetime.now(dt.UTC)
+        try:
+            result = await capability_probe.probe(
+                runtime=model.runtime,
+                model_type=model.type,
+                base_url=target.internal_url,
+                served_name=target.served_model_name,
+                api_key=self._api_key(target),
+            )
+        except capability_probe.ProbeError as exc:
+            model.capabilities_probed_at = now
+            model.capabilities_probe_detail = f"The probe failed: {exc}"[:4000]
+        else:
+            model.probed_capabilities = result.found or None
+            model.capabilities_probed_at = now
+            model.capabilities_probe_detail = (
+                "; ".join(result.evidence) or "The runtime told nothing beyond its declaration."
+            )[:4000]
+        await self._models.flush()
+        log.info(
+            "model_capabilities_probed",
+            model=model.name,
+            found=model.probed_capabilities,
+            detail=(model.capabilities_probe_detail or "")[:200],
+        )
+        return model
+
+    def _api_key(self, target: ResolvedTarget) -> str | None:
+        return target.api_key or external_key_for(
+            self._settings,
+            target.model.runtime,
+            target.model.endpoint_url or target.internal_url,
+        )
+
     def _provider(self, target: ResolvedTarget) -> VLLMProvider:
         # The one place a credential is attached, because this is the one place a provider
         # is built (see `provider_for_model`). Agents, RAG, the chat frontend and the /v1
@@ -919,12 +969,7 @@ class GatewayService:
         #
         # A linked inference backend's own key comes first (E2); it was matched to this
         # exact endpoint when the target was resolved.
-        api_key = target.api_key or external_key_for(
-            self._settings,
-            target.model.runtime,
-            target.model.endpoint_url or target.internal_url,
-        )
-        return VLLMProvider(target.internal_url, api_key=api_key)
+        return VLLMProvider(target.internal_url, api_key=self._api_key(target))
 
     async def ocr_engine_for_model(self, model: str) -> tuple[HttpOcrEngine, str]:
         """Resolve an OCR alias to an engine, for callers that are not HTTP requests.

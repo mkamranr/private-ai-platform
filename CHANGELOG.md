@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Models: capabilities read from the runtime
+- **Ask the runtime** on a model's *Edit* dialog asks the serving copy what it can do: Ollama and llama.cpp report it directly, and other runtimes get a one-token chat with and without a tool. What it finds corrects the runtime's default (a vLLM launched without tool calling no longer accepts tools); your own declaration still wins.
+- An agent with tools can no longer be saved on a model that can't call them.
+- **Upgrade.** Migration `f4c6e8a0b2d3`.
+
 ### Workflows: parallel For each
 - A *For each* step can run up to 10 items at once (*At once*); results keep the order of the list. When an item finishes, the next one starts in its place, even while others wait for an approval.
 - *When an item fails*: `stop` (the default) fails the step and cancels the items still running; `continue` runs every item and reports the failures in `failed` and `errors`.
