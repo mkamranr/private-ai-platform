@@ -429,6 +429,21 @@ function fitZoom() {
   setZoom(Math.min(1, (wrap.clientWidth - 16) / width));
 }
 
+/* E84: Space held turns a drag on the canvas into panning. */
+let wfSpaceHeld = false;
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== ' ' || !document.getElementById('wf-canvas') || document.querySelector('.modal.show')) return;
+  if (ev.target.closest?.('input, textarea, select, button, [contenteditable="true"]')) return;
+  ev.preventDefault();  // not the page scrolling down
+  if (!wfSpaceHeld) document.getElementById('wf-canvas').classList.add('wf-pannable');
+  wfSpaceHeld = true;
+});
+document.addEventListener('keyup', (ev) => {
+  if (ev.key !== ' ') return;
+  wfSpaceHeld = false;
+  document.getElementById('wf-canvas')?.classList.remove('wf-pannable');
+});
+
 /* E79: the builder's keyboard shortcuts, wherever the focus is on the page (except in a
  * form field or an open dialog). */
 document.addEventListener('keydown', (ev) => {
@@ -512,7 +527,9 @@ function renderBuilder() {
         <kbd>Delete</kbd> removes the selection. Shift-click or drag a box around steps to select
         several and move them together; <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> /
         <kbd>D</kbd> copy, cut, paste and duplicate them, <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes and
-        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes, <kbd>Ctrl</kbd>+wheel zooms.
+        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes, <kbd>Ctrl</kbd>+wheel zooms, and dragging
+        with <kbd>Space</kbd> held (or the middle button) pans. Connecting a step to one before it
+        makes a loop (&#8634;): the steps between run again, a set number of times at most.
         Steps that don&rsquo;t depend on each other run at the same time.
       </div>` : ''}
     </div>
@@ -627,14 +644,23 @@ function edgeRow(e, i, edit) {
   const whens = ['', ...(WF_BRANCHES[from?.type] || []), ...(from && from.type !== 'start' ? ['error'] : [])];
   const opts = (values, current, labels = {}) => values.map((v) =>
     `<option value="${esc(v)}" ${v === (current || '') ? 'selected' : ''}>${esc(labels[v] ?? v)}</option>`).join('');
+  const back = e.back ? ` <span class="chip" title="Goes back: the steps between run again">↺ up to ${esc(e.max_loops || 3)}×</span>` : '';
   if (!edit) {
     return `<tr><td class="mono small">${esc(e.from)}</td><td class="mono small">${esc(e.to)}</td>
-      <td class="small">${esc(e.when || '—')}</td><td></td></tr>`;
+      <td class="small">${esc(e.when || '—')}${back}</td><td></td></tr>`;
   }
+  // E84: an edge back takes no error branch, and says how often it may be followed.
+  const branches = e.back ? whens.filter((w) => w !== 'error') : whens;
   return `<tr>
     <td><select class="form-select form-select-sm mono" data-edge="${i}" data-edge-key="from">${opts(ids, e.from)}</select></td>
     <td><select class="form-select form-select-sm mono" data-edge="${i}" data-edge-key="to">${opts(ids, e.to)}</select></td>
-    <td><select class="form-select form-select-sm" data-edge="${i}" data-edge-key="when">${opts(whens, e.when, { '': 'always' })}</select></td>
+    <td><div class="d-flex gap-1 align-items-center">
+      <select class="form-select form-select-sm" data-edge="${i}" data-edge-key="when">${opts(branches, e.when, { '': 'always' })}</select>
+      <label class="small text-nowrap" title="Goes back to an earlier step, repeating the steps between">
+        <input type="checkbox" class="form-check-input" data-edge-back="${i}" ${e.back ? 'checked' : ''}> back</label>
+      ${e.back ? `<input class="form-control form-control-sm" type="number" min="1" max="20" style="width:4.2rem"
+        data-edge-loops="${i}" value="${esc(e.max_loops || 3)}" title="At most this many times in a run">` : ''}
+    </div></td>
     <td class="text-end"><button class="btn btn-sm btn-outline-danger" data-edge-del="${i}" title="Remove">✕</button></td>
   </tr>`;
 }
@@ -685,6 +711,27 @@ function wireBuilder() {
         edge[s.dataset.edgeKey] = s.value;
         if (s.dataset.edgeKey === 'from') delete edge.when;
       }
+      rerender();
+    };
+  });
+  document.querySelectorAll('[data-edge-back]').forEach((c) => {
+    c.onchange = () => {
+      const edge = wf.draft.edges[Number(c.dataset.edgeBack)];
+      if (c.checked) {
+        edge.back = true;
+        edge.max_loops = edge.max_loops || 3;
+        if (edge.when === 'error') delete edge.when;
+      } else {
+        delete edge.back;
+        delete edge.max_loops;
+      }
+      rerender();
+    };
+  });
+  document.querySelectorAll('[data-edge-loops]').forEach((input) => {
+    input.onchange = () => {
+      const value = Math.round(Number(input.value));
+      wf.draft.edges[Number(input.dataset.edgeLoops)].max_loops = Math.min(20, Math.max(1, value || 3));
       rerender();
     };
   });
@@ -768,15 +815,17 @@ function graphLayout(def, { auto = false, trust = false } = {}) {
   const nodes = def.nodes || [];
   const ids = nodes.map((n) => n.id);
   const edges = (def.edges || []).filter((e) => ids.includes(e.from) && ids.includes(e.to));
+  // E84: an edge back doesn't push its target to a later column.
+  const forward = edges.filter((e) => !e.back);
   const indeg = Object.fromEntries(ids.map((id) => [id, 0]));
-  edges.forEach((e) => { indeg[e.to] += 1; });
+  forward.forEach((e) => { indeg[e.to] += 1; });
   const level = Object.fromEntries(ids.map((id) => [id, 0]));
   const queue = ids.filter((id) => indeg[id] === 0);
   const seen = new Set();
   while (queue.length) {
     const id = queue.shift();
     seen.add(id);
-    edges.filter((e) => e.from === id).forEach((e) => {
+    forward.filter((e) => e.from === id).forEach((e) => {
       level[e.to] = Math.max(level[e.to], level[id] + 1);
       indeg[e.to] -= 1;
       if (indeg[e.to] === 0) queue.push(e.to);
@@ -795,13 +844,15 @@ function graphLayout(def, { auto = false, trust = false } = {}) {
   const saved = auto ? null : savedPositions(nodes, trust);
   if (saved) {
     const right = Math.max(...Object.values(saved).map((p) => p.x)) + W + PAD;
-    const bottom = Math.max(...Object.values(saved).map((p) => p.y)) + H + GY + PAD;
+    const bottom = Math.max(...Object.values(saved).map((p) => p.y)) + H + GY + PAD + (edges.some((e) => e.back) ? 20 : 0);
     return { pos: saved, edges, W, H, GX, GY, width: right, height: bottom, manual: true };
   }
   const cols = Object.keys(columns).length;
   const rows = Math.max(1, ...Object.values(columns).map((l) => l.length));
   // A row of headroom below for edges routed under the boxes.
-  return { pos, edges, W, H, GX, GY, width: PAD * 2 + cols * W + (cols - 1) * GX, height: PAD * 2 + rows * H + rows * GY };
+  // E84: an edge back runs under the steps, with its label below it.
+  const loops = edges.some((e) => e.back) ? 20 : 0;
+  return { pos, edges, W, H, GX, GY, width: PAD * 2 + cols * W + (cols - 1) * GX, height: PAD * 2 + rows * H + rows * GY + loops };
 }
 
 /** status: optional {nodeId: 'succeeded'|'failed'|'waiting'|'skipped'|'running'} */
@@ -816,7 +867,10 @@ function graphSvg(def, status = null) {
     // Routing under the boxes in between only makes sense for the column layout.
     const skips = !manual && x2 - x1 > W + GX + 1;
     let d;
-    if (skips) {
+    if (e.back) {
+      // E84: an edge back, under the steps it spans into the target's bottom.
+      ({ d } = backEdgePath(a, { x: W, y: H / 2 }, b, pos));
+    } else if (skips) {
       // Over a column: run below the lowest box in between, so the line is never hidden
       // behind a node it does not touch.
       const below = Math.max(a.y, b.y, ...Object.values(pos)
@@ -827,12 +881,13 @@ function graphSvg(def, status = null) {
       const dx = back ? 60 : Math.max(24, (x2 - x1) / 2);
       d = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
     }
-    const cls = e.when === 'error' ? 'wf-edge wf-edge-error'
+    const cls = e.back ? 'wf-edge wf-edge-back' : e.when === 'error' ? 'wf-edge wf-edge-error'
       : (e.when === 'false' || e.when === 'rejected') ? 'wf-edge wf-edge-neg' : 'wf-edge';
-    const ly = skips ? Math.max(a.y, b.y, ...Object.values(pos).filter((p) => p.x > a.x && p.x < b.x)
+    const ly = e.back ? backEdgePath(a, { x: W, y: H / 2 }, b, pos).my : skips ? Math.max(a.y, b.y, ...Object.values(pos).filter((p) => p.x > a.x && p.x < b.x)
       .map((p) => p.y)) + H + GY / 2 - 5 : (y1 + y2) / 2 - 6;
-    const label = e.when ? `<text class="wf-edge-label" x="${(x1 + x2) / 2}" y="${ly}"
-      text-anchor="middle">${esc(e.when)}</text>` : '';
+    const text = e.back ? `↺ ${e.when ? `${e.when}, ` : ''}up to ${e.max_loops || 3}×` : e.when;
+    const label = text ? `<text class="wf-edge-label" x="${(x1 + x2) / 2}" y="${ly}"
+      text-anchor="middle">${esc(text)}</text>` : '';
     return `<path class="${cls}" d="${d}" marker-end="url(#wf-arrow)"/>${label}`;
   }).join('');
   const boxes = nodes.map((n) => {
@@ -880,6 +935,47 @@ function edgePath(a, port, b) {
   return { d: `M${x1},${y1} C${c1} ${x2 - dx},${y2} ${x2},${y2}`, mx: (x1 + x2) / 2, my: (y1 + y2) / 2 };
 }
 
+/** E84: an edge back leaves its port, rises above both steps and comes down into the
+ *  target's top, so it never runs under the boxes it skips. */
+function backEdgePath(a, port, b, pos = {}) {
+  // Under the steps it spans (there is headroom below, none above the first row), into
+  // the target's bottom right of its failure dot; the label sits under the line.
+  const { W, H } = WF_BOX;
+  const x1 = a.x + port.x, y1 = a.y + port.y, x2 = b.x + W * 0.75, y2 = b.y + H;
+  const left = Math.min(a.x, b.x), right = Math.max(a.x, b.x);
+  const floor = Math.max(a.y, b.y, ...Object.values(pos)
+    .filter((p) => p.x >= left && p.x <= right).map((p) => p.y)) + H + 22;
+  return {
+    d: `M${x1},${y1} C${x1 + 40},${y1} ${x1 + 40},${floor} ${x1 - 10},${floor} L${x2 + 20},${floor} C${x2},${floor} ${x2},${floor} ${x2},${y2}`,
+    mx: (x1 + x2) / 2, my: floor + 18,
+  };
+}
+
+/** E84: the steps an edge back runs again: those on a path from its target to its source. */
+function loopRegion(def, e) {
+  const forward = (def.edges || []).filter((x) => !x.back);
+  const reach = (start, dir) => {
+    const seen = new Set([start]);
+    const queue = [start];
+    while (queue.length) {
+      const id = queue.shift();
+      forward.forEach((x) => {
+        const [from, to] = dir === 'down' ? [x.from, x.to] : [x.to, x.from];
+        if (from === id && !seen.has(to)) { seen.add(to); queue.push(to); }
+      });
+    }
+    return seen;
+  };
+  const below = reach(e.to, 'down'), above = reach(e.from, 'up');
+  return [...below].filter((id) => above.has(id));
+}
+
+/** E84: whether `from` already follows `to` by forward edges, so a connection from
+ *  `from` to `to` goes back. */
+function followsFrom(def, from, to) {
+  return loopRegion(def, { from, to }).includes(from) && from !== to;
+}
+
 function canvasLayout(def) {
   const layout = graphLayout(def, { trust: wf.canvas.manual });
   layout.width = Math.max(layout.width + 120, 640);
@@ -897,15 +993,18 @@ function canvasSvg(def, edit) {
     const from = byId[e.from], to = byId[e.to];
     if (!from || !to) return '';
     const port = outPorts(from).find((p) => p.when === (e.when || '')) || outPorts(from)[0] || { x: W, y: H / 2, side: 'right' };
-    const { d, mx, my } = edgePath(pos[e.from], port, pos[e.to]);
-    const cls = e.when === 'error' ? 'wf-edge wf-edge-error'
+    const { d, mx, my } = e.back ? backEdgePath(pos[e.from], port, pos[e.to], pos)
+      : edgePath(pos[e.from], port, pos[e.to]);
+    const cls = e.back ? 'wf-edge wf-edge-back'
+      : e.when === 'error' ? 'wf-edge wf-edge-error'
       : (e.when === 'false' || e.when === 'rejected') ? 'wf-edge wf-edge-neg' : 'wf-edge';
     const chosen = sel.edge === i;
+    const label = e.back ? `↺ ${e.when ? `${e.when}, ` : ''}up to ${e.max_loops || 3}×` : e.when;
     return `<g class="wf-conn ${chosen ? 'wf-sel' : ''}" data-edge="${i}">
-      <title>${esc(e.from)} → ${esc(e.to)}${e.when ? ` (${esc(e.when)})` : ''}</title>
+      <title>${esc(e.from)} → ${esc(e.to)}${e.when ? ` (${esc(e.when)})` : ''}${e.back ? ': goes back, repeating the steps between' : ''}</title>
       <path class="wf-edge-hit" d="${d}"/>
       <path class="${cls}" d="${d}" marker-end="url(#wf-arrow)"/>
-      ${e.when ? `<text class="wf-edge-label" x="${mx}" y="${my - 6}" text-anchor="middle">${esc(e.when)}</text>` : ''}
+      ${label ? `<text class="wf-edge-label" x="${mx}" y="${my - 6}" text-anchor="middle">${esc(label)}</text>` : ''}
       ${chosen && edit ? `<g class="wf-edge-del" data-edge-remove="${i}" transform="translate(${mx},${my + 10})">
         <title>Remove this connection</title><circle r="9"/><path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5"/></g>` : ''}
     </g>`;
@@ -1019,6 +1118,17 @@ function wireCanvas(edit) {
   selectionActions();
 
   svg.onpointerdown = (ev) => {
+    // E84: drag with the middle button, or with Space held, to pan; when only viewing,
+    // dragging the empty canvas pans too.
+    const empty = !ev.target.closest('[data-node], [data-edge], [data-port]');
+    if (ev.button === 1 || (ev.button === 0 && (wfSpaceHeld || (!edit && empty)))) {
+      ev.preventDefault();
+      const wrap = document.getElementById('wf-graph');
+      wf.canvas.pan = { x: ev.clientX, y: ev.clientY, left: wrap?.scrollLeft || 0 };
+      svg.classList.add('wf-panning');
+      svg.setPointerCapture(ev.pointerId);
+      return;
+    }
     if (ev.button !== 0) return;
     const remove = ev.target.closest('[data-edge-remove]');
     if (remove && edit) {
@@ -1080,6 +1190,14 @@ function wireCanvas(edit) {
   };
 
   svg.onpointermove = (ev) => {
+    const pan = wf.canvas.pan;
+    if (pan) {
+      const wrap = document.getElementById('wf-graph');
+      if (wrap) wrap.scrollLeft = pan.left - (ev.clientX - pan.x);
+      window.scrollBy(0, pan.y - ev.clientY);
+      pan.y = ev.clientY;
+      return;
+    }
     const p = point(ev);
     const band = wf.canvas.band;
     if (band) {
@@ -1128,6 +1246,11 @@ function wireCanvas(edit) {
   };
 
   svg.onpointerup = (ev) => {
+    if (wf.canvas.pan) {
+      wf.canvas.pan = null;
+      svg.classList.remove('wf-panning');
+      return;
+    }
     const drag = wf.canvas.drag;
     const connect = wf.canvas.connect;
     const band = wf.canvas.band;
@@ -1156,7 +1279,13 @@ function wireCanvas(edit) {
       if (!target || target.id === connect.from || target.type === 'start') { redraw(); return; }
       const when = connect.when || undefined;
       const exists = wf.draft.edges.some((e) => e.from === connect.from && e.to === target.id && (e.when || undefined) === when);
-      if (!exists) wf.draft.edges.push({ from: connect.from, to: target.id, ...(when ? { when } : {}) });
+      // E84: to a step it already follows from, the connection goes back (a loop).
+      const back = followsFrom(wf.draft, connect.from, target.id);
+      if (!exists) {
+        wf.draft.edges.push({ from: connect.from, to: target.id, ...(when ? { when } : {}),
+          ...(back ? { back: true, max_loops: 3 } : {}) });
+        if (back) alert(`Connected back to ${target.id}: the steps between run again, up to 3 times. Change the count under Connections.`, 'info');
+      }
       wf.canvas.sel = null;
       commit();
     }
@@ -1229,7 +1358,7 @@ function isTimed(type) {
 /** What `node` can read: `{{ input.* }}` and the outputs of the steps before it. */
 function readableFrom(nodeId, prevId = null) {
   const parents = {};
-  wf.draft.edges.forEach((e) => { (parents[e.to] = parents[e.to] || []).push(e.from); });
+  wf.draft.edges.filter((e) => !e.back).forEach((e) => { (parents[e.to] = parents[e.to] || []).push(e.from); });
   const seen = new Set();
   const queue = [...(parents[nodeId] || []), ...(prevId ? [prevId] : [])];
   while (queue.length) {
@@ -1249,7 +1378,29 @@ function readableFrom(nodeId, prevId = null) {
     (outputs || []).forEach((o) => out.push(`nodes.${n.id}.${o}`));
     if (wf.draft.edges.some((e) => e.from === n.id && e.when === 'error')) out.push(`nodes.${n.id}.error`);
   });
+  // E84: inside a loop, each step's output on the pass before.
+  wf.draft.edges.filter((e) => e.back).forEach((e) => {
+    const region = loopRegion(wf.draft, e);
+    if (!region.includes(nodeId)) return;
+    region.forEach((id) => {
+      const n = wf.draft.nodes.find((x) => x.id === id);
+      const schema = wf.nodeTypes.find((t) => t.type === n?.type);
+      (schema?.outputs || []).forEach((o) => {
+        const ref = `previous.${id}.${o}`;
+        if (!out.includes(ref)) out.push(ref);
+      });
+    });
+  });
   return out;
+}
+
+/** E84: the type of what a reference reads (`text`, `list of object`...), if known. */
+function refType(ref) {
+  const [root, id, output] = ref.split('.');
+  if (root !== 'nodes' && root !== 'previous') return '';
+  const n = wf.draft.nodes.find((x) => x.id === id);
+  if (output === 'error') return 'text';
+  return wf.nodeTypes.find((t) => t.type === n?.type)?.output_types?.[output] || '';
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1293,7 +1444,11 @@ function openNodeModal(id, newType = null) {
       ${fields}
       ${readable.length && edit ? `<div class="col-12">
         <div class="small text-secondary mb-1">Values from earlier steps: click one to insert it where the cursor is</div>
-        <div class="wf-refs">${readable.map((r) => `<button type="button" class="chip mono" data-wf-ref="${esc(r)}">{{ ${esc(r)} }}</button>`).join('')}</div>
+        <div class="wf-refs">${readable.map((r) => {
+          const type = refType(r);
+          return `<button type="button" class="chip mono" data-wf-ref="${esc(r)}" ${type ? `title="${esc(type)}"` : ''}>{{ ${esc(r)} }}${
+            type ? ` <span class="text-secondary">${esc(type)}</span>` : ''}</button>`;
+        }).join('')}</div>
       </div>` : ''}
       ${isTimed(node.type) ? `
         <div class="col-12"><hr class="my-1"><div class="small text-secondary">Reliability</div></div>

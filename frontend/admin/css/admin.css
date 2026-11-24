@@ -808,6 +808,9 @@ html:has(#wf-canvas), body:has(#wf-canvas) { overflow-anchor: none; }
 .wf-graph .wf-edge { fill: none; stroke: #9aa3c7; stroke-width: 1.6; }
 .wf-graph .wf-edge-neg { stroke-dasharray: 5 4; }
 .wf-graph .wf-edge-error { stroke: var(--crit); stroke-dasharray: 3 3; }
+.wf-graph .wf-edge-back { stroke: var(--bs-info, #06b6d4); stroke-dasharray: 7 4; }
+.wf-canvas.wf-pannable, .wf-canvas:not(.wf-editable) { cursor: grab; }
+.wf-canvas.wf-panning { cursor: grabbing; }
 .wf-graph .wf-arrow { fill: #9aa3c7; }
 .wf-graph .wf-edge-label {
   font-size: 10px; font-weight: 600; fill: var(--bs-secondary-color);

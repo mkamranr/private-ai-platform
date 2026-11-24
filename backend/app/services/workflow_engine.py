@@ -344,6 +344,10 @@ class WorkflowEngine:
                     finished = True
             if failure is not None:
                 return await self._fail(run, node_state, failure)
+            if not finished:
+                looped = await self._follow_back_edges(run, definition, state, node_state, runnable)
+                if isinstance(looped, str):
+                    return await self._fail(run, node_state, looped)
 
         waiting = [e for e in node_state.values() if e.get("status") == "waiting"]
         async with self._db:
@@ -372,6 +376,70 @@ class WorkflowEngine:
                 run.finished_at = _now()
             await self._steps.flush()
         return run
+
+    async def _follow_back_edges(
+        self,
+        run: WorkflowRun,
+        definition: Mapping[str, Any],
+        state: dict[str, Any],
+        node_state: dict[str, dict[str, Any]],
+        finished_now: list[str],
+    ) -> bool | str:
+        """E84: for each step just finished whose branch has an edge back, run the steps
+        from its target to it again: their entries are cleared, so they become ready in
+        turn, and their outputs kept as ``previous``. Every step in that stretch leads to
+        the source, so all of them have finished: nothing waiting is left behind. Past
+        ``max_loops`` the edge is not followed, and with no other way on from that branch
+        the run fails, saying so. Returns whether it looped, or the failure."""
+        looped = False
+        for node_id in finished_now:
+            entry = node_state.get(node_id) or {}
+            if entry.get("status") != "succeeded":
+                continue
+            branch = entry.get("branch")
+            edge = next(
+                (
+                    e
+                    for e in wd.back_edges_of(definition)
+                    if e.get("from") == node_id and e.get("when") == branch
+                ),
+                None,
+            )
+            if edge is None:
+                continue
+            key = f"{node_id}>{edge.get('to')}:{branch or ''}"
+            loops = dict(state.get("loops") or {})
+            done = int(loops.get(key, 0))
+            if done >= wd.max_loops(edge):
+                if not any(e.get("when") == branch for e in wd.outgoing(definition, node_id)):
+                    return (
+                        f"Step {node_id!r} went back to {edge.get('to')!r} "
+                        f"{done} times, the most its edge back allows."
+                    )
+                continue
+            region = wd.loop_region(definition, edge)
+            previous = dict(state.get("previous") or {})
+            for step in region:
+                old = node_state.pop(step, None) or {}
+                if old.get("status") in ("succeeded", "failed"):
+                    previous[step] = old.get("output")
+            # A step after the target that was skipped (the other branch of a condition
+            # on the way) never ran: it may run this pass.
+            for step in wd.descendants(definition).get(str(edge.get("to")), set()):
+                if (node_state.get(step) or {}).get("status") == "skipped":
+                    node_state.pop(step)
+            loops[key] = done + 1
+            # Loops inside this one start counting again on each pass round it.
+            for inner in wd.back_edges_of(definition):
+                inner_key = f"{inner.get('from')}>{inner.get('to')}:{inner.get('when') or ''}"
+                if inner_key != key and inner.get("from") in region and inner.get("to") in region:
+                    loops.pop(inner_key, None)
+            state["loops"], state["previous"] = loops, previous
+            async with self._db:
+                run.state = {**state, "nodes": node_state}
+            log.info("workflow_loop", run=str(run.id), edge=key, loop=done + 1)
+            looped = True
+        return looped
 
     def _activated(
         self, definition: Mapping[str, Any], node: Mapping[str, Any], node_state: dict
@@ -423,6 +491,8 @@ class WorkflowEngine:
                 "workflow_id": str(run.workflow_id),
                 "version": run.version,
             },
+            # E84: each step's output on the pass before an edge back ran it again.
+            "previous": dict((run.state or {}).get("previous") or {}),
         }
 
     # ------------------------------------------------------------------ one node

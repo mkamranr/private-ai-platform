@@ -159,3 +159,102 @@ class TestNodeTypes:
         }
         assert wd.NODE_SCHEMAS["condition"].as_dict()["branches"] == ["false", "true"]
         assert wd.NODE_SCHEMAS["start"].as_dict()["outputs"] is None
+
+
+class TestTypedPaths:
+    """E84: a template's path is checked through the output's type, not only its name."""
+
+    SEARCH = node(
+        "search",
+        "retrieval",
+        knowledge_base_ids=["5f0c6d0e-0000-4000-8000-000000000001"],
+        query="q",
+    )
+
+    def test_deeper_paths(self) -> None:
+        def found(prompt: str) -> set:
+            return problems(START, self.SEARCH, node("ask", "llm", model="m", prompt=prompt), END)
+
+        assert found("{{ nodes.search.passages.0.text }} {{ nodes.search.count }}") == set()
+        assert found("{{ nodes.search.passages.0.document }}") == set()
+        assert any(
+            "'first' is not an index" in m for _, m in found("{{ nodes.search.passages.first }}")
+        )
+        assert any("no field 'title'" in m for _, m in found("{{ nodes.search.passages.0.title }}"))
+        assert any(
+            "'context' is text, which has no 'size'" in m
+            for _, m in found("{{ nodes.search.context.size }}")
+        )
+
+    def test_model_outputs_and_any(self) -> None:
+        later = node(
+            "use",
+            "transform",
+            output={
+                "t": "{{ nodes.ask.usage.total_tokens }}",
+                "j": "{{ nodes.ask.json.anything.deep.0 }}",
+                "e": "{{ nodes.ask.error }}",
+            },
+        )
+        assert problems(START, node("ask", "llm", model="m", prompt="hi"), later, END) == set()
+        bad = node("use", "transform", output={"t": "{{ nodes.ask.usage.cost }}"})
+        found = problems(START, node("ask", "llm", model="m", prompt="hi"), bad, END)
+        assert any("no field 'cost'" in m for _, m in found)
+
+    def test_catalogue_names_the_types(self) -> None:
+        retrieval = wd.NODE_SCHEMAS["retrieval"].as_dict()
+        assert retrieval["output_types"]["passages"] == "list of object"
+        assert retrieval["output_types"]["count"] == "number"
+        assert wd.NODE_SCHEMAS["transform"].as_dict()["output_types"] == {}
+
+
+def looping(*, when: str = "false", max_loops: Any = 3, to: str = "draft") -> dict:
+    return {
+        "nodes": [
+            START,
+            node("draft", "transform", output={"text": "x"}),
+            node("check", "condition", left="{{ nodes.draft.text }}", operator="eq", right="y"),
+            END,
+        ],
+        "edges": [
+            {"from": "start", "to": "draft"},
+            {"from": "draft", "to": "check"},
+            {"from": "check", "to": "end", "when": "true"},
+            {"from": "check", "to": to, "when": when, "back": True, "max_loops": max_loops},
+        ],
+    }
+
+
+class TestBackEdges:
+    """E84: an edge back repeats earlier steps a bounded number of times."""
+
+    def test_a_loop_back_is_valid(self) -> None:
+        assert wd.validate(looping()) == []
+        assert wd.loop_region(looping(), looping()["edges"][-1]) == ["draft", "check"]
+
+    def test_a_plain_cycle_says_how_to_loop(self) -> None:
+        definition = looping()
+        del definition["edges"][-1]["back"]
+        (problem,) = wd.validate(definition)
+        assert "edge back" in problem.message
+
+    def test_it_must_go_back(self) -> None:
+        definition = looping()
+        definition["edges"][-1] = {"from": "draft", "to": "check", "back": True}
+        assert any("runs before this one" in p.message for p in wd.validate(definition))
+
+    def test_branch_and_bounds(self) -> None:
+        assert any("which branch" in p.message for p in wd.validate(looping(when=None)))
+        assert any("max_loops is 1 to" in p.message for p in wd.validate(looping(max_loops=0)))
+        assert any("max_loops is 1 to" in p.message for p in wd.validate(looping(max_loops=99)))
+        clash = looping(when="true")
+        assert any("give the edge back its own branch" in p.message for p in wd.validate(clash))
+
+    def test_previous_is_checked(self) -> None:
+        definition = looping()
+        definition["nodes"][1] = node(
+            "draft", "transform", output={"text": "{{ previous.draft.text }}"}
+        )
+        assert wd.validate(definition) == []
+        definition["nodes"][1] = node("draft", "transform", output={"t": "{{ previous.nope.x }}"})
+        assert any("previous reads" in p.message for p in wd.validate(definition))

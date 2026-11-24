@@ -93,6 +93,82 @@ MAX_DEPTH: Final = 3
 CHILD_RUN_TYPES: Final = frozenset({"workflow", "foreach"})
 #: What a foreach step's input can read besides the usual roots.
 LOOP_ROOTS: Final = ("item", "index")
+#: E84: how many times one edge back may be followed in a run.
+MAX_LOOPS: Final = 20
+DEFAULT_LOOPS: Final = 3
+
+#: E84: the shape of each step type's outputs, for deeper template checks and the
+#: builder. A type is ``"text"``, ``"number"``, ``"boolean"``, ``"any"`` (not known
+#: until the run), ``[item]`` (a list of ``item``, read by index), or ``{field: type}``.
+OutputType = str | list[Any] | dict[str, Any]
+_PASSAGE: Final[dict[str, Any]] = {
+    "text": "text",
+    "document": "text",
+    "knowledge_base": "text",
+    "location": "text",
+    "score": "number",
+    "rerank_score": "number",
+}
+OUTPUT_TYPES: Final[dict[str, dict[str, OutputType]]] = {
+    "llm": {
+        "text": "text",
+        "model": "text",
+        "usage": {
+            "prompt_tokens": "number",
+            "completion_tokens": "number",
+            "total_tokens": "number",
+        },
+        "json": "any",
+    },
+    "retrieval": {
+        "passages": [_PASSAGE],
+        "count": "number",
+        "context": "text",
+        "warnings": ["text"],
+    },
+    "tool": {"content": "text", "data": "any", "truncated": "boolean"},
+    "http": {"status": "number", "body": "any", "truncated": "boolean"},
+    "condition": {"result": "boolean", "left": "any", "right": "any"},
+    "approval": {"approved": "boolean", "reason": "text", "decided_by": "text", "message": "text"},
+    "delay": {"waited_seconds": "number"},
+    "workflow": {"output": "any", "run_id": "text"},
+    "foreach": {
+        "results": ["any"],
+        "count": "number",
+        "run_ids": ["text"],
+        "failed": "number",
+        "errors": [{"index": "number", "run_id": "text", "status": "text", "error": "text"}],
+    },
+}
+
+
+def type_name(kind: OutputType) -> str:
+    """How the builder shows a type: ``text``, ``list of object``..."""
+    if isinstance(kind, list):
+        return f"list of {type_name(kind[0])}" if kind else "list"
+    if isinstance(kind, dict):
+        return "object"
+    return str(kind)
+
+
+def path_problem(kind: OutputType, rest: list[str], name: str = "it") -> str | None:
+    """E84: why ``rest`` can't be read from ``name``, a value of ``kind``; None if it can."""
+    for depth, part in enumerate(rest):
+        if kind == "any":
+            return None
+        if isinstance(kind, list):
+            if not part.isdigit():
+                return f"{part!r} is not an index: it is a list, read with .0, .1 and so on"
+            kind = kind[0] if kind else "any"
+        elif isinstance(kind, dict):
+            if part not in kind:
+                return f"no field {part!r} (it has {', '.join(kind)})"
+            kind = kind[part]
+        else:
+            where = rest[depth - 1] if depth else name
+            return f"{where!r} is {type_name(kind)}, which has no {part!r}"
+    return None
+
 
 #: What a run's ``{{ run.* }}`` templates can read.
 RUN_FIELDS: Final = ("id", "workflow_id", "trigger", "version")
@@ -162,6 +238,8 @@ class NodeSchema:
             "description": self.description,
             "fields": [f.as_dict() for f in self.fields],
             "outputs": list(self.outputs) if self.outputs is not None else None,
+            # E84: each output's type (``text``, ``number``, ``list of object``...).
+            "output_types": {k: type_name(v) for k, v in OUTPUT_TYPES.get(self.type, {}).items()},
             "branches": sorted(self.branches),
             "timed": self.timed,
         }
@@ -488,8 +566,32 @@ def nodes_of(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def edges_of(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The edges that move a run forward. E84: edges back (``back: true``) are apart:
+    the graph without them has no cycle, and the order and waits come from it alone."""
     edges = definition.get("edges") or []
-    return [e for e in edges if isinstance(e, dict)]
+    return [e for e in edges if isinstance(e, dict) and not e.get("back")]
+
+
+def back_edges_of(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """E84: edges back to an earlier step, followed at most ``max_loops`` times."""
+    edges = definition.get("edges") or []
+    return [e for e in edges if isinstance(e, dict) and e.get("back")]
+
+
+def max_loops(edge: Mapping[str, Any]) -> int:
+    value = edge.get("max_loops")
+    return int(value) if isinstance(value, int) and 1 <= value <= MAX_LOOPS else DEFAULT_LOOPS
+
+
+def loop_region(definition: Mapping[str, Any], edge: Mapping[str, Any]) -> list[str]:
+    """E84: the steps an edge back runs again: those on a path from its target to its
+    source, both included, in run order."""
+    after = descendants(definition)
+    source, target = str(edge.get("from")), str(edge.get("to"))
+    inside = {target, source} | {
+        n for n in after.get(target, set()) if source in after.get(n, set())
+    }
+    return [n for n in execution_order(definition) if n in inside]
 
 
 def node_map(definition: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -675,7 +777,13 @@ def validate(definition: Any) -> list[Problem]:
     try:
         order = execution_order(definition)
     except ValidationError:
-        return [Problem("The graph has a cycle. Workflows must not loop.")]
+        return [
+            Problem(
+                "The graph has a cycle. To repeat steps, mark the connection that goes back "
+                "as an edge back (back: true), with how many times it may be followed."
+            )
+        ]
+    problems.extend(_back_edge_problems(definition, by_id))
 
     reachable = {str(starts[0]["id"])}
     for node_id in order:
@@ -686,6 +794,67 @@ def validate(definition: Any) -> list[Problem]:
             problems.append(Problem("Not reachable from the start node.", node_id))
     problems.extend(_reference_problems(definition))
     return problems
+
+
+def _back_edge_problems(
+    definition: Mapping[str, Any], by_id: Mapping[str, Mapping[str, Any]]
+) -> list[Problem]:
+    """E84: an edge back must lead to a step that runs before its source, on a branch
+    the source has, and be followed a bounded number of times."""
+    out: list[Problem] = []
+    after = descendants(definition)
+    seen: set[tuple[str, Any]] = set()
+    for edge in back_edges_of(definition):
+        source, target, when = str(edge.get("from")), str(edge.get("to")), edge.get("when")
+        if source not in by_id or target not in by_id:
+            out.append(Problem(f"Edge back {source} → {target} names a node that does not exist."))
+            continue
+        source_type = by_id[source].get("type")
+        if source_type in ("start", "end") or by_id[target].get("type") in ("start", "end"):
+            out.append(Problem("An edge back joins two steps, not start or end.", source))
+            continue
+        if source not in after.get(target, set()):
+            out.append(
+                Problem(
+                    f"The edge back to {target!r} must lead to a step that runs before this "
+                    "one (one it follows from).",
+                    source,
+                )
+            )
+            continue
+        allowed = BRANCHES.get(str(source_type), frozenset())
+        if when == "error":
+            out.append(Problem("An edge back can't follow the error branch.", source))
+        elif allowed and when not in allowed:
+            out.append(
+                Problem(
+                    f"An edge back from a {source_type} step says which branch it follows "
+                    f"({', '.join(sorted(allowed))}).",
+                    source,
+                )
+            )
+        elif not allowed and when is not None:
+            out.append(Problem(f"{when!r} is not a branch of a {source_type} node.", source))
+        if (source, when) in seen:
+            out.append(Problem("Only one edge back per branch of a step.", source))
+        seen.add((source, when))
+        loops = edge.get("max_loops", DEFAULT_LOOPS)
+        if not isinstance(loops, int) or isinstance(loops, bool) or not 1 <= loops <= MAX_LOOPS:
+            out.append(Problem(f"max_loops is 1 to {MAX_LOOPS}.", source))
+        clash = [
+            e.get("to")
+            for e in outgoing(definition, source)
+            if e.get("when") == when and when is not None
+        ]
+        if clash:
+            out.append(
+                Problem(
+                    f"The {when!r} branch both goes back and on to {clash[0]!r}: give the "
+                    "edge back its own branch.",
+                    source,
+                )
+            )
+    return out
 
 
 def _reference_problems(definition: Mapping[str, Any]) -> list[Problem]:
@@ -708,6 +877,21 @@ def _reference_problems(definition: Mapping[str, Any]) -> list[Problem]:
             if root == "input":
                 continue
             if root in LOOP_ROOTS and path in loop_paths.get(node_id, set()):
+                continue
+            if root == "previous":
+                # E84: a step's output on the pass before an edge back ran it again.
+                if len(parts) < 2 or parts[1] not in by_id:
+                    out.append(
+                        Problem(
+                            f"{{{{ {path} }}}}: previous reads a step's output from the last "
+                            "pass round a loop (previous.<step>.<output>).",
+                            node_id,
+                        )
+                    )
+                    continue
+                problem = _output_problem(path, by_id[parts[1]], parts[2:])
+                if problem:
+                    out.append(Problem(problem, node_id))
                 continue
             if root == "run":
                 if len(parts) < 2 or parts[1] not in RUN_FIELDS:
@@ -742,17 +926,27 @@ def _reference_problems(definition: Mapping[str, Any]) -> list[Problem]:
                     )
                 )
                 continue
-            outputs = node_outputs(by_id[target])
-            if len(parts) > 2 and outputs is not None and parts[2] not in (*outputs, "error"):
-                have = ", ".join(outputs) if outputs else "nothing"
-                out.append(
-                    Problem(
-                        f"{{{{ {path} }}}}: a {by_id[target].get('type')} step has no output "
-                        f"{parts[2]!r} (it has {have}).",
-                        node_id,
-                    )
-                )
+            problem = _output_problem(path, by_id[target], parts[2:])
+            if problem:
+                out.append(Problem(problem, node_id))
     return out
+
+
+def _output_problem(path: str, target: Mapping[str, Any], rest: list[str]) -> str | None:
+    """Why ``rest`` (the path after the step id) can't be read from ``target``."""
+    outputs = node_outputs(target)
+    if not rest or outputs is None:
+        return None
+    kind = target.get("type")
+    if rest[0] not in (*outputs, "error"):
+        have = ", ".join(outputs) if outputs else "nothing"
+        return f"{{{{ {path} }}}}: a {kind} step has no output {rest[0]!r} (it has {have})."
+    # E84: the rest of the path, through the output's type.
+    shape: OutputType = (
+        "text" if rest[0] == "error" else (OUTPUT_TYPES.get(str(kind), {}).get(rest[0], "any"))
+    )
+    deeper = path_problem(shape, rest[1:], rest[0])
+    return f"{{{{ {path} }}}}: {deeper}." if deeper else None
 
 
 def require_valid(definition: Any) -> None:

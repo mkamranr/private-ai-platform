@@ -49,6 +49,13 @@ The *Builder* tab is a canvas:
   drag is one change. *Discard changes* still goes back to the saved draft.
 - **Zoom** with the buttons above the canvas (*Fit* fits its width), <kbd>Ctrl</kbd>+wheel,
   or <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd>, from 40% to 200%.
+- **Pan** by dragging with <kbd>Space</kbd> held or with the middle button (when only
+  viewing a workflow, by dragging empty canvas).
+- **Loop back** by connecting a step to one it already follows from: the connection
+  becomes an edge back (&#8634;, drawn dashed under the steps), and *Connections* sets how many
+  times it may be followed. See [Edges back](#edges-back).
+- **Types.** The values a step can insert show their type (`text`, `number`,
+  `list of object`...).
 
 The shortcuts work wherever the focus is on the Builder tab, except in a form field or an
 open dialog (<kbd>Ctrl</kbd>+<kbd>C</kbd> copies page text instead when some is selected).
@@ -97,7 +104,8 @@ than pixels; they are laid out automatically until a step is moved.
 }
 ```
 
-- A definition has exactly one `start` node and at least one `end` node, and no cycles.
+- A definition has exactly one `start` node and at least one `end` node, and no cycles
+  except through [edges back](#edges-back).
 - Node ids are lowercase (`[a-z][a-z0-9_]*`). It can have at most 50 nodes.
 - `POST /workflows/{id}/validate` lists every problem, each tagged with its node, and
   returns the execution order. The console shows the same list above the graph.
@@ -107,7 +115,9 @@ than pixels; they are laid out automatically until a step is moved.
 Each node type declares its settings and outputs, and `GET /workflows/node-types` serves
 them: for each type its `fields` (`key`, `kind`, `label`, `required`, `templated`, and
 `minimum`, `maximum`, `options`, `help`, `placeholder` where they apply), its `outputs`,
-its `branches` and whether it is `timed` (takes retries and a timeout). The console builds
+its `output_types` (each output's type: `text`, `number`, `boolean`, `object`,
+`list of object`, or `any` when only the run knows), its `branches` and whether it is
+`timed` (takes retries and a timeout). The console builds
 its forms from them. Validation follows the same schema:
 
 - **A setting the type doesn't have** is a problem, naming the ones it does have, so a
@@ -120,9 +130,16 @@ its forms from them. Validation follows the same schema:
   that runs after this one, an output that step doesn't have
   (`{{ nodes.search.contxt }}`: a retrieval step has `passages`, `count`, `context`,
   `warnings`), a `run` field other than `id`, `workflow_id`, `trigger` and `version`, or
-  something other than `input`, `nodes` or `run`. Any step's `error` can be read, and the
-  start step's and a transform's outputs are whatever the input or the transform's keys
-  are.
+  something other than `input`, `nodes`, `previous` or `run`. Any step's `error` can be
+  read, and the start step's and a transform's outputs are whatever the input or the
+  transform's keys are.
+- **Deeper paths follow the output's type.** A list is read by index
+  (`nodes.search.passages.0.text`; `passages.first` is a problem), an object by its fields
+  (a passage has `text`, `document`, `knowledge_base`, `location`, `score`,
+  `rerank_score`; a model step's `usage` has `prompt_tokens`, `completion_tokens`,
+  `total_tokens`), and text, numbers and booleans have nothing under them
+  (`nodes.search.context.size` is a problem). Values only the run knows (a model's `json`,
+  an HTTP `body`, a tool's `data`, a sub-workflow's `output`) aren't checked below that.
 
 Already published versions keep running as they are; the stricter checks apply when a
 draft is checked or published.
@@ -156,6 +173,8 @@ Any string in `config` may refer to earlier values:
 - `{{ nodes.search.context }}`: a field of an earlier node's output. Paths go into
   objects and list indexes, e.g. `nodes.search.passages.0.text`.
 - `{{ run.id }}`, `{{ run.workflow_id }}`, `{{ run.trigger }}`.
+- `{{ previous.draft.text }}`: inside a loop, a step's output on the pass before (empty on
+  the first). See [Edges back](#edges-back).
 
 A value that is *only* a template keeps its type. `"{{ input.tags }}"` stays a list, and
 `"{{ nodes.calc.json.total }}"` stays a number. Inside longer text a value is converted
@@ -172,6 +191,29 @@ to text, and objects become JSON. A missing path renders as empty.
 - A step runs when any one of its incoming edges is active. A step none of whose edges
   are active is skipped. That is how only one branch of a condition runs, and how two
   branches can meet at a shared step.
+
+### Edges back
+
+An edge with `"back": true` goes to a step that runs before its source, and runs the
+steps from that one to the source again: a draft that a check sends back for another try,
+or a call repeated until its answer is complete.
+
+```json
+{"from": "check", "to": "draft", "when": "false", "back": true, "max_loops": 3}
+```
+
+- **Bounded.** It is followed at most `max_loops` times (1–20, default 3) in a run. After
+  that, a branch with no other way on fails the run (*went back to 'draft' 3 times*); a
+  branch that also goes on carries on.
+- **What runs again** is every step on a path from the target to the source, each a new
+  step in the run's trace, plus steps after the target that were skipped (the other
+  branch of a condition on the way). Steps on other branches don't run again.
+- **The pass before** is `{{ previous.<step>.<output> }}`: in the example, the draft can
+  read `{{ previous.check.left }}` or its own `{{ previous.draft.text }}`.
+- **Rules.** It must go back (to a step its source follows from), not to start or end; it
+  follows a branch the source has (not `error`), and that branch can't also go on
+  elsewhere; one per branch of a step. Loops inside a loop count again on each outer pass.
+- A run is still limited to 200 steps in all.
 
 ### Parallel branches
 
@@ -446,14 +488,15 @@ Workflows take part in team scope ([teams.md](teams.md)):
 
 ## Not included
 
-- **Output types.** Outputs are named per node type, not typed: a template reading
-  `nodes.search.count` is known to exist, not to be a number. Deeper paths
-  (`nodes.call.body.items`) aren't checked.
+- **Types below "any".** A model's `json`, an HTTP `body`, a tool's `data` and a
+  sub-workflow's `output` are only known when the run has them, so paths into them
+  (`nodes.call.body.items`) aren't checked; nor is whether a value's type fits the
+  setting it fills.
 - **Parallel retrieval and tool steps.** They take turns with the run's other database
   work, so only model and HTTP calls truly overlap.
 - **Canvas history across reloads.** Undo history and copied steps live in the page;
-  reloading it clears both. There's no pan by dragging empty canvas (that draws a
-  selection box); scroll instead.
-- **Loops inside a workflow.** Repetition is a foreach over a sub-workflow; edges can't
-  go back. Items running at once share one database session, so only their model and
-  HTTP calls overlap (as for parallel branches).
+  reloading it clears both.
+- **A loop's state across versions.** A run keeps its own version's definition, so an
+  edge back edited while it runs doesn't change it. Items of a foreach running at once
+  share one database session, so only their model and HTTP calls overlap (as for parallel
+  branches).
