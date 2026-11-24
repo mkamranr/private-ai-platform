@@ -323,6 +323,9 @@ drifted, search for the named function.
   - A trust update can't revive a retired or revoked key, and can't leave the site with no accepted key.
   - Revoking a key cascades to the keys added on its authority.
   - The console can only retire or revoke (an audited `trust.change` job). Adding a key needs the host.
+- **Offline root key and key expiry (E74).**
+  - A root key signs trust updates only; a bundle it signed is refused. Once a site trusts a root, signing keys' trust updates are ignored, so a stolen signing key can't add keys, renew itself or revoke others.
+  - Keys can expire; an expired key's bundles and statements are refused until a renewal (by the root, where there is one).
 - **SBOM.** Each bundle carries `sbom.cdx.json` (CycloneDX 1.5) and `licenses.txt`,
   listing every image digest, every pinned Python wheel with its hash and the vendored
   JavaScript.
@@ -343,6 +346,10 @@ drifted, search for the named function.
   - statements from strangers, tampered or revoked keys are ignored;
   - revocation cascades;
   - the last key can't be revoked;
+- `tests/unit/test_signing_root_expiry.py`:
+  - a root signs no bundles, and with a root, signing keys' statements are ignored;
+  - only a root adds a root;
+  - expired keys are refused; renewal by the root;
   - the runner's `trust.change` job.
 - `tests/api/test_ops.py::TestTrustChange`
 

@@ -652,6 +652,15 @@ matrix still listed as missing.
 - [x] Console: *Ask the runtime* on the model's *Edit* dialog, with the findings. Checked in Chromium. Tests: `tests/api/test_capability_probe.py`. Docs: [models.md](../models.md#capabilities), api.md.
 - [ ] Not probed automatically when a deployment starts; vision on vLLM, SGLang and TGI, and reranking, aren't probed (no cheap question tells).
 
+## E74: Offline root key and key expiry (closes the feature-matrix offline-install gap)
+
+- [x] `scripts/bundle_signing.py`: keys have a `role` (`signing` or `root`) and an optional `expires` date. A root signs no bundles; once a site trusts a root, only root-signed trust updates apply, and only a root adds a root. Expired keys are refused for bundles and statements (`check_bundle` state `expired`) until renewed (statement `renew`, `trust renew`). An update must leave a key that signs bundles.
+- [x] CLI: `keygen --name`, `trust add --root --expires`, `trust renew`, `statement --expires --root --renew`. `trust list` and the runner report `role`, `expires`, `days_left`, `signing`, `root`, `expiring` (60 days).
+- [x] The ops runner's and the console's retire/revoke checks count signing keys only. The Offline Updates page marks the root and shows expiry, and lets an expired key be revoked.
+- [x] Tests: `tests/unit/test_signing_root_expiry.py`. Docs: operations.md, threat-model.md.
+- [ ] Expiry is judged by the site's clock. A root that expires waits for a renewal by hand on each site.
+
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

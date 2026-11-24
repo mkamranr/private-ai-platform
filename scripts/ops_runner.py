@@ -820,7 +820,7 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
             if status == "revoked":
                 return "FAILED", f"{fingerprint} is already revoked."
             changed = trial.revoke(fingerprint, reason=reason, by="local")
-        if not trial.accepted():
+        if not trial.signing_keys():
             return "FAILED", (
                 "That would leave this site with no trusted key, so every bundle would be "
                 "refused. Add the replacement key on the host first (bundle_signing.py trust add)."

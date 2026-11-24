@@ -234,12 +234,41 @@ one (`statement --key <new> --retire <old fingerprint>=rotated`).
 
 - Only a key the site accepts can sign one. Retired and revoked keys sign nothing.
 - It can't bring back a key the site has retired or revoked.
+- Once the site trusts a root key, only the root's updates apply (see below).
 - An update that would leave the site with no accepted key is ignored, so a stolen key
   can't lock a site out by revoking every other key at once. The console and the runner
   refuse the same thing.
 - Updates apply in sequence order, once each, when `install.sh` or `upgrade.sh` checks a
   bundle, and are kept even if that bundle is then refused. Listing or verifying a bundle in
   the console shows what would change without changing it.
+
+### An offline root key, and keys that expire
+
+A **root key** signs trust updates and never bundles, so it can stay on a machine that is
+never connected (a laptop in a safe, a USB stick). Once a site trusts a root, only the root
+can change what the site trusts. Whoever steals a signing key can sign bundles until the key
+is revoked, but can't add their own key, keep the stolen one alive, or revoke the others.
+
+```bash
+# Once, offline
+python3 scripts/bundle_signing.py keygen --out /media/offline-root --name root-signing
+# On each site (by hand, like any first key)
+python3 scripts/bundle_signing.py trust add root-signing.pub --root --label root     --trust-dir /opt/ai-platform/.trust
+# On the offline machine: add next year's signing key, valid for 13 months
+python3 scripts/bundle_signing.py statement --key /media/offline-root/root-signing.key     --add ~/aip-signing-2027/bundle-signing.pub=2027 --expires 2028-01-31
+# ...and later move a key's expiry date
+python3 scripts/bundle_signing.py statement --key /media/offline-root/root-signing.key     --renew sha256:...=2029-01-31
+```
+
+- A bundle signed by the root is refused ("signs trust updates only").
+- A root key is added only by hand or by another root's statement.
+- **Expiry.** Any key can have an expiry date (`--expires`, on `trust add` or on a
+  statement's added keys). From the day after it, the key is *expired*: its bundles and
+  statements are refused, as a retired key's are, until a statement with `--renew` (or
+  `trust renew` on the host) moves the date. With a root, only the root renews.
+- An update that would leave the site with no key able to sign bundles is ignored.
+- The Offline Updates page marks the root, shows each key's expiry and the days left, and
+  warns from 60 days before.
 
 **On the Offline Updates page:**
 

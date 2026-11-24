@@ -15,6 +15,14 @@
     python3 scripts/bundle_signing.py trust revoke sha256:... --reason "laptop stolen" --trust-dir ...
     python3 scripts/bundle_signing.py check  <bundle> --trust-dir ... [--apply]
 
+    # E74: an offline root key, kept off the network, that signs trust updates only
+    python3 scripts/bundle_signing.py keygen --out /media/offline-root --name root-signing
+    python3 scripts/bundle_signing.py trust add root-signing.pub --root --label root --trust-dir ...
+    python3 scripts/bundle_signing.py statement --key /media/offline-root/root-signing.key \
+        --add ~/aip-signing-2027/bundle-signing.pub=2027 --expires 2028-01-31
+    python3 scripts/bundle_signing.py statement --key /media/offline-root/root-signing.key \
+        --renew sha256:...=2029-01-31
+
 **What is signed.** ``manifest.json`` only. The manifest already carries the SHA-256 of every
 image archive, every wheel set, every installer, every model file and the SBOM, and
 ``verify_bundle`` checks each against it. One signature over the manifest therefore covers
@@ -50,6 +58,19 @@ Rules that keep a statement from being worse than the key that signed it:
 * Adding a key by hand, or undoing a revocation, is only possible on the host (``trust add``,
   or editing ``trust.json``). The console can retire and revoke, never add.
 
+**An offline root, and keys that expire (E74).** A key can be trusted as a **root**
+(``trust add --root``). A root signs trust updates, never bundles, so it can live on a
+machine that is never online. Once a site trusts a root, it takes trust updates from a
+root only: whoever steals a signing key can sign bundles until it is revoked, but can't
+add keys, keep the stolen one alive or revoke the others. A root key is only added by hand
+or by another root's statement.
+
+Any key can carry an **expiry date** (``--expires`` on ``trust add`` or on a statement's
+``--add``). From the day after it, the key is *expired*: its bundles and statements are
+refused as a retired key's are, until a statement (``--renew FINGERPRINT=DATE``) moves the
+date. With a root, only a root renews; without one, any trusted key may (it could add a new
+key anyway). The console and ``trust list`` show the days left.
+
 Stdlib only, like ``backup.py`` and ``build_bundle.py``.
 """
 
@@ -81,7 +102,11 @@ UPDATES_DIR = Path("offline") / "trust-updates"
 STATEMENT_FORMAT = 1
 
 #: Bundle states that refuse an install or upgrade.
-REFUSED = frozenset({"invalid", "error", "retired", "revoked"})
+REFUSED = frozenset({"invalid", "error", "retired", "revoked", "expired"})
+#: E74: what a trusted key is for.
+SIGNING, ROOT = "signing", "root"
+#: E74: ``trust list`` and the console warn about keys expiring within this many days.
+EXPIRY_WARNING_DAYS = 60
 
 
 class SigningError(RuntimeError):
@@ -105,6 +130,20 @@ def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _today() -> dt.date:
+    return dt.datetime.now(dt.UTC).date()
+
+
+def parse_date(value: str | None) -> str | None:
+    """E74: an expiry date, ``YYYY-MM-DD``, checked. None or empty: no expiry."""
+    if not value:
+        return None
+    try:
+        return dt.date.fromisoformat(str(value).strip()[:10]).isoformat()
+    except ValueError as exc:
+        raise SigningError(f"{value!r} is not a date (YYYY-MM-DD).") from exc
+
+
 def openssl_version() -> str | None:
     try:
         result = _run(["version"])
@@ -113,10 +152,14 @@ def openssl_version() -> str | None:
     return result.stdout.decode().strip() or None
 
 
-def generate_keypair(directory: Path) -> tuple[Path, Path]:
-    """Write ``bundle-signing.key`` (0600) and ``bundle-signing.pub`` into ``directory``."""
+def generate_keypair(directory: Path, name: str | None = None) -> tuple[Path, Path]:
+    """Write ``bundle-signing.key`` (0600) and ``bundle-signing.pub`` into ``directory``
+    (E74: ``<name>.key`` and ``<name>.pub``, e.g. for a root key kept beside it)."""
     directory.mkdir(parents=True, exist_ok=True)
-    private, public = directory / PRIVATE_NAME, directory / PUBLIC_NAME
+    if name:
+        private, public = directory / f"{name}.key", directory / f"{name}.pub"
+    else:
+        private, public = directory / PRIVATE_NAME, directory / PUBLIC_NAME
     if private.exists():
         raise SigningError(f"{private} already exists; refusing to overwrite a signing key.")
     old = os.umask(0o077)
@@ -307,10 +350,33 @@ class TrustStore:
             return "revoked"
         if fp in self.state["retired"]:
             return "retired"
+        expires = self.expires(fp)
+        if expires is not None and dt.date.fromisoformat(expires) < _today():
+            return "expired"
         return "trusted"
+
+    def role(self, fp: str) -> str:
+        """E74: ``root`` (signs trust updates only) or ``signing``."""
+        return self.state["keys"].get(fp, {}).get("role") or SIGNING
+
+    def expires(self, fp: str) -> str | None:
+        return self.state["keys"].get(fp, {}).get("expires")
 
     def accepted(self) -> list[str]:
         return [fp for fp in self.state["keys"] if self.status(fp) == "trusted"]
+
+    def signing_keys(self) -> list[str]:
+        """Accepted keys that may sign bundles."""
+        return [fp for fp in self.accepted() if self.role(fp) == SIGNING]
+
+    @property
+    def has_root(self) -> bool:
+        """E74: a root this site hasn't retired or revoked (an expired one still counts:
+        the site then waits for it to be renewed by hand rather than falling back)."""
+        return any(
+            self.role(fp) == ROOT and self.status(fp) in ("trusted", "expired")
+            for fp in self.state["keys"]
+        )
 
     def pem(self, fp: str) -> str:
         return self.state["keys"][fp]["pem"]
@@ -320,12 +386,17 @@ class TrustStore:
         for fp, info in self.state["keys"].items():
             status = self.status(fp)
             ended = self.state["revoked"].get(fp) or self.state["retired"].get(fp) or {}
+            expires = info.get("expires")
+            days_left = (dt.date.fromisoformat(expires) - _today()).days if expires else None
             keys.append({
                 "fingerprint": fp,
                 "label": info.get("label"),
                 "source": info.get("source"),
                 "added_by": info.get("added_by"),
                 "added_at": info.get("added_at"),
+                "role": self.role(fp),
+                "expires": expires,
+                "days_left": days_left,
                 "status": status,
                 "ended_at": ended.get("at"),
                 "reason": ended.get("reason"),
@@ -334,24 +405,52 @@ class TrustStore:
         return {
             "configured": self.configured,
             "accepted": self.accepted(),
+            "signing": self.signing_keys(),
+            "root": self.has_root,
+            "expiring": [
+                k["fingerprint"]
+                for k in keys
+                if k["status"] == "trusted"
+                and k["days_left"] is not None
+                and k["days_left"] <= EXPIRY_WARNING_DAYS
+            ],
             "keys": keys,
             "applied_updates": len(self.state["applied"]),
             "last_update": (self.state["applied"][-1] if self.state["applied"] else None),
         }
 
     # -- changing -----------------------------------------------------------
-    def add(self, pem: str, *, label: str | None, source: str, added_by: str | None) -> str:
+    def add(
+        self,
+        pem: str,
+        *,
+        label: str | None,
+        source: str,
+        added_by: str | None,
+        role: str = SIGNING,
+        expires: str | None = None,
+    ) -> str:
         fp = pem_fingerprint(pem)
         if self.status(fp) in ("retired", "revoked"):
             raise SigningError(f"{fp} was {self.status(fp)} on this site and can't be trusted again this way.")
+        if role not in (SIGNING, ROOT):
+            raise SigningError(f"{role!r} is not a key role (signing or root).")
         self.state["keys"].setdefault(fp, {
             "pem": pem.strip() + "\n",
             "label": label,
             "source": source,
             "added_by": added_by,
             "added_at": _now(),
+            "role": role,
+            "expires": parse_date(expires),
         })
         return fp
+
+    def renew(self, fp: str, expires: str | None) -> None:
+        """E74: move a key's expiry date (None: never expires)."""
+        if self.status(fp) not in ("trusted", "expired"):
+            raise SigningError(f"{fp} is {self.status(fp)} here; only a trusted or expired key is renewed.")
+        self.state["keys"][fp]["expires"] = parse_date(expires)
 
     def _end(self, field: str, fp: str, reason: str | None, by: str) -> None:
         if fp not in self.state["keys"]:
@@ -422,16 +521,22 @@ def make_statement(
     add: Iterable[tuple[Path, str | None]] = (),
     retire: Iterable[tuple[str, str | None]] = (),
     revoke: Iterable[tuple[str, str | None]] = (),
+    renew: Iterable[tuple[str, str | None]] = (),
+    expires: str | None = None,
+    role: str = SIGNING,
 ) -> Path:
-    """Write the next trust update into ``out_dir``, signed by ``private_key``."""
+    """Write the next trust update into ``out_dir``, signed by ``private_key``. E74: keys
+    it adds get ``role`` and ``expires``; ``renew`` moves existing keys' expiry dates."""
     additions = [
-        {"fingerprint": fingerprint(path), "label": label, "public_key": path.read_text(encoding="ascii")}
+        {"fingerprint": fingerprint(path), "label": label, "public_key": path.read_text(encoding="ascii"),
+         "role": role, "expires": parse_date(expires)}
         for path, label in add
     ]
     retirements = [{"fingerprint": fp, "reason": reason} for fp, reason in retire]
     revocations = [{"fingerprint": fp, "reason": reason} for fp, reason in revoke]
-    if not (additions or retirements or revocations):
-        raise SigningError("A trust update needs at least one --add, --retire or --revoke.")
+    renewals = [{"fingerprint": fp, "expires": parse_date(date)} for fp, date in renew]
+    if not (additions or retirements or revocations or renewals):
+        raise SigningError("A trust update needs at least one --add, --retire, --revoke or --renew.")
     out_dir.mkdir(parents=True, exist_ok=True)
     sequence = max([s for s, _j, _s in statements(out_dir)] or [0]) + 1
     body = {
@@ -442,6 +547,7 @@ def make_statement(
         "add": additions,
         "retire": retirements,
         "revoke": revocations,
+        "renew": renewals,
     }
     path = out_dir / f"{sequence:04d}.json"
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
@@ -475,12 +581,19 @@ def apply_statements(store: TrustStore, directory: Path | None) -> list[dict[str
                 else f"signed by a {status} key"
             )
             continue
+        if store.has_root and store.role(signer) != ROOT:
+            # E74: with a root, a stolen signing key can't change what the site trusts.
+            outcome["reason"] = "signed by a signing key; this site takes trust updates from its root key only"
+            continue
         if not sig.exists() or not verify_with_pem(path, sig, store.pem(signer)):
             outcome["reason"] = "its signature does not verify"
             continue
 
+        by_root = store.role(signer) == ROOT
         trial = store.copy()
-        changes: dict[str, list[str]] = {"added": [], "retired": [], "revoked": [], "skipped": []}
+        changes: dict[str, list[str]] = {
+            "added": [], "retired": [], "revoked": [], "renewed": [], "skipped": [],
+        }
         for item in body.get("add") or []:
             pem = item.get("public_key") or ""
             try:
@@ -494,8 +607,17 @@ def apply_statements(store: TrustStore, directory: Path | None) -> list[dict[str
             if trial.status(fp) in ("retired", "revoked"):
                 changes["skipped"].append(f"{fp}: {trial.status(fp)} on this site")
                 continue
+            role = item.get("role") or SIGNING
+            if role == ROOT and not by_root:
+                changes["skipped"].append(f"{fp}: only a root key adds a root key")
+                continue
             if fp not in trial.state["keys"]:
-                trial.add(pem, label=item.get("label"), source="update", added_by=signer)
+                try:
+                    trial.add(pem, label=item.get("label"), source="update", added_by=signer,
+                              role=role, expires=item.get("expires"))
+                except SigningError as exc:
+                    changes["skipped"].append(f"{fp}: {exc}")
+                    continue
                 changes["added"].append(fp)
         for item in body.get("retire") or []:
             fp = item.get("fingerprint")
@@ -504,10 +626,21 @@ def apply_statements(store: TrustStore, directory: Path | None) -> list[dict[str
                 changes["retired"].append(fp)
         for item in body.get("revoke") or []:
             fp = item.get("fingerprint")
-            if trial.status(fp) in ("trusted", "retired"):
+            if trial.status(fp) in ("trusted", "retired", "expired"):
                 changes["revoked"].extend(trial.revoke(fp, reason=item.get("reason"), by=signer))
-        if not trial.accepted():
-            outcome["reason"] = "it would leave this site with no trusted key"
+        for item in body.get("renew") or []:
+            fp = item.get("fingerprint")
+            if trial.status(fp) not in ("trusted", "expired"):
+                changes["skipped"].append(f"{fp}: {trial.status(fp)}, not renewed")
+                continue
+            try:
+                trial.renew(fp, item.get("expires"))
+            except SigningError as exc:
+                changes["skipped"].append(f"{fp}: {exc}")
+                continue
+            changes["renewed"].append(fp)
+        if not trial.signing_keys():
+            outcome["reason"] = "it would leave this site with no trusted key to sign bundles"
             continue
         trial.state["applied"].append({
             "sequence": sequence, "sha256": digest, "signed_by": signer, "applied_at": _now(),
@@ -551,12 +684,18 @@ def check_bundle(bundle: Path, trust_dir: Path, *, apply: bool = False) -> dict[
             ended = store.state[status][signer]
             why = f": {ended['reason']}" if ended.get("reason") else ""
             return {**result, "state": status, "detail": f"signed by a {status} key{why}"}
+        if status == "expired":
+            return {**result, "state": "expired",
+                    "detail": f"signed by a key that expired on {store.expires(signer)}"}
+        if status == "trusted" and store.role(signer) == ROOT:
+            return {**result, "state": "invalid",
+                    "detail": "signed by this site's root key, which signs trust updates only"}
         if status == "trusted":
             if verify_with_pem(manifest, signature, store.pem(signer)):
                 return {**result, "state": "valid"}
             return {**result, "state": "invalid", "detail": "signature does not match the manifest"}
-        # The manifest names no key, or one this site doesn't know: try every accepted key.
-        for fp in store.accepted():
+        # The manifest names no key, or one this site doesn't know: try every signing key.
+        for fp in store.signing_keys():
             if verify_with_pem(manifest, signature, store.pem(fp)):
                 return {**result, "state": "valid", "signer": fp}
     except SigningError as exc:
@@ -574,9 +713,15 @@ def _trust_command(options: argparse.Namespace) -> int:
         return 0
     if options.trust_command == "add":
         fp = store.add(options.public_key.read_text(encoding="ascii"), label=options.label,
-                       source="installed", added_by=None)
+                       source="installed", added_by=None,
+                       role=ROOT if options.root else SIGNING, expires=options.expires)
         store.save()
-        print(f"trusted: {fp}")
+        print(f"trusted{' as a root' if options.root else ''}: {fp}")
+        return 0
+    if options.trust_command == "renew":
+        store.renew(options.fingerprint, options.expires)
+        store.save()
+        print(f"renewed: {options.fingerprint} ({options.expires or 'no expiry'})")
         return 0
     if options.trust_command == "apply":
         outcomes = apply_statements(store, statement_dir(options.bundle))
@@ -592,7 +737,7 @@ def _trust_command(options: argparse.Namespace) -> int:
             changed = [fp]
         else:
             changed = trial.revoke(fp, reason=options.reason, by="local")
-        if not trial.accepted() and not options.force:
+        if not trial.signing_keys() and not options.force:
             raise SigningError(
                 "That would leave this site with no trusted key, so every bundle would be "
                 "refused. Add the replacement key first, or pass --force."
@@ -608,6 +753,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     keygen = sub.add_parser("keygen", help="Create a signing key pair")
     keygen.add_argument("--out", type=Path, required=True)
+    keygen.add_argument("--name", help="file name stem (default bundle-signing)")
     sign = sub.add_parser("sign", help="Sign a bundle's manifest")
     sign.add_argument("bundle", type=Path)
     sign.add_argument("--key", type=Path, required=True)
@@ -623,6 +769,9 @@ def main() -> int:
     statement.add_argument("--add", action="append", default=[], metavar="PUB[=LABEL]")
     statement.add_argument("--retire", action="append", default=[], metavar="FINGERPRINT[=REASON]")
     statement.add_argument("--revoke", action="append", default=[], metavar="FINGERPRINT[=REASON]")
+    statement.add_argument("--renew", action="append", default=[], metavar="FINGERPRINT=DATE")
+    statement.add_argument("--expires", metavar="DATE", help="expiry of the keys it adds")
+    statement.add_argument("--root", action="store_true", help="the keys it adds are roots")
 
     check = sub.add_parser("check", help="Judge a bundle against a site's trust store")
     check.add_argument("bundle", type=Path)
@@ -636,6 +785,11 @@ def main() -> int:
     t_add = tsub.add_parser("add")
     t_add.add_argument("public_key", type=Path)
     t_add.add_argument("--label")
+    t_add.add_argument("--root", action="store_true", help="signs trust updates, not bundles")
+    t_add.add_argument("--expires", metavar="DATE")
+    t_renew = tsub.add_parser("renew")
+    t_renew.add_argument("fingerprint")
+    t_renew.add_argument("--expires", metavar="DATE", help="omit for no expiry")
     t_apply = tsub.add_parser("apply")
     t_apply.add_argument("bundle", type=Path)
     for name in ("retire", "revoke"):
@@ -647,7 +801,7 @@ def main() -> int:
 
     try:
         if options.command == "keygen":
-            private, public = generate_keypair(options.out)
+            private, public = generate_keypair(options.out, options.name)
             print(f"private key: {private}  (keep it on the build site; never put it in a bundle)")
             print(f"public key:  {public}  (install on each site: install.sh --trust-key {public.name})")
             print(f"fingerprint: {fingerprint(public)}")
@@ -664,6 +818,8 @@ def main() -> int:
             path = make_statement(
                 options.out, options.key, add=adds,
                 retire=_pairs(options.retire), revoke=_pairs(options.revoke),
+                renew=_pairs(options.renew), expires=options.expires,
+                role=ROOT if options.root else SIGNING,
             )
             print(f"trust update: {path}")
         elif options.command == "check":
@@ -672,7 +828,8 @@ def main() -> int:
             result = check_bundle(options.bundle, options.trust_dir, apply=options.apply)
             for update in result["updates"]:
                 if update["applied"]:
-                    parts = [f"{k} {len(update[k])}" for k in ("added", "retired", "revoked") if update.get(k)]
+                    parts = [f"{k} {len(update[k])}" for k in ("added", "retired", "revoked", "renewed")
+                             if update.get(k)]
                     print(f"trust update {update['sequence']} applied ({', '.join(parts) or 'no change'})")
                 else:
                     print(f"trust update {update['sequence']} ignored: {update['reason']}")
