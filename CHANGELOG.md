@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Agents: judge retries, and paused runs scored
+- A judge call that fails because the model is down or over budget is tried again (twice by default, after 5 minutes and then 10, spread out), instead of the answer's score failing for good.
+- Answers from runs that paused for an approval are now sampled and judged like the others.
+- **Upgrade.** One migration (`alembic upgrade head`).
+
 ### Rollouts: smarter canary checks
 - A canary can be more than one copy (`canary_copies`), revised first and watched together, so a fault that shows only under load or on one node has more calls to show in.
 - A canary can also be stopped for being slow: `canary_max_latency_ratio` compares its p95 latency with the old copies' over the same minutes (judged once both sides have 10 successful calls).

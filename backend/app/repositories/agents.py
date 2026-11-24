@@ -6,7 +6,7 @@ import datetime as dt
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.models.agents import (
@@ -294,9 +294,17 @@ class AgentAnswerScoreRepository(BaseRepository[AgentAnswerScore]):
 
     async def claim_pending(self) -> AgentAnswerScore | None:
         """The oldest answer waiting to be judged, locked for this worker."""
+        now = dt.datetime.now(dt.UTC)
         stmt = (
             select(AgentAnswerScore)
-            .where(AgentAnswerScore.status == AnswerScoreStatus.PENDING)
+            .where(
+                AgentAnswerScore.status == AnswerScoreStatus.PENDING,
+                # E83: one waiting to be retried is left until its time.
+                or_(
+                    AgentAnswerScore.next_attempt_at.is_(None),
+                    AgentAnswerScore.next_attempt_at <= now,
+                ),
+            )
             .order_by(AgentAnswerScore.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)

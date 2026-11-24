@@ -360,13 +360,22 @@ they were given: the same judge as the retrieval playground
 | `agents.answer_scoring_percent` | 0 | share of answers judged, 0–100. 0 judges none |
 | `agents.answer_judge_model` | empty | the alias or model that judges. Empty judges none |
 | `agents.answer_score_retention_days` | 90 | how long scores are kept |
+| `agents.answer_judge_retries` | 2 | judge calls retried after a failure; 0 does not retry |
+| `agents.answer_judge_retry_minutes` | 5 | wait before the first retry, doubling after |
 
 - **Which answers.** A run that completed with passages retrieved, sampled at that rate
-  when it finishes. Answers with no passages, failed runs, and runs that paused for an
-  approval (the passages aren't kept across the pause) are not judged.
+  when it finishes. A run that paused for an approval counts too: its question and
+  passages are kept in its checkpoint (which already holds them as the conversation's
+  context) until it resumes and completes. Answers with no passages, and failed runs,
+  are not judged.
 - **Off the answer's path.** The answer is queued with its question and passages, and a
-  worker judges queued answers one at a time, so judging never slows an answer down. A
-  judge that is down or over budget fails that answer's score; it isn't retried.
+  worker judges queued answers one at a time, so judging never slows an answer down.
+- **A judge that is down is tried again.** A call that fails (the model is down, over
+  budget, timed out) leaves the answer queued for `agents.answer_judge_retry_minutes`,
+  then twice that, and so on, each with up to a quarter more at random, so the answers
+  queued during an outage reach the judge spread out. After
+  `agents.answer_judge_retries` retries it is `FAILED` with the last error. A reply that
+  came back but couldn't be read fails at once. Each answer shows its `attempts`.
 - **Charged like any platform call**: through the gateway, to the agent's team and the
   person who asked, as `agent-judge:<slug>`.
 - **The passages are not kept.** They were read under the asker's document access; once

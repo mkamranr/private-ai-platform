@@ -45,6 +45,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `agents.approval_ttl_hours` | Security | hours an agent or workflow approval waits before it expires and its run fails; 0 = never (see [agents.md](agents.md#expiry)) | next expiry check (15 min) |
 | `agents.approval_reminder_hours` | Security | hours before that expiry an approval raises a reminder alert (source `approvals`); 0 = off (see [agents.md](agents.md#reminders)) | next expiry check (15 min) |
 | `agents.approval_reminder_waiting_hours` | Security | while approvals never expire, hours an approval waits before it raises a reminder; 0 = off (see [agents.md](agents.md#reminders)) | next expiry check (15 min) |
+| `agents.answer_judge_retries`, `agents.answer_judge_retry_minutes` | General | judge calls retried after a failure, and the first wait (see [agents.md](agents.md#answer-quality)) | next answer judged |
 | `agents.answer_scoring_percent`, `agents.answer_judge_model` | General | the share of agent answers judged for faithfulness, and the model that judges (see [agents.md](agents.md#answer-quality)) | next agent run; next answer judged |
 | `agents.answer_score_retention_days` | Retention | days scored agent answers are kept | within an hour |
 | `agents.answer_faithfulness_alert_below`, `agents.answer_faithfulness_alert_answers` | Monitoring | the average faithfulness under which an agent raises an alert, and how many recent judged answers it averages (see [agents.md](agents.md#answer-quality)) | next answer judged |

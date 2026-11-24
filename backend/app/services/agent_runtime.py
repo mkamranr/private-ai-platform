@@ -105,7 +105,10 @@ class PlatformAgentRuntime(AgentRuntime):
         # AgentAnswerScoreRepository); None queues nothing. The passages each run
         # retrieved are held here until it completes.
         self._answer_scores = answer_scores
-        self._retrieved: dict[str, tuple[str, list[Any]]] = {}
+        #: Per run: the question and the passages it was given, as queued for the judge.
+        #: E83: kept in the checkpoint while a run waits for an approval, so a run that
+        #: resumes (in another request, or after a restart) can still be scored.
+        self._retrieved: dict[str, tuple[str, list[dict[str, Any]]]] = {}
 
     # -- execute -----------------------------------------------------------
     def execute(
@@ -395,7 +398,19 @@ class PlatformAgentRuntime(AgentRuntime):
             sequence += 1
 
         if found.passages:
-            self._retrieved[context.run_id] = (str(question), list(found.passages))
+            self._retrieved[context.run_id] = (
+                str(question),
+                [
+                    {
+                        "text": p.text[:JUDGE_PASSAGE_CHARS],
+                        "document": p.document_name,
+                        "knowledge_base": p.knowledge_base,
+                        "location": p.location,
+                        "score": round(p.score, 4),
+                    }
+                    for p in found.passages[:MAX_SCORED_PASSAGES]
+                ],
+            )
 
         if found.context_block:
             # Inserted at the head, as a system message. Appending it after the question
@@ -423,6 +438,7 @@ class PlatformAgentRuntime(AgentRuntime):
         sequence = int(checkpoint.get("sequence", 1))
         conversation: list[dict[str, Any]] = list(checkpoint.get("conversation", []))
         call = checkpoint.get("pending_call") or {}
+        self._restore_scoring(run_id, checkpoint)
 
         pending.approver_id = uuid.UUID(approver_id) if approver_id else None
         pending.decided_at = dt.datetime.now(dt.UTC)
@@ -490,6 +506,15 @@ class PlatformAgentRuntime(AgentRuntime):
         ):
             yield event
 
+    def _restore_scoring(self, run_id: str, checkpoint: dict[str, Any]) -> None:
+        """E83: what a paused run kept for the judge, back where `_queue_scoring` looks."""
+        scoring = checkpoint.get("scoring")
+        if isinstance(scoring, dict) and scoring.get("passages"):
+            self._retrieved[run_id] = (
+                str(scoring.get("question") or ""),
+                list(scoring["passages"]),
+            )
+
     # -- state -------------------------------------------------------------
     async def cancel(self, run_id: str) -> RunResult:
         run = await self._require_run(run_id)
@@ -528,6 +553,11 @@ class PlatformAgentRuntime(AgentRuntime):
             "sequence": sequence,
             "spec": run.checkpoint.get("spec", {}),
         }
+        # E83: what the judge needs, if the answer is to be sampled once the run ends.
+        # The conversation above already holds these passages as its context block.
+        retrieved = self._retrieved.pop(str(run.id), None)
+        if retrieved is not None:
+            run.checkpoint["scoring"] = {"question": retrieved[0], "passages": retrieved[1]}
 
     async def _complete(self, run: AgentRun, output: str, spec: AgentSpec | None = None) -> None:
         run.state = RunState.COMPLETED
@@ -561,16 +591,7 @@ class PlatformAgentRuntime(AgentRuntime):
                     status=AnswerScoreStatus.PENDING,
                     question=question[:8000],
                     answer=output[:20000],
-                    passages=[
-                        {
-                            "text": p.text[:JUDGE_PASSAGE_CHARS],
-                            "document": p.document_name,
-                            "knowledge_base": p.knowledge_base,
-                            "location": p.location,
-                            "score": round(p.score, 4),
-                        }
-                        for p in passages[:MAX_SCORED_PASSAGES]
-                    ],
+                    passages=passages,
                 )
             )
         except Exception:  # pragma: no cover - defensive

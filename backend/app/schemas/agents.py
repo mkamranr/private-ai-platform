@@ -356,6 +356,9 @@ class AnswerScoreRead(ORMModel):
     error: str | None = None
     created_at: dt.datetime
     scored_at: dt.datetime | None = None
+    #: E83: judge calls tried, and when the next retry is due (pending only).
+    attempts: int = 0
+    next_attempt_at: dt.datetime | None = None
 
 
 class AnswerScoreSummary(BaseModel):

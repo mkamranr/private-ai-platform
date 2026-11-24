@@ -721,6 +721,13 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_canary_rollouts.py::TestSmarterCanary`. Docs: [model-governance.md](../model-governance.md#a-canary-first), api.md.
 - [ ] Latency is end to end (`latency_ms`), so a canary that happens to get longer prompts looks slower; time to first token is not compared.
 
+## E83: Judge retries, and paused runs scored
+
+- [x] `agent_answer_scores.attempts` and `next_attempt_at` (migration `d8a0c2e4f6b7`). A judge call that raises anything but `JudgeError` puts the answer back to `PENDING` with `retry_delay` (`answer_judge_retry_minutes` doubling, plus up to 25% at random) while `attempts <= answer_judge_retries`; `claim_pending` skips one not yet due. Both settings are runtime-editable; the service reads them through `RUNTIME.latest`.
+- [x] A run that suspends for an approval stores `{question, passages}` (already in the scorer's shape) in `checkpoint["scoring"]`; `_resume` restores it (`_restore_scoring`), so `_queue_scoring` samples it on completion.
+- [x] Tests: `tests/api/test_answer_scoring.py::TestRetries`, `::TestPausedRuns`. Docs: [agents.md](../agents.md#answer-quality), settings.md.
+- [ ] A run cancelled while paused keeps its checkpoint, passages included, until its run is deleted.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

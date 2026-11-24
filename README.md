@@ -130,7 +130,7 @@ runs the whole platform and its tests.
 |---|---|
 | **Knowledge bases** | PDF, Word, PowerPoint, CSV, HTML, text and scanned images (OCR), with citations down to the page or slide, and per-document access. |
 | **Better retrieval** | Reranking, document versions, whole-base rebuilds and a Retrieval Playground to compare settings. |
-| **Measured quality** | Evaluation sets (hit rate, recall, precision, MRR), a faithfulness judge, live agent answers scored in the background, and an alert when an agent's faithfulness falls. |
+| **Measured quality** | Evaluation sets (hit rate, recall, precision, MRR), a faithfulness judge, live agent answers scored in the background (judge calls retried after an outage), and an alert when an agent's faithfulness falls. |
 
 ### Chat, voice and developers
 

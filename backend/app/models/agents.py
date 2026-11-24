@@ -508,3 +508,6 @@ class AgentAnswerScore(UUIDPrimaryKeyMixin, Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     scored_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: E83: judge calls tried so far, and when the next may be (null: as soon as claimed).
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    next_attempt_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))

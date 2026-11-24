@@ -335,6 +335,23 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next answer judged",
     ),
     RuntimeSetting(
+        "agents.answer_judge_retries",
+        "general",
+        "Agent answer judge retries",
+        "A judge call that fails (the model is down or over budget) is tried again this "
+        "many times before the answer is marked failed. 0 does not retry. A reply the judge "
+        "gave but that could not be read is not retried.",
+        "Next answer judged",
+    ),
+    RuntimeSetting(
+        "agents.answer_judge_retry_minutes",
+        "general",
+        "Agent answer judge retry wait (minutes)",
+        "The wait before the first retry; it doubles for each further one, with some "
+        "spread so the answers queued during an outage don't all reach the judge at once.",
+        "Next answer judged",
+    ),
+    RuntimeSetting(
         "agents.answer_faithfulness_alert_below",
         "monitoring",
         "Agent faithfulness alert below",
