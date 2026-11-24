@@ -683,6 +683,12 @@ matrix still listed as missing.
 - [x] Console: *Canary first* fields, the watch in the rollout status, *This copy's share of traffic*, and a badge on the Deployments page. Checked in Chromium. Tests: `tests/api/test_canary_rollouts.py`. Docs: [model-governance.md](../model-governance.md#a-canary-first), api.md.
 - [ ] One canary copy, judged on 5xx share only (not latency or answer quality); weights are per copy, not per revision.
 
+## E78: More first-party connectors
+
+- [x] `mcp/manifests/elasticsearch.yaml` (`elasticsearch-mcp-server==2.1.9`, `DISABLE_HIGH_RISK_OPERATIONS`) and `atlassian.yaml` (`mcp-atlassian==0.24.8`, `READ_ONLY_MODE`, Jira and Confluence Server / Data Center by personal access token). Both `network: internal`, `writes: false`, secrets only from `.env`; `suggested_risk` names taken from the published wheels.
+- [x] `.env.example` variables; catalogue and manifest tests cover both. Docs: [mcp.md](../mcp.md#what-ships-in-mcpmanifests).
+- [ ] `git` stays out: `mcp-server-git` needs the `git` binary, which the bridge image doesn't have and may not install. Atlassian Cloud is `network: external` and isn't offered.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

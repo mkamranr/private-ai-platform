@@ -84,7 +84,7 @@ def test_every_shipped_manifest_passes_both(path: Path) -> None:
 
 
 def test_catalogue_is_larger_than_the_reference_three() -> None:
-    assert len(MANIFESTS) >= 7
+    assert len(MANIFESTS) >= 9
 
 
 def test_good_manifest_passes_both(tmp_path: Path) -> None:

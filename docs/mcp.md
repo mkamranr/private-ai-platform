@@ -53,10 +53,19 @@ Or **Tools & MCP → Import manifests** in the admin UI.
 | `sqlite` | `mcp-server-sqlite==2025.4.25` | none | yes | Query a SQLite database on its own volume; write and create-table tools |
 | `prometheus` | `prometheus-mcp-server==1.6.2` | internal | no | PromQL queries, metric metadata and scrape targets, by default against the platform's own Prometheus |
 | `redis` | `redis-mcp-server==0.5.1` | internal | yes | Strings, hashes, lists, sets, streams, JSON and vector search in a Redis on the site network |
+| `elasticsearch` | `elasticsearch-mcp-server==2.1.9` | internal | no | Search documents, list indices, aliases and data streams, read mappings and cluster health on an internal Elasticsearch or OpenSearch. The server's own write operations are switched off (`DISABLE_HIGH_RISK_OPERATIONS`) |
+| `atlassian` | `mcp-atlassian==0.24.8` | internal | no | Search and read Jira issues, projects, sprints and worklogs, and Confluence pages, comments and page history, on Server or Data Center. Started in `READ_ONLY_MODE`, so the create, edit and transition tools aren't offered |
 
 Every version was checked against the public registry when it was added, and none was
 published in the fortnight before. The tool names in each manifest's `suggested_risk` come
 from the published package.
+
+For `elasticsearch` and `atlassian`, give the connector an account that can only read:
+the server-side read-only switches are a second line, not the first. Their content
+tools (`search_documents`, `jira_search`, `confluence_get_page`...) are suggested at
+MEDIUM, since what they return is whatever that account can see; attachment downloads
+at HIGH. `general_api_request` on Elasticsearch passes any request through, so it is
+suggested at HIGH and is best left disabled.
 
 **Deliberately absent:**
 
