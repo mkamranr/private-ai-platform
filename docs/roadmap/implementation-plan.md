@@ -699,6 +699,12 @@ matrix still listed as missing.
 - [x] Checked in Chromium (`e79.js`: zoomed drag, group move, paste with references, duplicate, cut, box select, undo to the start, shortcuts ignored in the JSON box). Docs: [workflows.md](../workflows.md#the-canvas).
 - [ ] No panning by dragging; history and clipboard don't survive a reload.
 
+## E80: Capabilities read when a copy starts
+
+- [x] `models.probe_capabilities_on_deploy` (default on). `DeploymentWorker.probe_new_copies`, after each pass in a session of its own: `ModelRepository.needing_probe` (a running copy whose `healthy_at` is newer than `capabilities_probed_at`, or never probed; `PROBES_PER_PASS` 3) and `GatewayService.probe_capabilities` for each. A probe that fails, or a model nothing (or another model) serves, stamps `capabilities_probed_at` with the reason, so it isn't retried until a copy next becomes healthy. The worker gets the Valkey client for the gateway; without it, nothing is probed.
+- [x] Tests: `tests/api/test_probe_on_deploy.py`. Docs: [models.md](../models.md#capabilities), `.env.example`.
+- [ ] External runtimes are asked by hand only; a probe adds up to 20 seconds to a worker pass for a runtime that hangs.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

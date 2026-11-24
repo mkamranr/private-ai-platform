@@ -458,6 +458,9 @@ class ModelsSettings(BaseModel):
     default_runtime: ModelRuntime = "mock"
     deployment_health_timeout_seconds: int = 900
     deployment_health_interval_seconds: int = 5
+    #: E80: ask the runtime what a model can do (as *Ask the runtime* does) once a copy of
+    #: it is healthy, when it hasn't been asked since. One short request per model.
+    probe_capabilities_on_deploy: bool = True
 
     # Container image per runtime. Configuration rather than code, because an
     # air-gapped site pins its own digests when building the offline bundle, and

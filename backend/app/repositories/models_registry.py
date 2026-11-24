@@ -35,6 +35,30 @@ class ModelRepository(BaseRepository[Model]):
         stmt = select(Model).where(Model.name == name).options(selectinload(Model.files))
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def needing_probe(self, *, limit: int) -> Sequence[Model]:
+        """E80: models with a running copy that became healthy after their capabilities
+        were last read from the runtime (or that were never read)."""
+        newest = (
+            select(func.max(ModelDeployment.healthy_at))
+            .where(
+                ModelDeployment.model_id == Model.id,
+                ModelDeployment.state == DeploymentState.RUNNING,
+                ModelDeployment.healthy_at.is_not(None),
+            )
+            .correlate(Model)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(Model)
+            .where(
+                newest.is_not(None),
+                or_(Model.capabilities_probed_at.is_(None), newest > Model.capabilities_probed_at),
+            )
+            .order_by(Model.name)
+            .limit(limit)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
     async def get_with_files(self, model_id: uuid.UUID) -> Model | None:
         stmt = select(Model).where(Model.id == model_id).options(selectinload(Model.files))
         return (await self.session.execute(stmt)).scalar_one_or_none()

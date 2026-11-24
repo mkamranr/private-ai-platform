@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Models: capabilities read when a copy starts
+- When a copy of a model becomes healthy, the platform asks the runtime what the model can do (tools, vision...), as *Ask the runtime* does, so a model relaunched without tool calling stops being offered tools. Off with `MODELS__PROBE_CAPABILITIES_ON_DEPLOY=false`.
+- **Upgrade.** No migration.
+
 ### Workflows: zoom, multi-select, copy and paste, undo
 - **The canvas zooms** (buttons, *Fit*, Ctrl + wheel, Ctrl +/-/0).
 - **Select several steps** with Shift-click or by dragging a box around them, then move, remove, copy, cut, paste or duplicate them together (Ctrl + C / X / V / D). Pasted steps get new ids, and their references to each other follow. Copied steps can be pasted into another workflow.

@@ -94,7 +94,15 @@ class TestCatalogue:
             shutil.copy(path, catalogue_dir / path.name)
         body = (await client.get(URL, headers=auth_header(tokens, superuser))).json()
         names = {i["name"] for i in body["items"]}
-        assert {"filesystem", "time", "sqlite", "prometheus", "redis", "elasticsearch", "atlassian"} <= names
+        assert {
+            "filesystem",
+            "time",
+            "sqlite",
+            "prometheus",
+            "redis",
+            "elasticsearch",
+            "atlassian",
+        } <= names
         assert all(i["problems"] == [] for i in body["items"])
         redis = _item(body, "redis")
         assert redis["network"] == "internal" and redis["writes"] is True

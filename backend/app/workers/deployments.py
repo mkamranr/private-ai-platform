@@ -15,6 +15,8 @@ consequences follow, both deliberate:
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -34,13 +36,20 @@ from app.repositories.infrastructure import (
     GpuRepository,
     NodeRepository,
 )
-from app.repositories.models_registry import ModelDeploymentRepository, ModelRepository
+from app.repositories.models_registry import (
+    ApiKeyRepository,
+    ModelAliasRepository,
+    ModelDeploymentRepository,
+    ModelRepository,
+    UsageRepository,
+)
 from app.repositories.operations import AlertRepository
 from app.services.alerts import AlertService, deployment_failed_fingerprint
 from app.services.audit import AuditService
 from app.services.compute_backend import DockerComputeBackend
 from app.services.deployment import ComputeBackendFactory, DeploymentService
 from app.services.docker_service import build_runtime_factory
+from app.services.gateway import GatewayService
 from app.services.infrastructure import GpuService, NodeService
 
 log = get_logger(__name__)
@@ -55,6 +64,8 @@ ORPHAN_SCAN_EVERY = 120
 #: Passes between sweeps for deployments of blocked models still running (E28): about a
 #: minute, so a node that comes back is not left serving GPUs to a blocked model for long.
 BLOCKED_SWEEP_EVERY = 12
+#: E80: models whose capabilities are read in one pass, at most (each a short request).
+PROBES_PER_PASS = 3
 #: Alert for a blocked model's deployment the worker cannot stop.
 BLOCKED_RUNNING_PREFIX = "blocked_model_running:"
 
@@ -67,10 +78,14 @@ class DeploymentWorker:
         settings: Settings,
         session_factory: async_sessionmaker[AsyncSession],
         cipher: SecretCipher,
+        redis: Any = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
         self._cipher = cipher
+        #: E80: for the gateway that asks a newly healthy copy what it can do. None: no
+        #: automatic probes.
+        self._redis = redis
         # A deployment's HEALTH_CHECK phase blocks for as long as the model takes to
         # load. Without this guard the next tick would start a second wait on the same
         # deployment, and both would race to write the outcome.
@@ -154,6 +169,43 @@ class DeploymentWorker:
                 await session.commit()
         except Exception:
             log.exception("deployment_worker_tick_failed")
+        await self.probe_new_copies()
+
+    async def probe_new_copies(self) -> int:
+        """E80: read the capabilities of models whose copy just became healthy, in a
+        session of their own. A probe that fails, or a model nothing serves, is recorded
+        on the model, so it isn't asked again until a copy next becomes healthy. Never
+        raises; returns how many were asked."""
+        if self._redis is None or not self._settings.models.probe_capabilities_on_deploy:
+            return 0
+        asked = 0
+        try:
+            async with self._session_factory() as session:
+                models = ModelRepository(session)
+                gateway = GatewayService(
+                    self._settings,
+                    models,
+                    ModelAliasRepository(session),
+                    ModelDeploymentRepository(session),
+                    ApiKeyRepository(session),
+                    UsageRepository(session),
+                    self._redis,
+                    self._session_factory,
+                )
+                for model in await models.needing_probe(limit=PROBES_PER_PASS):
+                    try:
+                        await gateway.probe_capabilities(model)
+                    except Exception as exc:
+                        model.capabilities_probed_at = dt.datetime.now(dt.UTC)
+                        model.capabilities_probe_detail = (
+                            f"Not asked when its copy started: {exc}"
+                        )[:4000]
+                        log.info("model_probe_on_deploy_skipped", model=model.name, error=str(exc))
+                    asked += 1
+                await session.commit()
+        except Exception:
+            log.exception("model_probe_on_deploy_failed")
+        return asked
 
     async def _alert_failed(self, session: AsyncSession, deployment: ModelDeployment) -> None:
         """Raise an in-app alert for a deployment that just failed (E1).

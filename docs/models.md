@@ -353,8 +353,15 @@ everything. Two ways to correct it:
   `capabilities_probed_at` and `capabilities_probe_detail`) and corrects the default: a
   capability found missing is removed, one found present is added if the model's type
   allows it. A probe that can't reach the runtime keeps the earlier findings and says why.
-  It needs a running deployment (409 otherwise), and it isn't repeated by itself: ask
-  again after relaunching with other flags.
+  It needs a running deployment (409 otherwise).
+
+  **It happens by itself when a copy starts.** Once a copy of a model the platform
+  deploys becomes healthy, the deployment worker asks it, unless the model was asked
+  since (a few models per pass, each one short request). So a model relaunched with other
+  flags is re-read when its new copy is up. A probe that fails, or a model that resolves
+  to another, is recorded on the model and not retried until a copy next becomes healthy.
+  Turn it off with `MODELS__PROBE_CAPABILITIES_ON_DEPLOY=false`. External runtimes have no
+  copy that starts, so ask them by hand.
 - **Declare them** exactly (*Edit* dialog, or `PATCH /api/v1/models/{id}` with
   `capabilities`). A declaration replaces both the default and the probe's findings;
   `null` goes back to them.
