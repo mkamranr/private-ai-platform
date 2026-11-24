@@ -82,6 +82,12 @@ alert per GPU (source `gpu_threshold`) at the worst level any of them gives:
 | memory use at or above `gpu.alert_memory_warning_percent` (default 98%) | `WARNING` |
 | utilisation at or above `gpu.alert_utilization_warning_percent` (default 0, off) | `WARNING` |
 | power draw at or above `gpu.alert_power_warning_percent` of the card's power limit (default 0, off; cards that report no limit are skipped) | `WARNING` |
+| the PCIe replay counter grew by at least `gpu.alert_pcie_replays_per_hour` over the last hour (default 0, off; needs the `dcgm` probe) | `WARNING` |
+
+PCIe replays are retransmissions on the bus. The counter only goes up, so the alert looks
+at how much it grew in the last hour (a counter the driver reset counts from the reset).
+Like ECC errors it is raised at once, with no sustain wait, and clears once an hour
+passes with less growth. A climbing count usually means a riser, slot or card going bad.
 
 The title names the node, the GPU index and what crossed the line, for example
 *GPU 2 on gpu-node-01: 92 °C, memory 99% used*. A GPU that gets worse moves its alert from

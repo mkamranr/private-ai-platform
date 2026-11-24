@@ -206,6 +206,15 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next GPU alert check (every minute)",
     ),
     RuntimeSetting(
+        "gpu.alert_pcie_replays_per_hour",
+        "monitoring",
+        "GPU PCIe replay warning (per hour)",
+        "A GPU whose PCIe replay counter grew by at least this much over the last hour "
+        "raises a WARNING alert: retransmissions on the bus, often a riser, slot or card "
+        "going bad. Needs the DCGM probe, which reports the counter. 0 turns it off.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
         "gpu.alert_sustain_minutes",
         "monitoring",
         "GPU alert: sustained for (minutes)",
@@ -359,6 +368,15 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "scored answers (the number below) falls under this, from 0 to 1 (0.7 is a usual "
         "line), and cleared when it is back at or above it. 0 turns it off.",
         "Next answer judged",
+    ),
+    RuntimeSetting(
+        "agents.answer_faithfulness_stale_days",
+        "monitoring",
+        "Agent faithfulness alert: cleared after (days unused)",
+        "An agent's faithfulness alert is cleared once it has had no judged answer for "
+        "this many days, or when it is disabled or deleted, so an agent nobody uses "
+        "doesn't hold an alert open for ever.",
+        "Next hourly check",
     ),
     RuntimeSetting(
         "agents.answer_faithfulness_alert_answers",

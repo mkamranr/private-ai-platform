@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Smaller monitoring and gateway items
+- GPU alert on PCIe replays: a warning when a card's replay counter climbs by `gpu.alert_pcie_replays_per_hour` in an hour (off by default; needs DCGM).
+- An agent's faithfulness alert clears when the agent is disabled or deleted, or has had no judged answer for `agents.answer_faithfulness_stale_days` (14).
+- A stream with no copy left continues on the alias's fallback, resumed from the text already sent when the fallback's model can resume.
+- **Upgrade.** No migration.
+
 ### Chargeback: workflow tool steps, OCR per page, other currencies
 - Workflow tool steps that ran are priced like agent tool calls, on the workflow's team.
 - OCR is metered per page (usage endpoint `ocr`) and priced at the OCR model's unit price per page, charged to the knowledge base's team.

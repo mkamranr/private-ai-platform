@@ -73,6 +73,7 @@ async def _sample(
     memory_used: int = 40000,
     ecc: int | None = 0,
     at: dt.datetime = NOW,
+    replays: int | None = None,
 ) -> None:
     session.add(
         GpuMetric(
@@ -84,6 +85,7 @@ async def _sample(
             temperature_celsius=temperature,
             power_draw_watts=250,
             ecc_errors_uncorrected=ecc,
+            pcie_replay_counter=replays,
         )
     )
     await session.flush()
@@ -415,3 +417,46 @@ class TestNodeLevels:
 
         response = await client.put(url, json={}, headers=headers)
         assert response.status_code == 200 and response.json()["gpu_alert_thresholds"] is None
+
+
+class TestPcieReplays:
+    """E87: a WARNING when the PCIe replay counter climbs fast."""
+
+    @staticmethod
+    def _at(minutes: float) -> dt.datetime:
+        return NOW + dt.timedelta(minutes=minutes)
+
+    def test_evaluate(self) -> None:
+        metric = GpuMetric(temperature_celsius=60.0, memory_used_mib=1, memory_total_mib=10)
+        settings = GpuSettings(alert_pcie_replays_per_hour=100)
+        assert evaluate(metric, settings, pcie_replays=99) is None
+        breach = evaluate(metric, settings, pcie_replays=150)
+        assert breach.severity == AlertSeverity.WARNING
+        assert breach.reasons == ("150 PCIe replays in an hour",)
+        assert evaluate(metric, GpuSettings(), pcie_replays=10**6) is None  # off by default
+
+    async def test_growth_over_the_hour_raises_at_once_and_clears(
+        self, session: AsyncSession, gpu: Gpu
+    ) -> None:
+        settings = GpuSettings(alert_pcie_replays_per_hour=100, alert_sustain_minutes=5)
+        fingerprint = gpu_alert_fingerprint(gpu.id)
+        await _sample(session, gpu, replays=5000, at=self._at(-90))  # outside the hour
+        await _sample(session, gpu, replays=10_000, at=self._at(-50))
+        await _sample(session, gpu, replays=10_050, at=self._at(-1))
+        assert (await _watcher(session, self._at(0)).run(settings)).raised == []
+        await _sample(session, gpu, replays=10_200, at=self._at(0))
+        result = await _watcher(session, self._at(0)).run(settings)
+        assert result.raised == [fingerprint]  # no sustain wait
+        assert "PCIe replays" in (await _open_alert(session, gpu)).title
+        # An hour later the counter has stopped climbing.
+        await _sample(session, gpu, replays=10_200, at=self._at(61))
+        result = await _watcher(session, self._at(61)).run(settings)
+        assert result.cleared == [fingerprint]
+
+    async def test_a_counter_reset_is_not_negative(self, session: AsyncSession, gpu: Gpu) -> None:
+        repo = GpuMetricRepository(session)
+        await _sample(session, gpu, replays=900, at=self._at(-30))
+        await _sample(session, gpu, replays=40, at=self._at(-20))  # driver reset
+        await _sample(session, gpu, replays=70, at=self._at(-10))
+        growth = await repo.pcie_replay_growth([gpu.id], self._at(-60))
+        assert growth == {gpu.id: 70}

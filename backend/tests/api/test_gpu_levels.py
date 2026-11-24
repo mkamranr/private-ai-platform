@@ -214,3 +214,58 @@ class TestFaithfulnessAlert:
         await self._scores(session, agent, *([0.1] * 25))
         await self._service(session, settings).check_faithfulness(agent, agent.id)
         assert await self._open(session, agent) is None
+
+    async def test_a_stale_or_disabled_agent_has_its_alert_cleared(
+        self, session: AsyncSession, settings: Settings, superuser
+    ) -> None:
+        """E87: nothing new would clear the alert of an agent nobody uses any more."""
+        await session.execute(delete(Alert).where(Alert.source == FAITHFULNESS_ALERT_SOURCE))
+        service = self._service(
+            session,
+            settings,
+            answer_faithfulness_alert_below=0.7,
+            answer_faithfulness_alert_answers=3,
+            answer_faithfulness_stale_days=14,
+        )
+        fresh = await self._agent(session, superuser)
+        await self._scores(session, fresh, 0.1, 0.1, 0.1)
+        await service.check_faithfulness(fresh, fresh.id)
+        stale = await self._agent(session, superuser)
+        await self._scores(session, stale, 0.1, 0.1, 0.1)
+        await service.check_faithfulness(stale, stale.id)
+        disabled = await self._agent(session, superuser)
+        await self._scores(session, disabled, 0.1, 0.1, 0.1)
+        await service.check_faithfulness(disabled, disabled.id)
+        assert all([await self._open(session, a) for a in (fresh, stale, disabled)])
+
+        old = dt.datetime.now(dt.UTC) - dt.timedelta(days=20)
+        for row in (
+            await session.execute(
+                select(AgentAnswerScore).where(AgentAnswerScore.agent_id == stale.id)
+            )
+        ).scalars():
+            row.scored_at = old
+        disabled.enabled = False
+        await session.flush()
+
+        assert await service.clear_stale_alerts() == 2
+        assert await self._open(session, fresh) is not None
+        assert await self._open(session, stale) is None
+        assert await self._open(session, disabled) is None
+
+    async def test_turning_the_line_off_clears_them(
+        self, session: AsyncSession, settings: Settings, superuser
+    ) -> None:
+        await session.execute(delete(Alert).where(Alert.source == FAITHFULNESS_ALERT_SOURCE))
+        agent = await self._agent(session, superuser)
+        await self._scores(session, agent, 0.1, 0.1, 0.1)
+        on = self._service(
+            session,
+            settings,
+            answer_faithfulness_alert_below=0.7,
+            answer_faithfulness_alert_answers=3,
+        )
+        await on.check_faithfulness(agent, agent.id)
+        assert await self._open(session, agent) is not None
+        assert await self._service(session, settings).clear_stale_alerts() == 1
+        assert await self._open(session, agent) is None

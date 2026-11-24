@@ -794,6 +794,36 @@ class GatewayService:
         )
         return fallback
 
+    async def _stream_to_fallback(
+        self, target: ResolvedTarget, context: GatewayContext | None, *, resuming: bool
+    ) -> bool:
+        """E87: point a failing stream's ``target`` at the alias's fallback, in place (like
+        `_switch_replica`), so the accounting records the model that finished the answer.
+        ``resuming``: text has reached the caller, so the fallback must be able to carry on
+        from it (``RESUME``). False when there is no usable fallback."""
+        if context is None:
+            return False
+        fallback = await self._runtime_fallback(target, context)
+        if fallback is None:
+            return False
+        if resuming and caps.Capability.RESUME not in fallback.model.effective_capabilities:
+            log.info("stream_fallback_cannot_resume", fallback=fallback.model.name)
+            return False
+        if target.lease is not None:
+            await self._balancer.release(target.lease)
+            target.lease = await self._balancer.acquire(fallback.deployment.id)
+        target.model = fallback.model
+        target.deployment = fallback.deployment
+        target.internal_url = fallback.internal_url
+        target.served_model_name = fallback.served_model_name
+        target.api_key = fallback.api_key
+        target.breaker_key = fallback.breaker_key
+        target.alternates = fallback.alternates
+        target.replica_retries = 0
+        target.fallback_from = fallback.fallback_from
+        target.fallback_alias_id = None  # one hop only
+        return True
+
     async def _attempt(
         self,
         target: ResolvedTarget,
@@ -1269,7 +1299,11 @@ class GatewayService:
         return target
 
     async def stream_chunks(
-        self, target: ResolvedTarget, body: dict[str, Any], accounting: StreamAccounting
+        self,
+        target: ResolvedTarget,
+        body: dict[str, Any],
+        accounting: StreamAccounting,
+        context: GatewayContext | None = None,
     ) -> AsyncIterator[str]:
         """Forward the runtime's deltas, never accumulating them (§25).
 
@@ -1387,7 +1421,11 @@ class GatewayService:
                 self._upstream_failed(target, exc)
                 # E58: nothing has reached the caller yet, so another copy can answer as if
                 # this one had never been asked.
-                if not sent and await self._switch_replica(target, "stream"):
+                if not sent and (
+                    await self._switch_replica(target, "stream")
+                    # E87: no copy left; the alias's fallback, as a buffered call would.
+                    or await self._stream_to_fallback(target, context, resuming=False)
+                ):
                     accounting.prompt_tokens = accounting.completion_tokens = 0
                     continue
                 # E66: text has reached the caller, so another copy is asked to carry on
@@ -1395,8 +1433,14 @@ class GatewayService:
                 if (
                     sent
                     and answer
-                    and caps.Capability.RESUME in target.model.effective_capabilities
-                    and await self._switch_replica(target, "stream_resume")
+                    and (
+                        (
+                            caps.Capability.RESUME in target.model.effective_capabilities
+                            and await self._switch_replica(target, "stream_resume")
+                        )
+                        # E87: no copy left to resume on; the alias's fallback carries on.
+                        or await self._stream_to_fallback(target, context, resuming=True)
+                    )
                 ):
                     resume_from = "".join(answer)
                     accounting.resumed += 1

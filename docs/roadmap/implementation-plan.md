@@ -751,6 +751,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_chargeback_units.py` (`TestOcr`, `TestWorkflowTools`, `TestCurrency`). Docs: [chargeback.md](../chargeback.md), `.env.example`.
 - [ ] Exchange rates are configured, not fetched; budgets stay in the platform's currency. A workflow tool step that failed isn't charged.
 
+## E87: PCIe replay alert, stale faithfulness alerts, stream fallback, git connector
+
+- [x] `gpu.alert_pcie_replays_per_hour` (runtime, default 0): `GpuMetricRepository.pcie_replay_growth` sums each GPU's counter growth over the last hour (a reset counts from the reset); `evaluate(pcie_replays=)` adds a WARNING; raised at once like ECC errors; per-node levels apply.
+- [x] `agents.answer_faithfulness_stale_days` (runtime, default 14): `AnswerScoringService.clear_stale_alerts`, hourly from the worker, clears faithfulness alerts of agents deleted or disabled, with the line off, or with no judged answer since the cutoff.
+- [x] `GatewayService._stream_to_fallback`: a stream with no copy left goes to the alias's fallback, before any text, or resumed after (the fallback's model needs `resume`). One hop, the lease moved, usage on the fallback's model.
+- [x] `git` connector: not added; [mcp.md](../mcp.md) says why.
+- [x] Tests: `tests/api/test_gpu_alerts.py` (`TestPcieReplays`), `tests/api/test_gpu_levels.py` (stale alerts), `tests/api/test_stream_resume.py` (`TestFallback`). Docs: gpu.md, agents.md, gateway-policy.md, settings.md, mcp.md.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

@@ -396,6 +396,10 @@ class GpuSettings(BaseModel):
     # when a card is saturated or near its power cap for a sustained time.
     alert_utilization_warning_percent: int = Field(default=0, ge=0, le=100)
     alert_power_warning_percent: int = Field(default=0, ge=0, le=100)
+    # E87: a WARNING when a GPU's PCIe replay counter grew by at least this much in the
+    # last hour (0: off). Replays are retransmissions on the bus: a few are normal, a
+    # climbing count is a riser, slot or card going bad.
+    alert_pcie_replays_per_hour: int = Field(default=0, ge=0, le=10_000_000)
     # E68: alerts that don't flap. A temperature or memory breach must last this long
     # before it raises an alert (0: the first sample over the line raises it). ECC errors
     # always raise at once.
@@ -703,6 +707,10 @@ class AgentsSettings(BaseModel):
     #: times, later each time (``answer_judge_retry_minutes`` doubling), before FAILED.
     answer_judge_retries: int = Field(default=2, ge=0, le=10)
     answer_judge_retry_minutes: int = Field(default=5, ge=1, le=1440)
+    #: E87: an agent with no judged answer for this many days has its faithfulness alert
+    #: cleared (it is not being used, or no longer sampled); so does a disabled or
+    #: deleted agent.
+    answer_faithfulness_stale_days: int = Field(default=14, ge=1, le=365)
     # Tool types deliberately disabled: §M12 lists them but §25 forbids
     # unrestricted shell execution. They stay off until a hardened executor
     # exists (see docs/security.md).

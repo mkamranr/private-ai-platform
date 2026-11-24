@@ -43,9 +43,13 @@ class AnswerScoringWorker:
             try:
                 if time.monotonic() - self._pruned_at > PRUNE_EVERY_SECONDS:
                     removed = await service.prune()
+                    # E87: alerts of agents nobody uses any more.
+                    stale = await service.clear_stale_alerts()
                     self._pruned_at = time.monotonic()
                     if removed:
                         log.info("answer_scores_pruned", removed=removed)
+                    if stale:
+                        log.info("faithfulness_alerts_cleared", cleared=stale)
                 row = await service.score_next()
                 await session.commit()
             except Exception:

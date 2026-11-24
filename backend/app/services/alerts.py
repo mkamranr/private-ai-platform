@@ -76,6 +76,10 @@ class AlertService:
             log.warning("alert_raised", fingerprint=fingerprint, severity=str(severity))
         return result
 
+    async def open_fingerprints(self, source: str) -> set[str]:
+        """E87: the fingerprints of the open alerts ``source`` raised."""
+        return await self._alerts.open_fingerprints(source)
+
     async def clear(self, fingerprint: str) -> bool:
         """The condition behind ``fingerprint`` has gone away. True if one was open."""
         cleared = await self._alerts.resolve_open(fingerprint, at=dt.datetime.now(dt.UTC))

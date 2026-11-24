@@ -391,6 +391,9 @@ they were given: the same judge as the retrieval playground
   Below it, a WARNING alert names the agent and its average and goes to its team's
   channels; back at or above it, the alert clears. No alert until the agent has that many
   judged answers.
+  An alert no new answer would revisit is cleared by an hourly check: when the agent is
+  disabled or deleted, the line is turned off, or the agent has had no judged answer for
+  `agents.answer_faithfulness_stale_days` (default 14).
 
 The judge is a model and can be wrong: read the claims, not just the number. Use a capable
 model, ideally not the one the agent uses.

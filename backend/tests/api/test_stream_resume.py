@@ -9,9 +9,11 @@ caller sees one answer.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from app.core.interfaces.llm import ChatCompletionChunk, TokenUsage
+from app.models.models_registry import ModelAlias
 from app.services.gateway import GatewayContext, StreamAccounting
 from app.services.llm_provider import ProviderError
 from tests.api.test_replica_balancing import (  # noqa: F401  (fixtures)
@@ -148,3 +150,67 @@ class TestResume:
         assert len(calls) == 2 and "upstream_error" in sse
         assert _text(sse) == "The answer is forty two."
         assert accounting.status_code == 502
+
+
+class TestFallback:
+    """E87: with no copy left, the alias's fallback carries on (or starts) the answer."""
+
+    async def _aliased(self, gateway, session, *, capabilities=None, primary_copies=1):
+        build, providers = gateway
+        primary, primary_urls = await _model_with_copies(session, primary_copies)
+        extra = {"capabilities": capabilities} if capabilities is not None else {}
+        backup, backup_urls = await _model_with_copies(session, 1, **extra)
+        tag = uuid.uuid4().hex[:8]
+        spare = ModelAlias(alias=f"spare-{tag}", model_id=backup.id)
+        session.add(spare)
+        await session.flush()
+        main = ModelAlias(alias=f"main-{tag}", model_id=primary.id, fallback_alias_id=spare.id)
+        session.add(main)
+        await session.flush()
+        return build, providers, main, primary_urls, backup_urls, backup
+
+    async def _run(self, service, alias):
+        request = {"model": alias.alias, "messages": MESSAGES, "stream": True}
+        context = GatewayContext()
+        target = await service.prepare_stream(request, context)
+        accounting = StreamAccounting()
+        sse = "".join(
+            [c async for c in service.stream_chunks(target, request, accounting, context)]
+        )
+        return sse, accounting, target
+
+    async def test_resumed_on_the_fallback(self, gateway, session):
+        build, providers, main, primary, backup, backup_model = await self._aliased(
+            gateway, session
+        )
+        calls: list[dict[str, Any]] = []
+        providers[primary[0]] = Copy(calls, ["The answer", " is"], breaks=True)
+        providers[backup[0]] = Copy(calls, [" forty", " two."], breaks=False)
+        sse, accounting, target = await self._run(build(strategy="first", retries=0), main)
+        assert _text(sse) == "The answer is forty two." and "upstream_error" not in sse
+        assert calls[1]["messages"][-1].content == "The answer is"
+        assert accounting.resumed == 1
+        # Recorded against the model that finished it, as a fallback of the alias.
+        assert target.model.id == backup_model.id and target.fallback_from == main.alias
+
+    async def test_a_fallback_that_cannot_resume_is_not_asked(self, gateway, session):
+        build, providers, main, primary, backup, _ = await self._aliased(
+            gateway, session, capabilities=["chat", "streaming"]
+        )
+        calls: list[dict[str, Any]] = []
+        providers[primary[0]] = Copy(calls, ["The answer", " is"], breaks=True)
+        providers[backup[0]] = Copy(calls, [" forty", " two."], breaks=False)
+        sse, _, _ = await self._run(build(strategy="first", retries=0), main)
+        assert len(calls) == 1 and "upstream_error" in sse
+
+    async def test_before_any_text_the_fallback_answers(self, gateway, session):
+        build, providers, main, primary, backup, backup_model = await self._aliased(
+            gateway, session
+        )
+        calls: list[dict[str, Any]] = []
+        providers[primary[0]] = Copy(calls, [], breaks=True)
+        providers[backup[0]] = Copy(calls, ["Forty two."], breaks=False)
+        sse, accounting, target = await self._run(build(strategy="first", retries=0), main)
+        assert _text(sse) == "Forty two." and accounting.resumed == 0
+        assert calls[1]["messages"][-1].role != "assistant"
+        assert target.model.id == backup_model.id

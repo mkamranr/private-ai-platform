@@ -131,7 +131,7 @@ async def chat_completions(
     accounting = StreamAccounting()
 
     return StreamingResponse(
-        service.stream_chunks(target, body, accounting),
+        service.stream_chunks(target, body, accounting, context),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
