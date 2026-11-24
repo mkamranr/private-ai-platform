@@ -240,7 +240,26 @@ POST /api/v1/models/{id}/rollout
 * It needs at least two running copies (422 otherwise), so the old configuration keeps
   serving. Cancelling during the watch gives the copy its full share back.
 * The rollout's `canary` shows the settings and what happened: `state` (`watching`,
-  `passed`, `failed`, `cancelled`), `deployment_id`, `until`, `calls`, `errors`.
+  `passed`, `failed`, `cancelled`), `deployment_ids`, `until`, `calls`, `errors`, and with
+  a latency limit `latency_p95_ms`, `baseline_p95_ms` (or `latency_note`).
+
+**More than one canary copy.** `canary_copies` (default 1) copies are revised first, each
+on the canary's share as soon as it is healthy, then watched together; their calls and
+errors are added up. A fault that shows only under some load, or on one node, has more
+calls to show in. At least one copy keeps the old configuration (422 otherwise), and a
+failed watch takes every canary copy off new calls.
+
+**Latency.** With `canary_max_latency_ratio` (above 1, e.g. `1.5`), the canary copies'
+p95 latency over the watch is compared with the old copies' over the same minutes, on calls
+that didn't fail. More than that many times slower stops the rollout as errors do. With
+fewer than 10 such calls on either side latency isn't judged, and `latency_note` says so:
+a quiet model can't show a difference.
+
+```http
+POST /api/v1/models/{id}/rollout
+{"max_model_len": 16384, "canary_percent": 20, "canary_copies": 2,
+ "canary_max_latency_ratio": 1.5}
+```
 
 In the console: *Canary first* under *Every copy, one at a time*.
 

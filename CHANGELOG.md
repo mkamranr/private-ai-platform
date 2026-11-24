@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Rollouts: smarter canary checks
+- A canary can be more than one copy (`canary_copies`), revised first and watched together, so a fault that shows only under load or on one node has more calls to show in.
+- A canary can also be stopped for being slow: `canary_max_latency_ratio` compares its p95 latency with the old copies' over the same minutes (judged once both sides have 10 successful calls).
+- **Upgrade.** No migration.
+
 ### Inference backends: load over time, and alerts
 - Each health check keeps a sample of what a backend reports about its load; *Models* shows a chart of the last six hours, and `GET /backends/{id}/metrics/history` returns the samples.
 - Requests waiting and KV cache use can raise a warning when a backend is over a level in two checks in a row (Settings, *Monitoring*; off by default). Samples are kept for 7 days.

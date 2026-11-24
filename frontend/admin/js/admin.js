@@ -2324,12 +2324,17 @@ async function renderRolloutStatus() {
   if (!rollout) return;
   const total = rollout.deployment_ids.length;
   const canary = rollout.canary || {};
+  const watchedIds = (canary.deployment_ids || [canary.deployment_id]).filter(Boolean)
+    .map((i) => `<span class="mono">${esc(String(i).slice(0, 8))}</span>`).join(', ');
   const watching = canary.state === 'watching'
-    ? ` The first revised copy (<span class="mono">${esc(String(canary.deployment_id).slice(0, 8))}</span>)
-        takes ${esc(canary.percent)}% of calls until ${esc(new Date(canary.until).toLocaleTimeString())};
-        the others wait.` : '';
+    ? ` The canary ${watchedIds.includes(',') ? 'copies' : 'copy'} (${watchedIds})
+        ${watchedIds.includes(',') ? 'each take' : 'takes'} a ${esc(canary.percent)}% share of calls until
+        ${esc(new Date(canary.until).toLocaleTimeString())}; the others wait.` : '';
+  const latency = canary.latency_p95_ms != null && canary.baseline_p95_ms
+    ? ` p95 ${Math.round(canary.latency_p95_ms)} ms against ${Math.round(canary.baseline_p95_ms)} ms.`
+    : (canary.latency_note ? ` ${esc(canary.latency_note)}` : '');
   const passed = canary.state === 'passed'
-    ? ` Canary passed: ${esc(canary.errors)} of ${esc(canary.calls)} calls failed.` : '';
+    ? ` Canary passed: ${esc(canary.errors)} of ${esc(canary.calls)} calls failed.${latency}` : '';
   if (rollout.state === 'RUNNING') {
     host.innerHTML = `<div class="alert alert-info py-2 small d-flex align-items-center gap-2">
       <span><b>Rolling out</b> to every copy: ${rollout.done_count} of ${total} done.
@@ -2366,14 +2371,17 @@ onModalSubmit('revision-form', 'revision-error', async (form) => {
       canary_percent: percent,
       canary_minutes: numberField('rev-canary-minutes') || 15,
       canary_max_error_percent: numberField('rev-canary-errors') ?? 1,
+      canary_copies: numberField('rev-canary-copies') || 1,
+      canary_max_latency_ratio: numberField('rev-canary-latency'),
     } : {};
     const rollout = await api(`/models/${modal.dataset.model}/rollout`, {
       method: 'POST', body: JSON.stringify({ ...change, ...canary }),
     });
     form.reset();
     alert(`Rolling out to ${rollout.deployment_ids.length} copies, one at a time` +
-      (rollout.canary ? `, the first on ${rollout.canary.percent}% of calls for ` +
-        `${rollout.canary.minutes} minutes before the rest.` : '.'), 'success');
+      (rollout.canary ? `, ${rollout.canary.copies > 1 ? `the first ${rollout.canary.copies}` : 'the first'}` +
+        ` on a ${rollout.canary.percent}% share of calls for ${rollout.canary.minutes} minutes before the rest.`
+        : '.'), 'success');
   } else {
     const revision = await api(`/deployments/${deploymentId}/revisions`, {
       method: 'POST',

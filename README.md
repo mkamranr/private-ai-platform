@@ -100,9 +100,9 @@ runs the whole platform and its tests.
 |---|---|
 | **GPU fleet** | Enrol GPU hosts with a one-time token. Live utilisation, memory, temperature and power per card, with alerts that don't flap, and alert levels per node or per card. |
 | **Model registry** | Import or register models and deploy them with GPU-aware placement, after a dry run. Revisions roll back, logs stream live. |
-| **Zero-downtime changes** | A revision starts a new copy and switches over once it is healthy; a rollout revises every copy of a model one at a time, optionally watching a **canary** on a share of real traffic first. Each copy's share of traffic can be set by hand. |
 | **Runtimes** | vLLM, llama.cpp, Ollama, hosted OpenAI-compatible providers, or a mock runtime. What a model can do (tools, vision, streaming) is read from the runtime itself whenever a copy starts. |
 | **Inference backends** | Attach existing vLLM, Ollama or OpenAI-compatible servers, watch their health and load over time with alerts on queues and KV cache, catalogue their models in one click, and load or unload Ollama models from the console. |
+| **Zero-downtime changes** | A revision starts a new copy and switches over once it is healthy; a rollout revises every copy of a model one at a time, optionally watching one or more **canary** copies on a share of real traffic first, stopping on errors or slower latency. Each copy's share of traffic can be set by hand. |
 | **Model governance** | Approved, experimental, deprecated or blocked, with licence and source metadata. A blocked model is never served. |
 
 ### OpenAI-compatible gateway

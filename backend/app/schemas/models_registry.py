@@ -404,6 +404,10 @@ class RolloutRequest(BaseModel):
     canary_minutes: int = Field(default=15, ge=1, le=1440)
     #: More failed calls (5xx) than this share stops the rollout at the canary.
     canary_max_error_percent: float = Field(default=1.0, ge=0.0, le=100.0)
+    #: E82: how many copies are revised and watched together (fewer than the model runs).
+    canary_copies: int = Field(default=1, ge=1, le=64)
+    #: E82: the canary's p95 latency more than this many times the other copies' stops it.
+    canary_max_latency_ratio: float | None = Field(default=None, gt=1.0, le=100.0)
 
     def canary(self) -> dict[str, Any] | None:
         if self.canary_percent is None:
@@ -412,6 +416,8 @@ class RolloutRequest(BaseModel):
             "percent": self.canary_percent,
             "minutes": self.canary_minutes,
             "max_error_percent": self.canary_max_error_percent,
+            "copies": self.canary_copies,
+            "max_latency_ratio": self.canary_max_latency_ratio,
         }
 
 
