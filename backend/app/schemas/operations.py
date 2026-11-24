@@ -100,6 +100,20 @@ class BackendMetricsRead(BaseModel):
     models: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class BackendMetricSampleRead(BaseModel):
+    """E81: one load sample."""
+
+    recorded_at: dt.datetime
+    values: dict[str, float] = Field(default_factory=dict)
+
+
+class BackendLoadHistory(BaseModel):
+    """E81: a backend's load samples, oldest first."""
+
+    since: dt.datetime
+    samples: list[BackendMetricSampleRead] = Field(default_factory=list)
+
+
 class BackendModelAction(BaseModel):
     """E76: a model the backend already has, by its name there."""
 

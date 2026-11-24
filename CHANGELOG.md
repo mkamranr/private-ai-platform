@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Inference backends: load over time, and alerts
+- Each health check keeps a sample of what a backend reports about its load; *Models* shows a chart of the last six hours, and `GET /backends/{id}/metrics/history` returns the samples.
+- Requests waiting and KV cache use can raise a warning when a backend is over a level in two checks in a row (Settings, *Monitoring*; off by default). Samples are kept for 7 days.
+- **Upgrade.** One migration (`alembic upgrade head`).
+
 ### Models: capabilities read when a copy starts
 - When a copy of a model becomes healthy, the platform asks the runtime what the model can do (tools, vision...), as *Ask the runtime* does, so a model relaunched without tool calling stops being offered tools. Off with `MODELS__PROBE_CAPABILITIES_ON_DEPLOY=false`.
 - **Upgrade.** No migration.

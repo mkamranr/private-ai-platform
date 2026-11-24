@@ -705,6 +705,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_probe_on_deploy.py`. Docs: [models.md](../models.md#capabilities), `.env.example`.
 - [ ] External runtimes are asked by hand only; a probe adds up to 20 seconds to a worker pass for a runtime that hangs.
 
+## E81: Backend load history and alerts
+
+- [x] `backend_metric_samples` (migration `c7f9b1d3e5a6`): one row per health check of a backend that reports its load, deleted with it and after `backends.load_retention_days` (7) by `purge_metrics`. `GET /backends/{id}/metrics/history`.
+- [x] `backends.load_alert_requests_waiting` and `backends.load_alert_kv_cache_percent` (runtime, 0 = off): `load_breach`, and `record_load` raises one `WARNING` (`backend_load_fingerprint`) after two samples in a row over a level, and clears it under them. Deleting the backend clears it.
+- [x] Console: a chart of the last six hours in the backend's *Models*.
+- [x] Tests: `tests/api/test_backend_load.py`. Docs: [backends.md](../backends.md#load-over-time-and-alerts-on-it), settings.md, api.md, `.env.example`.
+- [ ] Levels are the same for every backend; Ollama reports no queue, so only its samples are kept.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

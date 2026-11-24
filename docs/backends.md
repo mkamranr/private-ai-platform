@@ -46,6 +46,30 @@ on the Ollama is refused (*pull it there first*), since the platform never downl
 the Internet. vLLM serves the one model it was started with, so it can't load or unload;
 to run models on GPUs the platform manages, deploy them from the Model Registry instead.
 
+### Load over time, and alerts on it
+
+Each health check of a backend that reports its load (vLLM, Ollama) keeps one sample of
+those values in `backend_metric_samples`, so *Models* shows a chart of the last six hours
+above the list. Running totals (tokens since start) and byte counts are left out of the
+chart; they are still in the samples.
+
+```http
+GET /api/v1/backends/{id}/metrics/history?since_minutes=360    (backend.view; 1..10080)
+```
+
+Two levels, on the Settings page (*Monitoring*), raise a `WARNING` alert when a backend is
+at or over them **in two checks in a row** (one busy minute is not enough), and clear it at
+the first check under them:
+
+| Setting | Means |
+|---|---|
+| `backends.load_alert_requests_waiting` | requests queued on the backend (vLLM) |
+| `backends.load_alert_kv_cache_percent` | share of vLLM's KV cache in use |
+
+Both are 0 (off) by default. Samples older than `backends.load_retention_days` (7) are
+deleted by the hourly retention job, and with the backend. A backend that is down, or that
+reports nothing, keeps no samples.
+
 ## Outbound URL policy
 
 Every backend URL passes `core/url_policy.check_outbound_url`, shared with the model

@@ -4674,6 +4674,46 @@ async function backendLoad(backendId) {
   }
 }
 
+/** E81: the backend's load over the last hours, from the samples the health job keeps.
+ *  Running totals (tokens so far) and byte counts are left out: they don't chart as load. */
+let beLoadChart = null;
+const BACKEND_CHART_COLOURS = ['#2ea043', '#d29922', '#06b6d4', '#a371f7', '#f85149'];
+
+async function drawBackendLoad(backendId, hours = 6) {
+  const canvas = document.getElementById('be-load-chart');
+  if (!canvas) return;
+  const history = await api(`/backends/${backendId}/metrics/history?since_minutes=${hours * 60}`).catch(() => null);
+  const samples = history?.samples || [];
+  const note = document.getElementById('be-load-note');
+  if (beLoadChart) { beLoadChart.destroy(); beLoadChart = null; }
+  if (samples.length < 2) {
+    canvas.classList.add('d-none');
+    if (note) note.textContent = 'No history yet: one sample is kept at each health check (every minute by default).';
+    return;
+  }
+  const keys = [...new Set(samples.flatMap((s) => Object.keys(s.values)))]
+    .filter((k) => !k.endsWith('_total') && !k.endsWith('bytes'));
+  beLoadChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: samples.map((s) => new Date(s.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+      datasets: keys.map((k, i) => ({
+        label: BACKEND_METRIC_LABEL[k] || k,
+        data: samples.map((s) => s.values[k] ?? null),
+        borderColor: BACKEND_CHART_COLOURS[i % BACKEND_CHART_COLOURS.length],
+        tension: .3, pointRadius: 0, borderWidth: 2,
+      })),
+    },
+    options: {
+      responsive: true, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: { x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } }, y: { beginAtZero: true } },
+      plugins: { legend: { labels: { boxWidth: 12 } } },
+    },
+  });
+  if (note) note.textContent = `${samples.length} samples over the last ${hours} hours.`;
+}
+
 function backendLoadPanel(load) {
   if (!load) return '';
   if (load.error) return `<div class="alert alert-warning small" id="be-load">${esc(load.error)}</div>`;
@@ -4703,7 +4743,10 @@ async function openDiscover(backendId, backendName, capabilities = []) {
     const inMemory = new Set(capabilities.includes('deploy') && load?.models
       ? load.models.map((m) => m.name) : []);
     const memoryColumn = capabilities.includes('deploy');
-    body.innerHTML = backendLoadPanel(load) + (models.length ? `
+    const chart = capabilities.includes('metrics') ? `
+      <div class="mb-3"><canvas id="be-load-chart" height="90"></canvas>
+        <div class="small text-secondary" id="be-load-note"></div></div>` : '';
+    body.innerHTML = backendLoadPanel(load) + chart + (models.length ? `
       <table class="table table-sm align-middle">
         <thead><tr><th>Served as</th><th>Catalogue name</th><th>In catalogue</th>
           ${memoryColumn ? '<th>In memory</th><th></th>' : ''}</tr></thead>
@@ -4720,6 +4763,7 @@ async function openDiscover(backendId, backendName, capabilities = []) {
         </tbody>
       </table>` : empty('This backend reports no models.'));
     register.disabled = !models.length;
+    if (chart) drawBackendLoad(backendId);
     body.querySelectorAll('[data-be-load]').forEach((button) => {
       button.onclick = () => guard(button, async () => {
         const action = button.dataset.beLoaded === 'true' ? 'unload' : 'load';

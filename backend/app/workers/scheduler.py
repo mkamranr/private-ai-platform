@@ -249,6 +249,11 @@ class InfrastructureWorker:
                 # The retention window is a runtime setting (E8): read it per run.
                 settings = await RUNTIME.effective(session, self._settings)
                 deleted = await self._gpu_service(session, settings).purge_old_metrics()
+                # E81: inference backends' load samples, on their own window.
+                deleted += await InferenceBackendRepository(session).prune_samples(
+                    before=dt.datetime.now(dt.UTC)
+                    - dt.timedelta(days=settings.backends.load_retention_days)
+                )
                 await session.commit()
             if deleted:
                 log.info("metric_retention_completed", deleted=deleted)
@@ -316,7 +321,9 @@ class InfrastructureWorker:
                     audit,
                     AlertService(AlertRepository(session), audit),
                 )
-                results = await service.check_all_enabled()
+                # E81: the load alert levels are runtime settings.
+                settings = await RUNTIME.effective(session, self._settings)
+                results = await service.check_all_enabled(load=settings.backends)
                 await session.commit()
             if results:
                 log.info(
