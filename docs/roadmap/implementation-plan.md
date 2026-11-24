@@ -689,6 +689,16 @@ matrix still listed as missing.
 - [x] `.env.example` variables; catalogue and manifest tests cover both. Docs: [mcp.md](../mcp.md#what-ships-in-mcpmanifests).
 - [ ] `git` stays out: `mcp-server-git` needs the `git` binary, which the bridge image doesn't have and may not install. Atlassian Cloud is `network: external` and isn't offered.
 
+## E79: Workflow canvas: zoom, multi-select, copy and paste, undo
+
+- [x] Zoom (`wf.zoom`, 0.4–2): the SVG's size scales, its viewBox doesn't; pointer positions are read in canvas units from the rendered scale. Buttons, *Fit*, Ctrl + wheel, Ctrl +/-/0.
+- [x] Selection is `{nodes: [...]}` or `{edge}`: Shift/Ctrl-click toggles, a box dragged on empty canvas selects what it touches, Ctrl+A all. A drag moves every selected step; removal skips start.
+- [x] Copy, cut, paste, duplicate (`wfClipboard`, kept across workflows in the page): new ids (`copyId`), `{{ nodes.<id>` references among the copied steps renamed, connections among them kept, offset and settled.
+- [x] Undo and redo: `markDirty` records the draft as JSON before each change (`recordHistory`, 100 deep); `resetHistory` on load. One document-level key handler (not in form fields or dialogs).
+- [x] Fixed: a dragged step drifted from the pointer when the canvas grew, because the page's scroll anchoring moved the page under it (`overflow-anchor: none` while the canvas is shown).
+- [x] Checked in Chromium (`e79.js`: zoomed drag, group move, paste with references, duplicate, cut, box select, undo to the start, shortcuts ignored in the JSON box). Docs: [workflows.md](../workflows.md#the-canvas).
+- [ ] No panning by dragging; history and clipboard don't survive a reload.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

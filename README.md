@@ -121,7 +121,7 @@ runs the whole platform and its tests.
 | **Agents** | Versioned agents combining a model, prompt, skills and tools, selectable in chat as `agent:<slug>`, with a global kill switch. |
 | **Tools and MCP** | Built-in, REST and MCP tools, and a connector catalogue (files, SQL, Redis, Prometheus, Elasticsearch, Jira and Confluence, and more). Discovered tools arrive disabled until reviewed. |
 | **Safe by construction** | A tool call needs the agent's grant *and* the caller's permission. High-risk calls wait for a human; shell and Python execution are never allowed. |
-| **Workflow canvas** | Drag-and-drop builder with typed step forms: LLM, retrieval, tool, HTTP, condition, transform, approval, delay, sub-workflow and parallel *for each*. Independent branches run at the same time. |
+| **Workflow canvas** | Drag-and-drop builder with typed step forms: LLM, retrieval, tool, HTTP, condition, transform, approval, delay, sub-workflow and parallel *for each*. Independent branches run at the same time. Zoom, multi-select, copy and paste, and undo / redo. |
 | **Triggers** | Manual, API, cron schedules and webhooks, optionally HMAC-signed so changed, stale or replayed calls are refused. Every step is traced. |
 
 ### Knowledge and retrieval (RAG)

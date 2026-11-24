@@ -796,6 +796,8 @@ body.app-active main {
 [data-bs-theme="dark"] .chip-warn { background: #3a2a12; color: #fbbf24; }
 
 .wf-graph-wrap { overflow-x: auto; }
+/* E79: the page must not scroll under a step being dragged as the canvas grows. */
+html:has(#wf-canvas), body:has(#wf-canvas) { overflow-anchor: none; }
 .wf-graph { display: block; max-width: none; font-family: inherit; }
 .wf-graph .wf-node rect:first-of-type {
   fill: var(--surface-raised, #fff); stroke: var(--bs-border-color); stroke-width: 1.2;
@@ -826,6 +828,7 @@ body.app-active main {
 .wf-canvas { touch-action: none; user-select: none; background:
   radial-gradient(circle, color-mix(in srgb, var(--bs-border-color) 80%, transparent) 1px, transparent 1px) 0 0 / 16px 16px; border-radius: .5rem; }
 .wf-canvas:focus { outline: none; }
+.wf-canvas .wf-band { fill: var(--bs-primary); fill-opacity: .08; stroke: var(--bs-primary); stroke-dasharray: 4 3; pointer-events: none; }
 .wf-editable .wf-node { cursor: grab; }
 .wf-editable .wf-node:active { cursor: grabbing; }
 .wf-canvas .wf-node:focus { outline: none; }

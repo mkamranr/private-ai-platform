@@ -31,6 +31,27 @@ The *Builder* tab is a canvas:
   of the steps before it; click one to insert its template where the cursor is.
 - **Remove** a step or connection: click it, then *Remove* or <kbd>Delete</kbd>. The start
   step can't be removed.
+- **Select several steps** with Shift- or Ctrl-click, or by dragging a box around them on
+  empty canvas (Shift keeps the steps already selected); <kbd>Ctrl</kbd>+<kbd>A</kbd>
+  selects every step. Dragging one of them moves them all; *Remove* or
+  <kbd>Delete</kbd> removes them all (except start).
+- **Copy and paste.** <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the selected steps and the
+  connections between them, <kbd>Ctrl</kbd>+<kbd>X</kbd> cuts them,
+  <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes them a little lower and to the right, and
+  <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicates them. Pasted steps get new ids
+  (`summarise` becomes `summarise_2`), and their templates that read another pasted step
+  (`{{ nodes.search.context }}`) read its copy. What was copied stays until the page is
+  reloaded, so steps can be pasted into another workflow. A pasted step isn't connected
+  to the rest: connect it yourself.
+- **Undo and redo** every change since the draft was loaded:
+  <kbd>Ctrl</kbd>+<kbd>Z</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> (or
+  <kbd>Ctrl</kbd>+<kbd>Y</kbd>), or the arrows above the canvas; up to 100 changes. A
+  drag is one change. *Discard changes* still goes back to the saved draft.
+- **Zoom** with the buttons above the canvas (*Fit* fits its width), <kbd>Ctrl</kbd>+wheel,
+  or <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd>, from 40% to 200%.
+
+The shortcuts work wherever the focus is on the Builder tab, except in a form field or an
+open dialog (<kbd>Ctrl</kbd>+<kbd>C</kbd> copies page text instead when some is selected).
 
 The step and connection tables are still under *Steps and connections as a list*, and the
 JSON under *Definition (JSON)*. Drafts saved before the canvas stored grid columns rather
@@ -430,8 +451,9 @@ Workflows take part in team scope ([teams.md](teams.md)):
   (`nodes.call.body.items`) aren't checked.
 - **Parallel retrieval and tool steps.** They take turns with the run's other database
   work, so only model and HTTP calls truly overlap.
-- **Canvas niceties**: no zoom, multi-select, copy and paste, or undo (*Discard changes*
-  goes back to the saved draft).
+- **Canvas history across reloads.** Undo history and copied steps live in the page;
+  reloading it clears both. There's no pan by dragging empty canvas (that draws a
+  selection box); scroll instead.
 - **Loops inside a workflow.** Repetition is a foreach over a sub-workflow; edges can't
   go back. Items running at once share one database session, so only their model and
   HTTP calls overlap (as for parallel branches).
