@@ -1,0 +1,45 @@
+# Elasticsearch (or OpenSearch, through the same package) on the internal network: search
+# logs and documents an organisation already indexes. Writes are switched off in the server
+# itself (DISABLE_HIGH_RISK_OPERATIONS), whatever the tools' state in the platform.
+name: elasticsearch
+display_name: Elasticsearch
+description: >
+  Search documents, list indices, aliases and data streams, read mappings and cluster
+  health on an internal Elasticsearch. Read-only: the server's write operations are
+  disabled.
+category: data
+network: internal
+writes: false
+source: https://github.com/cr7258/elasticsearch-mcp-server (Apache-2.0)
+pip: "elasticsearch-mcp-server==2.1.9"
+command: elasticsearch-mcp-server
+environment:
+  ELASTICSEARCH_HOSTS: "${MCP_ELASTICSEARCH_HOSTS:-}"
+  ELASTICSEARCH_USERNAME: "${MCP_ELASTICSEARCH_USERNAME:-}"
+  ELASTICSEARCH_PASSWORD: "${MCP_ELASTICSEARCH_PASSWORD:-}"
+  ELASTICSEARCH_API_KEY: "${MCP_ELASTICSEARCH_API_KEY:-}"
+  VERIFY_CERTS: "${MCP_ELASTICSEARCH_VERIFY_CERTS:-true}"
+  DISABLE_HIGH_RISK_OPERATIONS: "true"
+config:
+  MCP_ELASTICSEARCH_HOSTS: Comma-separated URLs, e.g. https://es.internal:9200
+  MCP_ELASTICSEARCH_USERNAME: User with read access to the indices to search
+  MCP_ELASTICSEARCH_PASSWORD: Its password
+  MCP_ELASTICSEARCH_API_KEY: An API key instead of a user and password
+  MCP_ELASTICSEARCH_VERIFY_CERTS: Set to false for a self-signed certificate
+secrets:
+  - MCP_ELASTICSEARCH_PASSWORD
+  - MCP_ELASTICSEARCH_API_KEY
+required:
+  - MCP_ELASTICSEARCH_HOSTS
+suggested_risk:
+  search_documents: MEDIUM
+  get_document: MEDIUM
+  list_indices: LOW
+  get_index: LOW
+  list_aliases: LOW
+  get_alias: LOW
+  get_data_stream: LOW
+  get_cluster_health: LOW
+  get_cluster_stats: LOW
+  analyze_text: LOW
+  general_api_request: HIGH

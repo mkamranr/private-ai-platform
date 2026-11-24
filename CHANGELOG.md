@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Connectors: Elasticsearch, Jira and Confluence
+- **Two more connectors in the Connector Catalogue**: *Elasticsearch* (search an internal Elasticsearch or OpenSearch; its write operations are switched off) and *Jira and Confluence* (search and read issues and pages on Server or Data Center, in read-only mode). Set their `MCP_` variables in `.env`, vendor and start them as usual; their tools arrive disabled.
+- **Upgrade.** No migration. Run `make mcp-vendor` on the build machine to include them in the bundle.
+
 ### Canary rollouts and weighted copies
 - **A rollout can try its change on a share of real calls first.** *Canary first* under *Every copy, one at a time*: the first revised copy takes, say, 10% of calls for 15 minutes; if more than the error limit of them fail, the rollout stops there and that copy takes no new calls. Otherwise the other copies follow. Needs two copies or more.
 - **Each copy has a share of traffic** (*This copy's share of traffic* in the Revisions dialog, 0–100). 0 drains a copy while keeping it as a fallback.

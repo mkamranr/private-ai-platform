@@ -1,0 +1,59 @@
+# Jira and Confluence Server / Data Center on the internal network, with a personal access
+# token of a service account. READ_ONLY_MODE keeps the server from creating, editing or
+# transitioning anything, whatever the tools' state in the platform.
+name: atlassian
+display_name: Jira and Confluence
+description: >
+  Search and read Jira issues, projects, comments and worklogs, and Confluence pages,
+  spaces and comments, on an internal Atlassian Server or Data Center. Read-only.
+category: knowledge
+network: internal
+writes: false
+source: https://github.com/sooperset/mcp-atlassian (MIT)
+pip: "mcp-atlassian==0.24.8"
+command: mcp-atlassian
+environment:
+  JIRA_URL: "${MCP_JIRA_URL:-}"
+  JIRA_PERSONAL_TOKEN: "${MCP_JIRA_PERSONAL_TOKEN:-}"
+  JIRA_SSL_VERIFY: "${MCP_ATLASSIAN_SSL_VERIFY:-true}"
+  CONFLUENCE_URL: "${MCP_CONFLUENCE_URL:-}"
+  CONFLUENCE_PERSONAL_TOKEN: "${MCP_CONFLUENCE_PERSONAL_TOKEN:-}"
+  CONFLUENCE_SSL_VERIFY: "${MCP_ATLASSIAN_SSL_VERIFY:-true}"
+  READ_ONLY_MODE: "true"
+config:
+  MCP_JIRA_URL: Jira base URL, e.g. https://jira.internal (empty leaves Jira out)
+  MCP_JIRA_PERSONAL_TOKEN: Personal access token of a read-only service account
+  MCP_CONFLUENCE_URL: Confluence base URL (empty leaves Confluence out)
+  MCP_CONFLUENCE_PERSONAL_TOKEN: Its personal access token
+  MCP_ATLASSIAN_SSL_VERIFY: Set to false for a self-signed certificate
+secrets:
+  - MCP_JIRA_PERSONAL_TOKEN
+  - MCP_CONFLUENCE_PERSONAL_TOKEN
+suggested_risk:
+  jira_get_issue: MEDIUM
+  jira_search: MEDIUM
+  jira_get_project_issues: MEDIUM
+  jira_get_worklog: MEDIUM
+  jira_batch_get_changelogs: MEDIUM
+  jira_get_board_issues: MEDIUM
+  jira_get_sprint_issues: MEDIUM
+  jira_get_all_projects: LOW
+  jira_search_projects: LOW
+  jira_search_fields: LOW
+  jira_get_transitions: LOW
+  jira_get_link_types: LOW
+  jira_get_agile_boards: LOW
+  jira_get_sprints_from_board: LOW
+  jira_get_project_versions: LOW
+  jira_get_project_components: LOW
+  jira_get_user_profile: MEDIUM
+  jira_download_attachments: HIGH
+  confluence_search: MEDIUM
+  confluence_get_page: MEDIUM
+  confluence_get_page_children: LOW
+  confluence_get_space_page_tree: LOW
+  confluence_get_comments: MEDIUM
+  confluence_get_labels: LOW
+  confluence_get_page_history: LOW
+  confluence_search_user: MEDIUM
+  confluence_download_attachment: HIGH
