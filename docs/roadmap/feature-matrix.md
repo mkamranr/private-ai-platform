@@ -14,7 +14,7 @@ are relative to `backend/app/` unless they start with a top-level directory.
 | 6 | vLLM / Ollama adapters | P0 | Existing | `services/llm_provider.py`; `ollama` is an external runtime | ~~Declared-capability contract per adapter~~ (E65), ~~probed from the runtime~~ (E73) |
 | 7 | Basic RBAC | P0 | Existing (E3) | `core/permissions.py`, `models/auth.py`, `services/seed.py` | Mapped to the plan's 8 roles in E3 (`KNOWLEDGE_ADMIN` added); see `docs/teams.md` |
 | 8 | Audit trail | P0 | Existing | `models/audit.py`, `services/audit.py`, `services/audit_export.py` | ~~Export, correlation-ID filter in UI~~ (E54) |
-| 9 | Offline installation | P0 | Existing (E7) | `offline/`, `scripts/build_bundle.py`, `scripts/bundle_signing.py`, `scripts/sbom.py`, Offline Updates page | ~~Key rotation and revocation~~ (E63); no offline root key or key expiry |
+| 9 | Offline installation | P0 | Existing (E7) | `offline/`, `scripts/build_bundle.py`, `scripts/bundle_signing.py`, `scripts/sbom.py`, Offline Updates page | ~~Key rotation and revocation~~ (E63), ~~offline root key and key expiry~~ (E74) |
 | 10 | Deployment lifecycle | P1 | Existing (E4) | `services/deployment.py`, `deployment_rollout.py`, `workers/deployments.py`, `services/scheduler.py` | — (zero-downtime revisions and rollouts across copies: E61) |
 | 11 | GPU monitoring | P1 | Existing | `node-agent/`, `models/infrastructure.py`, `services/gpu_alerts.py` | ~~Thresholds feeding alerts~~ (E52), ~~sustained breaches and recovery margins~~ (E68), ~~per-node thresholds~~ (E70) |
 | 12 | RAG knowledge bases | P1 | Existing (E5) | `services/knowledge.py`, `knowledge_reindex.py`, `retrieval.py`, `workers/ingestion.py` | — (per-document access: E56; whole-base rebuild: E59) |

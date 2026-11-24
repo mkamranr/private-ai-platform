@@ -6,10 +6,15 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Offline updates: an offline root key, and keys that expire
+- A key can be trusted as a **root** that signs trust updates but never bundles, so it can be kept offline. Once a site trusts a root, only the root can add, renew or revoke keys: a stolen signing key can no longer change what the site trusts.
+- Signing keys can have an **expiry date**. An expired key's bundles are refused until the root renews it. The Offline Updates page shows each key's expiry and warns 60 days ahead.
+
 ### Models: capabilities read from the runtime
 - **Ask the runtime** on a model's *Edit* dialog asks the serving copy what it can do: Ollama and llama.cpp report it directly, and other runtimes get a one-token chat with and without a tool. What it finds corrects the runtime's default (a vLLM launched without tool calling no longer accepts tools); your own declaration still wins.
 - An agent with tools can no longer be saved on a model that can't call them.
 - **Upgrade.** Migration `f4c6e8a0b2d3`.
+
 
 ### Workflows: parallel For each
 - A *For each* step can run up to 10 items at once (*At once*); results keep the order of the list. When an item finishes, the next one starts in its place, even while others wait for an approval.

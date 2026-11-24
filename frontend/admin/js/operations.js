@@ -473,9 +473,22 @@ async function renderBackups() {
 const SIGNATURE_PILL = {
   valid: ['SUCCEEDED', 'Signed · trusted'], untrusted: ['WARNING', 'Signed · no trust key'],
   unsigned: ['WARNING', 'Unsigned'], invalid: ['FAILED', 'Bad signature'], error: ['FAILED', 'Unreadable'],
-  retired: ['FAILED', 'Retired key'], revoked: ['FAILED', 'Revoked key'],
+  retired: ['FAILED', 'Retired key'], revoked: ['FAILED', 'Revoked key'], expired: ['FAILED', 'Expired key'],
 };
-const KEY_PILL = { trusted: ['SUCCEEDED', 'Trusted'], retired: ['UNKNOWN', 'Retired'], revoked: ['FAILED', 'Revoked'] };
+const KEY_PILL = {
+  trusted: ['SUCCEEDED', 'Trusted'], retired: ['UNKNOWN', 'Retired'], revoked: ['FAILED', 'Revoked'],
+  expired: ['FAILED', 'Expired'],
+};
+
+/* E74: a key's expiry, warned about within 60 days. */
+function keyExpiry(k) {
+  if (!k.expires) return '';
+  const days = k.days_left;
+  const tone = days < 0 ? 'text-danger' : days <= 60 ? 'text-warning' : 'text-secondary';
+  const when = days < 0 ? `expired ${esc(k.expires)}` : days === 0 ? 'expires today'
+    : `expires ${esc(k.expires)} (${days} day${days === 1 ? '' : 's'})`;
+  return `<div class="${tone}">${when}</div>`;
+}
 const short = (fp) => (fp ? `${fp.slice(0, 19)}…` : '');
 
 /* E63: every key in the host's trust store, with Retire and Revoke for trusted ones. */
@@ -487,17 +500,19 @@ function trustKeysHtml(trust) {
     const origin = k.source === 'update' ? `added by trust update from ${short(k.added_by)}` : 'installed on the host';
     const ended = k.status !== 'trusted' && k.reason ? `<div class="text-secondary">${esc(k.reason)}</div>` : '';
     return `<tr>
-      <td><span class="fw-medium">${esc(k.label || 'key')}</span>
+      <td><span class="fw-medium">${esc(k.label || 'key')}</span>${k.role === 'root'
+        ? ' <span class="badge text-bg-dark" title="Signs trust updates only, never bundles">root</span>' : ''}
         <div class="font-monospace text-secondary text-truncate" style="max-width:16rem" title="${esc(k.fingerprint)}">${esc(k.fingerprint)}</div>
-        <div class="text-secondary">${esc(origin)}</div>${ended}</td>
+        <div class="text-secondary">${esc(origin)}</div>${keyExpiry(k)}${ended}</td>
       <td>${pill(tone, label)}</td>
       <td class="text-end text-nowrap">${k.status === 'trusted' ? `
         <button class="btn btn-sm btn-outline-secondary py-0" data-trust-action="retire" data-trust-fp="${esc(k.fingerprint)}" data-trust-label="${esc(k.label || '')}">Retire</button>
         <button class="btn btn-sm btn-outline-danger py-0" data-trust-action="revoke" data-trust-fp="${esc(k.fingerprint)}" data-trust-label="${esc(k.label || '')}">Revoke</button>`
-        : k.status === 'retired' ? `<button class="btn btn-sm btn-outline-danger py-0" data-trust-action="revoke" data-trust-fp="${esc(k.fingerprint)}" data-trust-label="${esc(k.label || '')}">Revoke</button>` : ''}</td>
+        : ['retired', 'expired'].includes(k.status) ? `<button class="btn btn-sm btn-outline-danger py-0" data-trust-action="revoke" data-trust-fp="${esc(k.fingerprint)}" data-trust-label="${esc(k.label || '')}">Revoke</button>` : ''}</td>
     </tr>`;
   }).join('')}</tbody></table>
-  <div class="small text-secondary">${esc(trust.applied_updates || 0)} trust update(s) applied. Keys are added on the host or by a signed trust update in a bundle, never from here.</div>`;
+  <div class="small text-secondary">${esc(trust.applied_updates || 0)} trust update(s) applied. Keys are added on the host or by a signed trust update in a bundle, never from here.${
+    trust.root ? ' This site takes trust updates from its root key only.' : ''}</div>`;
 }
 
 function trustUpdatesNote(updates) {

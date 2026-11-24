@@ -520,7 +520,10 @@ class OpsService:
         status = key.get("status")
         if status == "revoked" or (action == "retire" and status != "trusted"):
             raise ConflictError(f"That key is already {status}.")
-        others = [fp for fp in trust.get("accepted") or [] if fp != fingerprint]
+        # E74: only keys that sign bundles count (a root signs trust updates only).
+        signing = trust.get("signing")
+        signing = trust.get("accepted") if signing is None else signing
+        others = [fp for fp in signing or [] if fp != fingerprint]
         if action == "revoke":
             # Revoking cascades to keys a trust update added on this key's authority.
             others = [fp for fp in others if (keys.get(fp) or {}).get("added_by") != fingerprint]
@@ -598,6 +601,7 @@ class OpsService:
             "error": ("fail", "The signature could not be checked."),
             "retired": ("fail", "Signed by a key this site has retired."),
             "revoked": ("fail", "Signed by a key this site has revoked."),
+            "expired": ("fail", "Signed by a key whose expiry date has passed."),
             "untrusted": (
                 "warn",
                 "Signed, but no trust key is installed on this host, so the signer is unknown.",
