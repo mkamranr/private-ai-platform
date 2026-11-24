@@ -137,8 +137,10 @@ tables hold nothing encrypted.
 
 `--team` brings back the team's setup as well as its knowledge bases: the team itself,
 its memberships, its tools, agents (every version, with their tool and skill grants),
-workflows (every version), API clients and keys, and the quotas and cost budgets set for
-the team or for its keys.
+workflows (every version), API clients and keys, the quotas and cost budgets set for
+the team or for its keys, the models and aliases it owned, and its history: its agents'
+runs (with their events, tool calls and approvals, and answer scores) and its workflows'
+runs (with their steps and approvals).
 
 ```
 python3 scripts/backup.py restore backups/20261110T020000Z --team legal
@@ -157,22 +159,30 @@ the knowledge bases (the team's rows go first, so a base finds its team):
   workflow deleted since comes back, and its old run history points at it again. An agent
   version's tool and skill grants are replaced by the backup's.
 * **What the team made since is kept**: an agent, workflow or key created after the backup
-  is not deleted. Run history, approvals and question history are not touched.
+  is not deleted.
+* **History is only added to.** A run, step, event or approval missing here comes back;
+  one that is here is left as it is, so a run that finished since stays finished. Runs
+  made since are kept. Question history (chat conversations) belongs to people, not
+  teams, and is not part of a team restore.
+* **Models come back as catalogue entries.** A model the team owned returns with its file
+  list and settings but no running copy: deploy it again once its weights are on the
+  model store (they aren't in the database backup). Its aliases come back with it; an
+  alias of another team's (or a shared) model deleted since is left out.
 * **Members are only added.** Anyone in the team at the time of the backup is a member
   again; someone who joined since stays.
 * **API keys never come back usable by accident.** A key revoked since stays revoked, and
   a key deleted since comes back revoked. Reissue one deliberately if it is wanted.
 * **Things that no longer exist:** a grant of a tool or skill deleted since is dropped, a
-  membership of a deleted user is dropped, and an owner or creator who was deleted is
-  cleared, as deleting them did. Anything else that points at a missing row refuses.
+  membership of a deleted user is dropped, and an owner, creator, approver or the person
+  who started a run, if deleted, is cleared, as deleting them did. Anything else that
+  points at a missing row refuses.
 * **A name taken since refuses** (another team, agent, workflow, tool or API client now has
   it, under another id), and nothing changes.
 
 Unlike knowledge bases, a team's setup holds encrypted values (tool credentials,
 workflow webhook secrets, API client identity secrets), so it needs **the backup's encryption key**, as a whole
 restore does. Under another key the setup is refused with a pointer to `--knowledge-only`;
-files alone need no key. Models and aliases the team owned are not restored: they are tied
-to deployments that may no longer exist.
+files alone need no key.
 
 ## A trap worth knowing
 
