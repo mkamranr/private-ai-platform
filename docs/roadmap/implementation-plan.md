@@ -635,6 +635,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_workflow_children.py` (definition, inline and paused children, failure and error branches, nesting limit, publish checks, team scope, foreach order, limits and paused items, cancellation). Docs: [workflows.md](../workflows.md#sub-workflows-and-loops), api.md.
 - [ ] Items run one at a time; no parallel foreach, no carrying on past a failed item, no edges back.
 
+## E72: Parallel foreach, carrying on past failed items
+
+- [x] `foreach` gains `concurrency` (1..`MAX_CONCURRENCY` 10, default 1) and `on_error` (`stop` | `continue`). Up to `concurrency` children are created and advanced side by side (`asyncio.gather` of `_advance`); paused ones are kept in the waiting output's `pending` (index and run id) and in `state["children"][node]` as `{results, pending}` (E71's plain list still reads). `child_finished` matches any pending run, and the re-run step fills the free slots.
+- [x] `stop` cancels the items still running (`WorkflowEngine.cancel_tree`, moved from the service) and fails the step at the lowest failed index; `continue` succeeds with `null` in `results` and `failed` / `errors` outputs.
+- [x] The run loop now changes the run and its steps only under the engine's lock: a change made while a sibling run flushed the shared session was marked clean without being written.
+- [x] Console: *At once* and *When an item fails* fields, the canvas summary, links to pending runs. Checked in Chromium. Tests: `TestParallel` in `tests/api/test_workflow_children.py`. Docs: [workflows.md](../workflows.md#sub-workflows-and-loops).
+- [ ] Items running at once share one database session: only their model and HTTP calls overlap. No edges back.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

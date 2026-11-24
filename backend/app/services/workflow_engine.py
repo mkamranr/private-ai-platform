@@ -28,12 +28,14 @@ cannot loop; this guards against a bug that would.
 
 **Child runs (E71).** A ``workflow`` step starts the target's published version as a run
 of its own (``parent_run_id``, ``trigger`` "workflow", the parent's permissions) and
-advances it at once; a ``foreach`` step does that once per item, one after another. A
+advances it at once; a ``foreach`` step does that once per item (E72: up to
+``concurrency`` items at once, their runs advanced side by side). A
 child that finishes at once gives its output straight away. A child that pauses (an
 approval, a delay) leaves the step waiting; when the child finishes, whoever finished it
 (the worker, an approval decision, a cancellation) calls `child_finished`, which records
 its result for the step and continues the parent, so the step runs again and picks up
-where it was. A failed child fails the step, which follows its error branch if it has one.
+where it was. A failed child fails the step, which follows its error branch if it has one;
+(E72) a foreach with ``on_error: continue`` records it and carries on instead.
 """
 
 from __future__ import annotations
@@ -135,14 +137,30 @@ def _result_of(child: WorkflowRun) -> dict[str, Any]:
     }
 
 
+def _failure(result: Mapping[str, Any], *, index: int | None = None) -> str:
+    which = f"Item {index}: the" if index is not None else "The"
+    status = str(result.get("status") or "failed").lower()
+    why = f": {result['error']}" if result.get("error") else "."
+    return f"{which} sub-workflow run {result.get('run_id')} {status}{why}"
+
+
+def _loop_record(raw: Any) -> tuple[dict[int, dict[str, Any]], dict[int, str]]:
+    """A foreach's finished results and pending runs by item index (E72).
+
+    E71 kept a plain list of results, one per item in order; that still reads."""
+    if isinstance(raw, list):
+        return {i: dict(r) for i, r in enumerate(raw)}, {}
+    raw = raw if isinstance(raw, dict) else {}
+    results = {int(r["index"]): dict(r) for r in raw.get("results") or [] if "index" in r}
+    pending = {int(p["index"]): str(p["run_id"]) for p in raw.get("pending") or []}
+    return results, pending
+
+
 def _require_succeeded(result: Mapping[str, Any], *, index: int | None = None) -> dict:
     """The result, if its run succeeded; otherwise the step fails, naming the run."""
     if result.get("status") == RunStatus.SUCCEEDED:
         return dict(result)
-    which = f"Item {index}: the" if index is not None else "The"
-    status = str(result.get("status") or "failed").lower()
-    why = f": {result['error']}" if result.get("error") else "."
-    raise NodeFailedError(f"{which} sub-workflow run {result.get('run_id')} {status}{why}")
+    raise NodeFailedError(_failure(result, index=index))
 
 
 class WorkflowEngine:
@@ -214,22 +232,26 @@ class WorkflowEngine:
         state = dict(run.state or {})
         node_state: dict[str, dict[str, Any]] = dict(state.get("nodes") or {})
 
-        # Due delays complete before anything else. Each delay keeps its own due time
-        # (E69: branches can wait at once); a run paused before that has only the run's.
-        now = _now()
-        for node_id, entry in node_state.items():
-            if entry.get("status") == "waiting" and entry.get("wait") == "delay":
-                due = _parse_time(entry.get("resume_at")) or run.resume_at
-                if due is None or due <= now:
-                    entry.update(status="succeeded", wait=None)
-                    entry.pop("resume_at", None)
-                    await self._close_waiting_step(run, node_id, entry.get("output") or {})
+        # E72: changes to the run (and its steps) are made under the lock, like the
+        # flushes. Sibling child runs advance side by side on the one session, and a change
+        # made while another coroutine flushes is marked clean without being written.
+        async with self._db:
+            # Due delays complete before anything else. Each delay keeps its own due time
+            # (E69: branches can wait at once); a run paused before that has only the run's.
+            now = _now()
+            for node_id, entry in node_state.items():
+                if entry.get("status") == "waiting" and entry.get("wait") == "delay":
+                    due = _parse_time(entry.get("resume_at")) or run.resume_at
+                    if due is None or due <= now:
+                        entry.update(status="succeeded", wait=None)
+                        entry.pop("resume_at", None)
+                        await self._close_waiting_step(run, node_id, entry.get("output") or {})
 
-        if run.started_at is None:
-            run.started_at = _now()
-        run.status = RunStatus.RUNNING
-        paused_until = run.resume_at
-        run.resume_at = None
+            if run.started_at is None:
+                run.started_at = _now()
+            run.status = RunStatus.RUNNING
+            paused_until = run.resume_at
+            run.resume_at = None
 
         try:
             order = wd.execution_order(definition)
@@ -262,6 +284,7 @@ class WorkflowEngine:
             return True
 
         finished = False
+        final_output: dict[str, Any] | None = None
         while not finished:
             batch = [n for n in order if ready(n)]
             if not batch:
@@ -317,35 +340,37 @@ class WorkflowEngine:
                     "output": outcome.output,
                 }
                 if outcome.final:
-                    run.output = outcome.output
+                    final_output = outcome.output
                     finished = True
             if failure is not None:
                 return await self._fail(run, node_state, failure)
 
-        run.state = {**state, "nodes": node_state}
         waiting = [e for e in node_state.values() if e.get("status") == "waiting"]
-        if waiting and not finished:
-            delays = [
-                due
-                for e in waiting
-                if e.get("wait") == "delay"
-                and (due := _parse_time(e.get("resume_at")) or paused_until) is not None
-            ]
-            run.resume_at = min(delays) if delays else None
-            # Waiting for a child run (E71) is WAITING with no due time: the child's end
-            # continues it, not the worker's clock.
-            run.status = (
-                RunStatus.WAITING_FOR_APPROVAL
-                if any(e.get("wait") == "approval" for e in waiting)
-                else RunStatus.WAITING
-            )
+        async with self._db:
+            run.state = {**state, "nodes": node_state}
+            if waiting and not finished:
+                delays = [
+                    due
+                    for e in waiting
+                    if e.get("wait") == "delay"
+                    and (due := _parse_time(e.get("resume_at")) or paused_until) is not None
+                ]
+                run.resume_at = min(delays) if delays else None
+                # Waiting for a child run (E71) is WAITING with no due time: the child's end
+                # continues it, not the worker's clock.
+                run.status = (
+                    RunStatus.WAITING_FOR_APPROVAL
+                    if any(e.get("wait") == "approval" for e in waiting)
+                    else RunStatus.WAITING
+                )
+            else:
+                run.status = RunStatus.SUCCEEDED
+                if final_output is not None:
+                    run.output = final_output
+                if run.output is None:
+                    run.output = self._last_output(order, node_state)
+                run.finished_at = _now()
             await self._steps.flush()
-            return run
-        run.status = RunStatus.SUCCEEDED
-        if run.output is None:
-            run.output = self._last_output(order, node_state)
-        run.finished_at = _now()
-        await self._steps.flush()
         return run
 
     def _activated(
@@ -372,14 +397,15 @@ class WorkflowEngine:
         return {}
 
     async def _fail(self, run: WorkflowRun, node_state: dict, message: str) -> WorkflowRun:
-        run.state = {**(run.state or {}), "nodes": node_state}
-        run.status = RunStatus.FAILED
-        run.error = message[:4000]
-        run.finished_at = _now()
         log.info("workflow_run_failed", run=str(run.id), error=message[:200])
-        # Flushed here, not left to the caller: sessions run with autoflush off, and a
-        # reload of the run (populate_existing) would otherwise put it back to RUNNING.
-        await self._steps.flush()
+        async with self._db:
+            run.state = {**(run.state or {}), "nodes": node_state}
+            run.status = RunStatus.FAILED
+            run.error = message[:4000]
+            run.finished_at = _now()
+            # Flushed here, not left to the caller: sessions run with autoflush off, and a
+            # reload of the run (populate_existing) would otherwise put it back to RUNNING.
+            await self._steps.flush()
         return run
 
     def context(self, run: WorkflowRun, node_state: Mapping[str, Any]) -> dict[str, Any]:
@@ -435,7 +461,8 @@ class WorkflowEngine:
         error: str | None = None
         outcome: Outcome | None = None
         for attempt in range(1, attempts + 1):
-            step.attempts = attempt
+            async with self._db:
+                step.attempts = attempt
             try:
                 call = handler(run, node, config, context, node_state)
                 if whole:
@@ -458,8 +485,8 @@ class WorkflowEngine:
             if attempt < attempts and backoff:
                 await asyncio.sleep(backoff * attempt)
 
-        step.duration_ms = int((time.perf_counter() - started) * 1000)
         async with self._db:
+            step.duration_ms = int((time.perf_counter() - started) * 1000)
             if error is not None:
                 step.status = StepStatus.FAILED
                 step.error = error[:4000]
@@ -523,12 +550,29 @@ class WorkflowEngine:
         node_state = dict((parent.state or {}).get("nodes") or {})
         entry = node_state.get(node_id) or {}
         output = entry.get("output") or {}
-        if entry.get("status") != "waiting" or output.get("run_id") != str(child.id):
+        if entry.get("status") != "waiting":
             return None
-        results = [*(output.get("results") or []), _result_of(child)]
-        node_state.pop(node_id)
         children = dict((parent.state or {}).get("children") or {})
-        children[node_id] = results
+        pending = output.get("pending")
+        if isinstance(pending, list):
+            # E72: a foreach, with several runs out at once.
+            index = next(
+                (int(p["index"]) for p in pending if p.get("run_id") == str(child.id)), None
+            )
+            if index is None:
+                return None
+            children[node_id] = {
+                "results": [
+                    *(output.get("results") or []),
+                    {**_result_of(child), "index": index},
+                ],
+                "pending": [p for p in pending if p.get("run_id") != str(child.id)],
+            }
+        elif output.get("run_id") == str(child.id):
+            children[node_id] = [*(output.get("results") or []), _result_of(child)]
+        else:
+            return None
+        node_state.pop(node_id)
         parent.state = {**(parent.state or {}), "nodes": node_state, "children": children}
         await self._close_waiting_step(
             parent, node_id, {"run_id": str(child.id), "status": child.status}
@@ -540,6 +584,13 @@ class WorkflowEngine:
         self, run: WorkflowRun, node_id: str, workflow_ref: Any, payload: Any
     ) -> WorkflowRun:
         """Create a child run of ``workflow_ref``'s published version and advance it."""
+        child = await self._create_child(run, node_id, workflow_ref, payload)
+        # The inner advance: this step handles the child's end itself.
+        return await self._advance(child)
+
+    async def _create_child(
+        self, run: WorkflowRun, node_id: str, workflow_ref: Any, payload: Any
+    ) -> WorkflowRun:
         if self._runs is None or self._versions is None:
             raise NodeFailedError("Sub-workflows are not available here.")
         depth = (run.depth or 0) + 1
@@ -587,8 +638,20 @@ class WorkflowEngine:
             self._runs.add(child)
             await self._steps.flush()
         log.info("workflow_child_started", run=str(run.id), node=node_id, child=str(child.id))
-        # The inner advance: this step handles the child's end itself, below.
-        return await self._advance(child)
+        return child
+
+    async def cancel_tree(self, run: WorkflowRun, reason: str) -> None:
+        """Cancel ``run`` and its unfinished child runs, depth first, expiring their
+        pending approvals (E71; in the engine since E72, which also cancels a failed
+        foreach's items still running)."""
+        if self._runs is not None:
+            for child in await self._runs.active_children(run.id):
+                await self.cancel_tree(child, "Its parent run was cancelled.")
+        for approval in await self._approvals.pending_for_run(run.id):
+            approval.status = ApprovalStatus.EXPIRED
+        run.status = RunStatus.CANCELLED
+        run.finished_at = _now()
+        run.error = reason
 
     @staticmethod
     def _finished(run: WorkflowRun, node_id: str) -> list[dict[str, Any]]:
@@ -1035,32 +1098,85 @@ class WorkflowEngine:
         limit = int(config.get("max_items") or wd.DEFAULT_MAX_ITEMS)
         if len(items) > limit:
             raise NodeFailedError(f"{len(items)} items; this step takes at most {limit}.")
-        results = self._finished(run, node_id)
-        for index, result in enumerate(results):
-            _require_succeeded(result, index=index)
-        for index in range(len(results), len(items)):
-            payload = wd.render(
-                config.get("input") or {"item": "{{ item }}"},
-                {**context, "item": items[index], "index": index},
-            )
-            child = await self._start_child(run, node_id, config.get("workflow_id"), payload)
-            if not child.is_terminal:
-                return Outcome(
-                    output={
-                        "run_id": str(child.id),
-                        "results": results,
-                        "index": index,
-                        "count": len(items),
-                    },
-                    wait="workflow",
+        concurrency = max(1, min(int(config.get("concurrency") or 1), wd.MAX_CONCURRENCY))
+        carry_on = config.get("on_error") == "continue"
+        results, pending = _loop_record(((run.state or {}).get("children") or {}).get(node_id))
+        template = config.get("input") or {"item": "{{ item }}"}
+
+        async def stop_at_failure() -> None:
+            if carry_on:
+                return
+            failed = sorted(i for i, r in results.items() if r.get("status") != RunStatus.SUCCEEDED)
+            if not failed:
+                return
+            # E72: the items still running are of no use now.
+            if pending and self._runs is not None:
+                async with self._db:
+                    for run_id in pending.values():
+                        other = await self._runs.lock(uuid.UUID(run_id))
+                        if other is not None and not other.is_terminal:
+                            await self.cancel_tree(
+                                other, f"Item {failed[0]} of its parent's foreach failed."
+                            )
+                    await self._steps.flush()
+            raise NodeFailedError(_failure(results[failed[0]], index=failed[0]))
+
+        await stop_at_failure()
+        while True:
+            free = concurrency - len(pending)
+            todo = [i for i in range(len(items)) if i not in results and i not in pending]
+            if free <= 0 or not todo:
+                break
+            todo = todo[:free]
+            children = [
+                await self._create_child(
+                    run,
+                    node_id,
+                    config.get("workflow_id"),
+                    wd.render(template, {**context, "item": items[i], "index": i}),
                 )
-            results.append(_result_of(child))
-            _require_succeeded(results[-1], index=index)
+                for i in todo
+            ]
+            advanced = await asyncio.gather(*(self._advance(c) for c in children))
+            for index, child in zip(todo, advanced, strict=True):
+                if child.is_terminal:
+                    results[index] = {**_result_of(child), "index": index}
+                else:
+                    pending[index] = str(child.id)
+            await stop_at_failure()
+
+        if pending:
+            first = min(pending)
+            return Outcome(
+                output={
+                    "run_id": pending[first],
+                    "pending": [{"index": i, "run_id": r} for i, r in sorted(pending.items())],
+                    "results": [results[i] for i in sorted(results)],
+                    "index": first,
+                    "count": len(items),
+                },
+                wait="workflow",
+            )
+        ordered = [results[i] for i in range(len(items))]
+        errors = [
+            {
+                "index": i,
+                "run_id": r["run_id"],
+                "status": r.get("status"),
+                "error": r.get("error") or _failure(r, index=i),
+            }
+            for i, r in enumerate(ordered)
+            if r.get("status") != RunStatus.SUCCEEDED
+        ]
         return Outcome(
             output={
-                "results": [r["output"] for r in results],
-                "count": len(results),
-                "run_ids": [r["run_id"] for r in results],
+                "results": [
+                    r["output"] if r.get("status") == RunStatus.SUCCEEDED else None for r in ordered
+                ],
+                "count": len(ordered),
+                "run_ids": [r["run_id"] for r in ordered],
+                "failed": len(errors),
+                "errors": errors,
             }
         )
 

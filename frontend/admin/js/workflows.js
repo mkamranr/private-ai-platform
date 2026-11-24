@@ -107,6 +107,9 @@ const WF_FIELDS = {
     { k: 'input', label: 'Input for each item (JSON)', kind: 'json', rows: 4,
       help: 'Values may use {{ item }} and {{ index }}.' },
     { k: 'max_items', label: 'Most items', kind: 'number', half: true },
+    { k: 'concurrency', label: 'At once', kind: 'number', half: true, help: 'Up to 10; one after another when empty.' },
+    { k: 'on_error', label: 'When an item fails', kind: 'select', options: ['stop', 'continue'], half: true,
+      help: 'stop fails the step; continue records the failure in errors.' },
   ],
   end: [
     { k: 'output', label: 'Run output', kind: 'jsonish', rows: 5,
@@ -423,7 +426,9 @@ function nodeSummary(n) {
     case 'approval': return c.message || 'no message';
     case 'delay': return `${c.seconds || 0}s`;
     case 'workflow': return c.workflow_id ? `runs ${workflowName(c.workflow_id)}` : 'no workflow chosen';
-    case 'foreach': return c.workflow_id ? `${workflowName(c.workflow_id)} per item` : 'no workflow chosen';
+    case 'foreach': return c.workflow_id
+      ? `${workflowName(c.workflow_id)} per item${(c.concurrency || 1) > 1 ? `, ${c.concurrency} at once` : ''}${c.on_error === 'continue' ? ', carries on' : ''}`
+      : 'no workflow chosen';
     case 'end': return c.output ? 'custom output' : 'last step\'s output';
     default: return '';
   }
@@ -1378,7 +1383,8 @@ function childRuns(step) {
   const out = step.output;
   // While waiting, results are the finished items' {run_id, status, ...}; once done, the
   // children's own outputs, and run_ids lists the runs.
-  const waiting = step.status === 'WAITING' ? (out.results || []).map((r) => r && r.run_id) : [];
+  const waiting = step.status === 'WAITING'
+    ? [...(out.results || []), ...(out.pending || [])].map((r) => r && r.run_id) : [];
   return [...new Set([...(out.run_ids || []), ...waiting, ...(out.run_id ? [out.run_id] : [])])]
     .filter((id) => typeof id === 'string');
 }
