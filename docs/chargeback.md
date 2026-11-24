@@ -46,6 +46,16 @@ called. The token default `*` never prices tools, and token prices never price s
 the label every amount carries. It is a label only. Changing it converts nothing, so set it
 before entering rates.
 
+**Reports in another currency.** `CHARGEBACK__EXCHANGE_RATES` gives what one unit of
+`chargeback.currency` is worth in others, for example `{"EUR": 0.92, "AED": 3.6725}`. A
+report or export then takes `currency=EUR`: every amount is multiplied by that rate once,
+from the full-precision total, and the report says `currency` (EUR), `priced_in` (USD)
+and the `exchange_rate` used; `currencies` lists the choices. The platform never fetches
+exchange rates (it may have no Internet), so they are as current as the operator keeps
+them. Rates, budgets and alerts stay in `chargeback.currency`. A currency without a rate
+is a 422. On the Chargeback page a currency choice appears beside the period once there
+is more than one.
+
 ## Reports
 
 `GET /chargeback/report?group_by=&start=&end=` covers whole UTC days, `start` to `end`
@@ -67,7 +77,7 @@ Token cost is the prompt and completion tokens of each call multiplied by the ra
 for that call. Streams the client abandoned record only the tokens seen, so they are counted
 as **partial**. Their cost is a lower bound.
 
-### Speech and tool cost
+### Speech, OCR and tool cost
 
 - **Speech** has no tokens. A transcription records the seconds of audio and a synthesis
   the characters spoken, and they are priced at the model's `unit_price`: per audio minute
@@ -82,12 +92,20 @@ as **partial**. Their cost is a lower bound.
   grouping shows each tool as `tool:<name>`. Rows show `tool_calls` and `tool_cost`.
   Tool calls with no tool rate are counted in `unpriced_tool_calls`, apart from unpriced
   model usage, so a site that doesn't price tools isn't warned about every call.
-  Workflow tool steps don't record a tool call and aren't priced.
+- **Workflow tool steps** are priced the same way: a tool step that succeeded (not one
+  that only asked for an approval, and not one that failed) is one call, at its tool's
+  rate when the step started, on the workflow's team and the user who started the run.
+- **OCR** is metered per page. Each OCR call (a scanned document or image read while
+  ingesting) records a usage row with endpoint `ocr`: the pages its text came from (at
+  least one) in place of tokens, the knowledge base's team, and the person who uploaded
+  the document. It is priced at the OCR model's `unit_price` per page; without one it is
+  unpriced. Rows show `ocr_pages` and `ocr_cost` (the console shows them in the *Speech &
+  OCR* column). A failed OCR call is recorded with no pages.
 - **Ingestion** is already priced: the embeddings run while ingesting documents, searching
   knowledge bases and storing memories are recorded as usage (since 0.2) and priced at the
   embedding model's token rate.
 
-Speech and tool cost are part of `total_cost`, so cost budgets count them too.
+Speech, OCR and tool cost are part of `total_cost`, so cost budgets count them too.
 
 ### GPU cost
 
@@ -151,7 +169,8 @@ capacity:
 
 - It is a POST because it is audited (`CHARGEBACK_EXPORTED`, with the period, grouping and
   row count). The data leaves the platform.
-- Each row carries the currency, the period and `estimate=true`.
+- Each row carries the currency (the one asked for with `currency=`, if any), the period
+  and `estimate=true`. `ocr_pages` and `ocr_cost` are the last two columns.
 - Unpriced amounts are empty cells, not 0.
 - **Timings** are the last six columns (`avg_latency_ms` to `timed_streams`), after
   `estimate`, so a spreadsheet built on the earlier columns keeps working. An unmeasured
@@ -208,8 +227,9 @@ rate card is a finance decision.
 - **Invoices, and budgets that refuse traffic.** Budgets only alert. Refusing
   requests on a currency figure would need rates to be authoritative, and these are
   estimates. Quotas are the hard limit, in tokens.
-- **Currency conversion.**
+- **Live exchange rates.** Conversion uses the rates the operator configured; nothing
+  fetches them, and a past report is converted at today's configured rate.
 - **Power or utilisation-weighted GPU cost.** GPU time is reservation time, the only GPU
   measure the platform can attribute to a model reliably.
-- **Cost of workflow tool steps and OCR.** Workflow tool steps run executors directly and
-  record no tool call; OCR calls are not metered per page.
+- **Tool steps that failed.** A workflow tool step that failed isn't charged, even if the
+  tool ran before failing; an agent tool call that failed is.

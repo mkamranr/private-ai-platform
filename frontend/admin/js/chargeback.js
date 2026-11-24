@@ -44,7 +44,11 @@ function cbPeriod() {
 function cbQuery() {
   const [start, end] = cbPeriod();
   const group = document.getElementById('cb-group').value;
-  return new URLSearchParams({ group_by: group, start, end }).toString();
+  const params = { group_by: group, start, end };
+  // E86: shown in another currency the operator gave an exchange rate for.
+  const currency = document.getElementById('cb-currency')?.value;
+  if (currency) params.currency = currency;
+  return new URLSearchParams(params).toString();
 }
 
 function money(value, currency) {
@@ -113,8 +117,12 @@ function unitCells(r, currency) {
   const units = [];
   if (r.audio_seconds) units.push(`${fmtInt(Math.round(r.audio_seconds / 60))} audio min`);
   if (r.speech_characters) units.push(`${fmtInt(r.speech_characters)} chars`);
+  // E86: pages read by OCR, in the same column.
+  if (r.ocr_pages) units.push(`${fmtInt(r.ocr_pages)} OCR pages`);
+  const media = r.speech_cost == null && r.ocr_cost == null
+    ? null : Number(r.speech_cost || 0) + Number(r.ocr_cost || 0);
   const speech = units.length
-    ? `${moneyCell(r.speech_cost, currency, 'No unit price for this speech model')}<div class="small text-secondary">${esc(units.join(' · '))}</div>`
+    ? `${moneyCell(media, currency, 'No unit price for this speech or OCR model')}<div class="small text-secondary">${esc(units.join(' · '))}</div>`
     : '<span class="text-secondary">—</span>';
   const tools = r.tool_calls
     ? `${moneyCell(r.tool_cost, currency, 'No tool rate')}<div class="small text-secondary">${fmtInt(r.tool_calls)} calls</div>`
@@ -146,8 +154,8 @@ function cbReportCard(report) {
     <th class="text-end">Prompt tokens</th><th class="text-end">Completion tokens</th>
     <th class="text-end">Token cost</th><th class="text-end">GPU time</th>
     <th class="text-end">GPU cost</th>
-    <th class="text-end" title="Transcription per audio minute, synthesis per million characters">Speech</th>
-    <th class="text-end" title="Agent tool calls that ran, per call">Tools</th>
+    <th class="text-end" title="Transcription per audio minute, synthesis per million characters, OCR per page">Speech &amp; OCR</th>
+    <th class="text-end" title="Agent tool calls and workflow tool steps that ran, per call">Tools</th>
     <th class="text-end">Total</th>
     <th class="text-end" title="95th percentile of request latency">p95 latency</th>
     <th class="text-end" title="Median time to first token, streamed calls only">First token (p50)</th>`;
@@ -350,6 +358,14 @@ async function renderChargeback({ force = false } = {}) {
     api(`/chargeback/report?${key}`), api('/chargeback/rates'), api('/chargeback/budgets'),
   ]);
   Object.assign(cbState, { key, report, rates, budgets });
+  // E86: the currencies the report can be shown in; the choice only when there is one.
+  const picker = document.getElementById('cb-currency');
+  if (picker) {
+    const chosen = picker.value;
+    picker.innerHTML = (report.currencies || []).map((c) =>
+      `<option value="${esc(c)}" ${c === (chosen || report.priced_in || report.currency) ? 'selected' : ''}>${esc(c)}</option>`).join('');
+    picker.classList.toggle('d-none', (report.currencies || []).length < 2);
+  }
 
   let notice = '';
   if (!report.rates_defined) {
@@ -430,7 +446,7 @@ function syncCustomPeriod() {
   }
 }
 
-['cb-group', 'cb-period', 'cb-start', 'cb-end'].forEach((id) =>
+['cb-group', 'cb-period', 'cb-start', 'cb-end', 'cb-currency'].forEach((id) =>
   document.getElementById(id).addEventListener('change', () => {
     syncCustomPeriod();
     renderChargeback({ force: true }).catch((err) => alert(err.message));

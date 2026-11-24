@@ -1476,6 +1476,7 @@ def get_chargeback_service(
         ChargebackRepository(session),
         audit,
         currency=settings.chargeback.currency,
+        exchange_rates=settings.chargeback.exchange_rates,
     )
 
 

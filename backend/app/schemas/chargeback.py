@@ -95,6 +95,9 @@ class ChargebackRow(BaseModel):
     tool_calls: int = 0
     tool_cost: Decimal | None = None
     unpriced_tool_calls: int = 0
+    #: E86: pages read by OCR.
+    ocr_pages: int = 0
+    ocr_cost: Decimal | None = None
     #: Timings (E40). None when nothing was measured; TTFT and tok/s are from streamed
     #: calls only, and ``timed_streams`` says how many.
     avg_latency_ms: float | None = None
@@ -122,6 +125,9 @@ class ChargebackTotals(BaseModel):
     tool_calls: int = 0
     tool_cost: Decimal | None = None
     unpriced_tool_calls: int = 0
+    #: E86: pages read by OCR.
+    ocr_pages: int = 0
+    ocr_cost: Decimal | None = None
     #: Timings (E40). None when nothing was measured; TTFT and tok/s are from streamed
     #: calls only, and ``timed_streams`` says how many.
     avg_latency_ms: float | None = None
@@ -134,6 +140,11 @@ class ChargebackTotals(BaseModel):
 
 class ChargebackReport(BaseModel):
     currency: str
+    #: E86: the currencies the report can be shown in, and, when shown in another than
+    #: the one it is priced in (``priced_in``), the exchange rate applied.
+    currencies: list[str] = []
+    exchange_rate: Decimal | None = None
+    priced_in: str | None = None
     group_by: GroupBy
     start: dt.date
     end: dt.date

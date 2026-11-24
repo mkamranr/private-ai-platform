@@ -72,6 +72,7 @@ from app.services.document_parsers import (
     parse,
 )
 from app.services.embedding_usage import EmbeddingCharge
+from app.services.media_provider import OCR_CHARGE, OcrCharge
 
 if TYPE_CHECKING:
     from app.services.knowledge_reindex import KnowledgeReindexService
@@ -789,12 +790,20 @@ class KnowledgeService:
         cites "page 3" the way a chunk from a PDF does.
         """
         assert self._ocr is not None  # noqa: S101 — the caller checks; this narrows the type
-        result = await self._ocr.recognise(
-            content,
-            model=self._settings.knowledge.ocr_model,
-            filename=document.filename,
-            languages=tuple(self._settings.knowledge.ocr_languages),
+        # E86: the pages are charged to the base's team and whoever uploaded the file.
+        base = await self._bases.get(document.knowledge_base_id)
+        token = OCR_CHARGE.set(
+            OcrCharge(team_id=base.team_id if base else None, user_id=document.uploaded_by)
         )
+        try:
+            result = await self._ocr.recognise(
+                content,
+                model=self._settings.knowledge.ocr_model,
+                filename=document.filename,
+                languages=tuple(self._settings.knowledge.ocr_languages),
+            )
+        finally:
+            OCR_CHARGE.reset(token)
         return ParseResult(
             segments=[
                 ParsedSegment(text=block.text, location=f"page {block.page}")

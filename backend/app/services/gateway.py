@@ -55,9 +55,11 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.interfaces.llm import ChatMessage
+from app.core.interfaces.media import OcrEngine
 from app.core.logging import get_logger
 from app.core.scope import Scope
 from app.core.security import SecretCipher, hash_api_key
+from app.models.chargeback import OCR_ENDPOINT
 from app.models.models_registry import (
     ApiKey,
     Model,
@@ -80,7 +82,13 @@ from app.services.gateway_policy import BREAKERS, Admission, GatewayPolicy
 from app.services.identity import self_reported_identity
 from app.services.inference_backends import backend_api_key
 from app.services.llm_provider import ProviderError, VLLMProvider
-from app.services.media_provider import HttpOcrEngine, HttpSpeechToText, HttpTextToSpeech
+from app.services.media_provider import (
+    HttpOcrEngine,
+    HttpSpeechToText,
+    HttpTextToSpeech,
+    MeteredOcrEngine,
+    OcrCharge,
+)
 from app.services.replica_balancer import ReplicaBalancer, ReplicaLease
 
 log = get_logger(__name__)
@@ -971,7 +979,7 @@ class GatewayService:
         # exact endpoint when the target was resolved.
         return VLLMProvider(target.internal_url, api_key=self._api_key(target))
 
-    async def ocr_engine_for_model(self, model: str) -> tuple[HttpOcrEngine, str]:
+    async def ocr_engine_for_model(self, model: str) -> tuple[OcrEngine, str]:
         """Resolve an OCR alias to an engine, for callers that are not HTTP requests.
 
         The ingestion worker uses this, so a scanned page reaches OCR by exactly the
@@ -979,7 +987,33 @@ class GatewayService:
         same 503 when nothing is serving. The same reasoning as `provider_for_model`.
         """
         target = await self.resolve(model)
-        return HttpOcrEngine(target.internal_url), target.served_model_name
+
+        async def meter(
+            pages: int, status_code: int, latency_ms: float, charge: OcrCharge | None
+        ) -> None:
+            # E86: one usage row per call, in pages (see `MeteredOcrEngine`). Never
+            # raises: a page read must not be lost because its accounting failed.
+            try:
+                context = GatewayContext(
+                    user_id=charge.user_id if charge else None,
+                    owner_team_id=charge.team_id if charge else None,
+                )
+                context.started = time.perf_counter() - latency_ms / 1000
+                await self._record(
+                    context,
+                    target,
+                    streamed=False,
+                    prompt_tokens=pages,
+                    status_code=status_code,
+                    endpoint=OCR_ENDPOINT,
+                )
+            except Exception:  # pragma: no cover - defensive
+                log.warning("ocr_usage_not_recorded", model=model, exc_info=True)
+
+        return (
+            MeteredOcrEngine(HttpOcrEngine(target.internal_url), meter),
+            target.served_model_name,
+        )
 
     # -- speech and OCR (M26, M28 — Phase 9) -------------------------------
     #

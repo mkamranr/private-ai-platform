@@ -18,6 +18,11 @@ by mock-vllm; a PaddleOCR deployment needs a thin server exposing the same two f
 
 from __future__ import annotations
 
+import contextvars
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -225,6 +230,64 @@ def _engine_error(response: httpx.Response) -> str:
     if isinstance(error, dict) and error.get("message"):
         return str(error["message"])
     return f"The engine returned HTTP {response.status_code}."
+
+
+@dataclass(frozen=True, slots=True)
+class OcrCharge:
+    """E86: who the pages being read are charged to: a document's knowledge base's team
+    and the person who uploaded it."""
+
+    team_id: uuid.UUID | None = None
+    user_id: uuid.UUID | None = None
+
+
+#: E86: set around OCR by whoever knows whose pages they are (document ingestion). Read
+#: when the call is metered; pages read with none set are shared usage.
+OCR_CHARGE: contextvars.ContextVar[OcrCharge | None] = contextvars.ContextVar(
+    "ocr_charge", default=None
+)
+
+#: ``meter(pages, status_code, latency_ms, charge)``: writes the call's usage row.
+OcrMeter = Callable[[int, int, float, OcrCharge | None], Awaitable[None]]
+
+
+def pages_read(result: OcrResult) -> int:
+    """E86: the pages an OCR call read: the distinct pages its text came from, at least
+    one (an image is one page, even if nothing was found on it)."""
+    return max(1, len({block.page for block in result.blocks}))
+
+
+class MeteredOcrEngine(OcrEngine):
+    """E86: an engine whose every call is recorded as usage, in pages, like speech is
+    in seconds: one ``usage_records`` row (endpoint ``ocr``) per call, so OCR shows up in
+    usage and is priced per page in chargeback. A failed call is recorded with no pages."""
+
+    def __init__(self, engine: OcrEngine, meter: OcrMeter) -> None:
+        self._engine = engine
+        self._meter = meter
+
+    async def recognise(
+        self,
+        image: bytes,
+        *,
+        model: str,
+        filename: str = "page.png",
+        languages: tuple[str, ...] = ("en", "ar"),
+    ) -> OcrResult:
+        started = time.perf_counter()
+        charge = OCR_CHARGE.get()
+        try:
+            result = await self._engine.recognise(
+                image, model=model, filename=filename, languages=languages
+            )
+        except Exception:
+            await self._meter(0, 502, (time.perf_counter() - started) * 1000, charge)
+            raise
+        await self._meter(pages_read(result), 200, (time.perf_counter() - started) * 1000, charge)
+        return result
+
+    async def health(self) -> bool:
+        return await self._engine.health()
 
 
 class ResolvingOcrEngine(OcrEngine):
