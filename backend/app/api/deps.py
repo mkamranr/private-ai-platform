@@ -1072,7 +1072,14 @@ def build_answer_scoring_service(session: AsyncSession, app_state: Any) -> Answe
         usage=gateway.record_internal_usage,
         budget=gateway.check_internal_budget,
     )
-    return AnswerScoringService(settings, AgentAnswerScoreRepository(session), answers)
+    # E75: the worker raises falling-faithfulness alerts.
+    alerts = AlertService(
+        AlertRepository(session),
+        AuditService(AuditRepository(session), session_factory=app_state.database.sessionmaker),
+    )
+    return AnswerScoringService(
+        settings, AgentAnswerScoreRepository(session), answers, alerts=alerts
+    )
 
 
 WorkflowServiceDep = Annotated[WorkflowService, Depends(get_workflow_service)]

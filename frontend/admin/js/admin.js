@@ -1331,31 +1331,67 @@ function nodeRow(node) {
   </tr>`;
 }
 
+const LEVEL_FIELDS = [
+  ['nl-warn', 'temperature_warning_celsius'],
+  ['nl-crit', 'temperature_critical_celsius'],
+  ['nl-mem', 'memory_warning_percent'],
+  ['nl-util', 'utilization_warning_percent'],
+  ['nl-power', 'power_warning_percent'],
+];
+
 /** E70: a node's own GPU alert levels, over the platform's. */
-async function openNodeLevels(node) {
-  const levels = node.gpu_alert_thresholds || {};
-  // The platform's levels, as placeholders, so an empty field says what it falls back to.
-  // Needs settings.view; without it the fields simply have no placeholder.
+function openNodeLevels(node) {
+  return openLevels({
+    kind: 'GPU alert levels',
+    intro: 'These replace the platform\u2019s levels (Settings \u2192 GPU monitoring) for this '
+      + 'node\u2019s GPUs, for example in a hot room or with cards rated for more. Leave a level '
+      + 'empty to use the platform\u2019s, shown greyed.',
+    name: node.name,
+    levels: node.gpu_alert_thresholds,
+    url: `/nodes/${node.id}/gpu-alert-levels`,
+    saved: `${node.name}: GPU alert levels saved. They apply from the next check.`,
+    reload: renderNodes,
+  });
+}
+
+/** E75: one GPU's own alert levels, over its node's and the platform's. */
+async function openGpuLevels(gpu) {
+  const node = await api(`/nodes/${gpu.node_id}`).catch(() => null);
+  return openLevels({
+    kind: 'Alert levels',
+    intro: 'These replace its node\u2019s and the platform\u2019s levels for this card only, '
+      + 'for example one that runs hotter than its neighbours. Leave a level empty to use the '
+      + 'one shown greyed.',
+    name: `${gpu.name} #${gpu.index}`,
+    levels: gpu.alert_thresholds,
+    inherited: node?.gpu_alert_thresholds,
+    url: `/gpus/${gpu.id}/alert-levels`,
+    saved: `GPU ${gpu.index}: alert levels saved. They apply from the next check.`,
+    reload: renderGpus,
+  });
+}
+
+async function openLevels({ kind, intro, name, levels, inherited, url, saved, reload }) {
+  // The levels an empty field falls back to, as placeholders: the node's (for a GPU),
+  // then the platform's. The platform's need settings.view; without it, no placeholder.
   const catalogue = await api('/settings').catch(() => ({ items: [] }));
-  const platform = (key) => catalogue.items.find((i) => i.key === key)?.value;
-  document.getElementById('nl-name').textContent = node.name;
-  const fields = [
-    ['nl-warn', 'temperature_warning_celsius', platform('gpu.alert_temperature_warning_celsius')],
-    ['nl-crit', 'temperature_critical_celsius', platform('gpu.alert_temperature_critical_celsius')],
-    ['nl-mem', 'memory_warning_percent', platform('gpu.alert_memory_warning_percent')],
-  ];
-  fields.forEach(([id, key, fallback]) => {
+  const platform = (key) => catalogue.items.find((i) => i.key === `gpu.alert_${key}`)?.value;
+  document.getElementById('nl-kind').textContent = kind;
+  document.getElementById('nl-intro').textContent = intro;
+  document.getElementById('nl-name').textContent = name;
+  const fields = LEVEL_FIELDS;
+  fields.forEach(([id, key]) => {
     const input = document.getElementById(id);
-    input.value = levels[key] ?? '';
-    input.placeholder = fallback ?? '';
+    input.value = (levels || {})[key] ?? '';
+    input.placeholder = (inherited || {})[key] ?? platform(key) ?? '';
   });
   document.getElementById('nl-error').classList.add('d-none');
   const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('node-levels-modal'));
   const save = async (body) => {
-    await api(`/nodes/${node.id}/gpu-alert-levels`, { method: 'PUT', body: JSON.stringify(body) });
+    await api(url, { method: 'PUT', body: JSON.stringify(body) });
     modal.hide();
-    alert(`${node.name}: GPU alert levels saved. They apply from the next check.`, 'success');
-    await renderNodes();
+    alert(saved, 'success');
+    await reload();
   };
   onModalSubmit('node-levels-form', 'nl-error', () => save(Object.fromEntries(fields.map(([id, key]) => {
     const v = document.getElementById(id).value;
@@ -1382,7 +1418,7 @@ async function renderGpus() {
       <table class="table table-sm align-middle">
         <thead><tr>
           <th>#</th><th>Model</th><th>Health</th><th>Utilisation</th>
-          <th>Memory</th><th>Temp</th><th>Power</th><th>Allocated</th>
+          <th>Memory</th><th>Temp</th><th>Power</th><th>Allocated</th><th></th>
         </tr></thead>
         <tbody>${gpus.map(gpuRow).join('')}</tbody>
       </table>
@@ -1392,6 +1428,20 @@ async function renderGpus() {
   document.querySelectorAll('.gpu-row').forEach((row) => {
     row.onclick = () => showGpuChart(row.dataset.gpuId, row.dataset.gpuName);
   });
+  document.querySelectorAll('[data-gpu-levels]').forEach((button) => {
+    button.onclick = (event) => {
+      event.stopPropagation();
+      openGpuLevels(gpus.find((g) => g.id === button.dataset.gpuLevels));
+    };
+  });
+}
+
+/** E75: the button for a GPU's own alert levels, marked when it has some. */
+function gpuLevelsButton(gpu) {
+  if (!can('infrastructure.manage')) return '<td></td>';
+  return `<td class="text-end"><button class="btn btn-sm btn-outline-secondary text-nowrap"
+    data-gpu-levels="${esc(gpu.id)}" title="This GPU's own alert levels">Alert levels${gpu.alert_thresholds
+      ? ' <span class="badge text-bg-warning">own</span>' : ''}</button></td>`;
 }
 
 function gpuRow(gpu) {
@@ -1401,6 +1451,7 @@ function gpuRow(gpu) {
       <td>${gpu.index}</td><td>${esc(gpu.name)}</td>
       <td>${dot('UNKNOWN')}no data</td>
       <td colspan="5" class="small text-secondary">Awaiting first collection…</td>
+      ${gpuLevelsButton(gpu)}
     </tr>`;
   }
   return `<tr class="gpu-row" data-gpu-id="${esc(gpu.id)}" data-gpu-name="${esc(gpu.name)}">
@@ -1424,6 +1475,7 @@ function gpuRow(gpu) {
     <td>${gpu.allocated
       ? '<span class="badge text-bg-warning">reserved</span>'
       : '<span class="badge text-bg-secondary">free</span>'}</td>
+    ${gpuLevelsButton(gpu)}
   </tr>`;
 }
 

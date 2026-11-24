@@ -303,6 +303,20 @@ class AgentAnswerScoreRepository(BaseRepository[AgentAnswerScore]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def recent_faithfulness(self, agent_id: uuid.UUID, *, limit: int) -> list[float]:
+        """E75: the faithfulness of the agent's newest ``limit`` scored answers."""
+        stmt = (
+            select(AgentAnswerScore.faithfulness)
+            .where(
+                AgentAnswerScore.agent_id == agent_id,
+                AgentAnswerScore.status == AnswerScoreStatus.SCORED,
+                AgentAnswerScore.faithfulness.is_not(None),
+            )
+            .order_by(AgentAnswerScore.scored_at.desc())
+            .limit(limit)
+        )
+        return [float(v) for v in (await self.session.execute(stmt)).scalars() if v is not None]
+
     async def for_agent(self, agent_id: uuid.UUID, *, limit: int) -> Sequence[AgentAnswerScore]:
         stmt = (
             select(AgentAnswerScore)

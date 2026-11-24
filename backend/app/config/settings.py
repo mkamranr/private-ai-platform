@@ -389,6 +389,11 @@ class GpuSettings(BaseModel):
     alert_temperature_warning_celsius: int = Field(default=83, ge=30, le=120)
     alert_temperature_critical_celsius: int = Field(default=90, ge=30, le=120)
     alert_memory_warning_percent: int = Field(default=98, ge=50, le=100)
+    # E75: a GPU busy or drawing power at or above these raises a WARNING. Off by default:
+    # a GPU serving a model is meant to be busy, so these suit a site that wants to know
+    # when a card is saturated or near its power cap for a sustained time.
+    alert_utilization_warning_percent: int = Field(default=0, ge=0, le=100)
+    alert_power_warning_percent: int = Field(default=0, ge=0, le=100)
     # E68: alerts that don't flap. A temperature or memory breach must last this long
     # before it raises an alert (0: the first sample over the line raises it). ECC errors
     # always raise at once.
@@ -685,6 +690,10 @@ class AgentsSettings(BaseModel):
     answer_judge_model: str = Field(default="", max_length=255)
     #: Days scored answers are kept.
     answer_score_retention_days: int = Field(default=90, ge=1, le=3650)
+    #: E75: a WARNING alert when an agent's average faithfulness over its last
+    #: ``answer_faithfulness_alert_answers`` scored answers falls below this (0: off).
+    answer_faithfulness_alert_below: float = Field(default=0.0, ge=0.0, le=1.0)
+    answer_faithfulness_alert_answers: int = Field(default=20, ge=3, le=500)
     # Tool types deliberately disabled: §M12 lists them but §25 forbids
     # unrestricted shell execution. They stay off until a hardened executor
     # exists (see docs/security.md).

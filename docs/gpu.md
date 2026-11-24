@@ -80,6 +80,8 @@ alert per GPU (source `gpu_threshold`) at the worst level any of them gives:
 | temperature at or above `gpu.alert_temperature_critical_celsius` (default 90 °C) | `CRITICAL` |
 | temperature at or above `gpu.alert_temperature_warning_celsius` (default 83 °C) | `WARNING` |
 | memory use at or above `gpu.alert_memory_warning_percent` (default 98%) | `WARNING` |
+| utilisation at or above `gpu.alert_utilization_warning_percent` (default 0, off) | `WARNING` |
+| power draw at or above `gpu.alert_power_warning_percent` of the card's power limit (default 0, off; cards that report no limit are skipped) | `WARNING` |
 
 The title names the node, the GPU index and what crossed the line, for example
 *GPU 2 on gpu-node-01: 92 °C, memory 99% used*. A GPU that gets worse moves its alert from
@@ -90,6 +92,9 @@ node shows in its own status), or when `gpu.alerts_enabled` is turned off.
 The thresholds are on the Settings page under *GPU monitoring* and apply from the next
 check. The warning temperature must be below the critical one. Model servers usually
 reserve 90–95% of GPU memory when they start, so keep the memory threshold above that.
+A GPU serving a model is meant to be busy, so the utilisation and power checks are off
+until set; with a sustain time they report a card saturated, or held at its power cap,
+for a while. The recovery margin in percent applies to them too.
 
 ### Alerts that don't flap
 
@@ -111,7 +116,8 @@ under *GPU monitoring*.
 ### A node's own levels
 
 A node in a hot room, or with cards rated for higher temperatures, can have its own
-warning and critical temperatures and memory level. On the Nodes page, *Alert levels*
+warning and critical temperatures, memory level, and utilisation and power levels (0
+turns one of those off for the node). On the Nodes page, *Alert levels*
 opens them; the platform's levels are shown greyed in the empty fields, and a node with
 its own shows *own*. Through the API:
 
@@ -130,7 +136,20 @@ PUT /api/v1/nodes/{id}/gpu-alert-levels
 - Changes need `infrastructure.manage`, apply from the next check and are audited
   (`NODE_GPU_LEVELS_CHANGED`).
 
-Levels are per node, not per GPU.
+### A GPU's own levels
+
+One card that runs hotter than its neighbours can have its own levels too, over its
+node's and the platform's, key by key: *Alert levels* on its row of the GPUs page, where
+an empty field shows the node's level (or the platform's) greyed.
+
+```http
+PUT /api/v1/gpus/{id}/alert-levels
+{"temperature_warning_celsius": 80, "power_warning_percent": 95}
+```
+
+The same rules apply: `{}` returns the GPU to its node's and the platform's levels, its
+warning must stay below the critical it would end up with (its own, else the node's, else
+the platform's), and changes are audited (`NODE_GPU_LEVELS_CHANGED`, resource `gpu`).
 
 The ECC counter only goes back to zero when the driver resets it (usually a reboot or a
 GPU reset), so an ECC alert stays open until then. GPUs belong to no team, so their alerts

@@ -325,6 +325,30 @@ async def list_gpus(
     return details
 
 
+@router.put(
+    "/gpus/{gpu_id}/alert-levels",
+    response_model=GpuDetail,
+    summary="Set one GPU's own alert levels",
+)
+async def set_gpu_alert_levels(
+    service: NodeServiceDep,
+    gpu_service: GpuServiceDep,
+    settings: EffectiveSettingsDep,
+    actor: Annotated[User, require_permission(Perm.INFRASTRUCTURE_MANAGE)],
+    body: GpuAlertLevels,
+    gpu_id: uuid.UUID = Path(...),
+) -> GpuDetail:
+    """E75: over its node's levels and the platform's, key by key. A level left null
+    comes from those; all null returns the GPU to them."""
+    gpu = await service.set_gpu_device_alert_levels(
+        gpu_id, body.model_dump(), platform=settings.gpu, actor=actor
+    )
+    detail = GpuDetail.model_validate(gpu)
+    metric = (await gpu_service.latest_metrics([gpu])).get(gpu.id)
+    detail.latest_metric = GpuMetricRead.from_model(metric) if metric else None
+    return detail
+
+
 @router.get("/gpus/{gpu_id}", response_model=GpuDetail, summary="Get a GPU")
 async def get_gpu(
     service: GpuServiceDep,

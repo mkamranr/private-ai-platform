@@ -168,7 +168,8 @@ is a separate duty.
 | POST | `/nodes` | `infrastructure.manage` |
 | GET | `/nodes/{id}` | `infrastructure.view` |
 | DELETE | `/nodes/{id}` | `infrastructure.manage` |
-| PUT | `/nodes/{id}/gpu-alert-levels` | `infrastructure.manage`. `{temperature_warning_celsius?, temperature_critical_celsius?, memory_warning_percent?}`; null or left out = the platform's; `{}` clears them. Warning must stay below critical. Returns the node (`gpu_alert_thresholds`). See [gpu.md](gpu.md#a-nodes-own-levels) |
+| PUT | `/nodes/{id}/gpu-alert-levels` | `infrastructure.manage`. `{temperature_warning_celsius?, temperature_critical_celsius?, memory_warning_percent?, utilization_warning_percent?, power_warning_percent?}`; null or left out = the platform's; `{}` clears them. Warning must stay below critical. Returns the node (`gpu_alert_thresholds`). See [gpu.md](gpu.md#a-nodes-own-levels) |
+| PUT | `/gpus/{id}/alert-levels` | `infrastructure.manage`. The same body, for one GPU over its node's and the platform's levels. Returns the GPU (`alert_thresholds`). See [gpu.md](gpu.md#a-gpus-own-levels) |
 | POST | `/nodes/{id}/health` | `infrastructure.view` |
 | GET | `/nodes/{id}/gpus` | `gpu.view` |
 | GET | `/gpus` | `gpu.view` |

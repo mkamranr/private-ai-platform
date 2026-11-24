@@ -660,6 +660,13 @@ matrix still listed as missing.
 - [x] Tests: `tests/unit/test_signing_root_expiry.py`. Docs: operations.md, threat-model.md.
 - [ ] Expiry is judged by the site's clock. A root that expires waits for a renewal by hand on each site.
 
+## E75: Per-GPU alert levels; utilisation, power and falling-faithfulness alerts
+
+- [x] `gpus.alert_thresholds` (migration `a5d7f9b1c3e4`): a GPU's own levels. `merged_levels` lays them over its node's, key by key, before `node_settings`. `PUT /gpus/{id}/alert-levels` (`infrastructure.manage`, checked against the node's and the platform's levels it would fall back to, audited `NODE_GPU_LEVELS_CHANGED` with resource `gpu`). Console: *Alert levels* on each GPU row, sharing the node levels dialog.
+- [x] `gpu.alert_utilization_warning_percent` and `gpu.alert_power_warning_percent` (0: off; also per node and GPU): `evaluate` adds WARNING reasons for utilisation and power as a share of `power_limit_watts`, with the percent recovery margin.
+- [x] `agents.answer_faithfulness_alert_below` / `_answers`: after each scored answer `AnswerScoringService.check_faithfulness` averages the agent's newest scored answers (`recent_faithfulness`) and raises or clears a WARNING alert (`answer_faithfulness:<agent>`, the agent's team).
+- [x] Tests: `tests/api/test_gpu_levels.py`. Docs: [gpu.md](../gpu.md#a-gpus-own-levels), [agents.md](../agents.md#answer-quality), api.md, settings.md.
+- [ ] No PCIe replay alert; the faithfulness alert is checked only when an answer is judged (an agent that stops being used keeps its alert).
 
 ## Phase acceptance (applies to each)
 

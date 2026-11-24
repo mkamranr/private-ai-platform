@@ -1219,11 +1219,11 @@
     <div class="modal-content">
       <form id="node-levels-form">
         <div class="modal-header">
-          <h5 class="modal-title">GPU alert levels: <span id="nl-name" class="mono"></span></h5>
+          <h5 class="modal-title"><span id="nl-kind">GPU alert levels</span>: <span id="nl-name" class="mono"></span></h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <p class="small text-secondary">These replace the platform&rsquo;s levels (Settings &rarr; GPU
+          <p class="small text-secondary" id="nl-intro">These replace the platform&rsquo;s levels (Settings &rarr; GPU
             monitoring) for this node&rsquo;s GPUs, for example in a hot room or with cards rated for
             more. Leave a level empty to use the platform&rsquo;s, shown greyed.</p>
           <div class="row g-2">
@@ -1238,6 +1238,14 @@
             <div class="col-sm-4">
               <label class="form-label small mb-1" for="nl-mem">Memory (%)</label>
               <input id="nl-mem" type="number" min="50" max="100" class="form-control form-control-sm">
+            </div>
+            <div class="col-sm-4">
+              <label class="form-label small mb-1" for="nl-util" title="0 turns it off">Busy (%)</label>
+              <input id="nl-util" type="number" min="0" max="100" class="form-control form-control-sm">
+            </div>
+            <div class="col-sm-4">
+              <label class="form-label small mb-1" for="nl-power" title="Share of the card's power limit; 0 turns it off">Power (% of limit)</label>
+              <input id="nl-power" type="number" min="0" max="100" class="form-control form-control-sm">
             </div>
           </div>
           <div class="small text-secondary mt-2">The sustain time and recovery margins stay the platform&rsquo;s.</div>
