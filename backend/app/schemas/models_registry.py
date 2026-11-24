@@ -184,6 +184,10 @@ class ModelRead(ORMModel):
     #: E65: what the gateway lets callers ask of it: the declaration, else the runtime's
     #: narrowed by the model's type.
     effective_capabilities: list[str] = Field(default_factory=list)
+    #: E73: what the last probe of the serving runtime found, and how (or why it failed).
+    probed_capabilities: dict[str, bool] | None = None
+    capabilities_probed_at: dt.datetime | None = None
+    capabilities_probe_detail: str | None = None
     created_at: dt.datetime
 
     @field_validator("effective_capabilities", mode="before")

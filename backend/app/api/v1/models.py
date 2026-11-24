@@ -16,6 +16,7 @@ from app.api.deps import (
     ApiKeyServiceDep,
     AuditDep,
     DeploymentServiceDep,
+    GatewayServiceDep,
     ModelRegistryDep,
     ScopeDep,
     ScopeGuardDep,
@@ -161,6 +162,36 @@ async def update_model(
     await guard.model(model_id)
     model = await service.update_model(
         model_id, payload.model_dump(exclude_unset=True), actor=actor
+    )
+    return ModelRead.model_validate(model)
+
+
+@router.post(
+    "/models/{model_id}/probe-capabilities",
+    response_model=ModelRead,
+    summary="Ask the serving runtime what the model can do",
+)
+async def probe_model_capabilities(
+    service: ModelRegistryDep,
+    gateway: GatewayServiceDep,
+    audit: AuditDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_REGISTER)],
+    guard: ScopeGuardDep,
+    model_id: uuid.UUID = Path(...),
+) -> ModelRead:
+    """E73: probe the runtime through the copy the gateway uses (a chat model gets a
+    one-token answer, with and without a tool; Ollama and llama.cpp are asked directly).
+    What it finds corrects the runtime's declaration, unless the model has its own. 409
+    when nothing serves the model."""
+    await guard.model(model_id)
+    model = await gateway.probe_capabilities(await service.get_model(model_id))
+    await audit.record(
+        AuditAction.MODEL_UPDATED,
+        user_id=actor.id,
+        username=actor.username,
+        resource_type="model",
+        resource_id=str(model_id),
+        metadata={"name": model.name, "probed_capabilities": model.probed_capabilities},
     )
     return ModelRead.model_validate(model)
 

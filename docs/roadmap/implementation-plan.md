@@ -643,6 +643,15 @@ matrix still listed as missing.
 - [x] Console: *At once* and *When an item fails* fields, the canvas summary, links to pending runs. Checked in Chromium. Tests: `TestParallel` in `tests/api/test_workflow_children.py`. Docs: [workflows.md](../workflows.md#sub-workflows-and-loops).
 - [ ] Items running at once share one database session: only their model and HTTP calls overlap. No edges back.
 
+## E73: Capabilities read from the runtime; agents checked when saved
+
+- [x] `app/services/capability_probe.py`: Ollama `/api/show`, llama.cpp `/props`, and for OpenAI-shaped runtimes a one-token chat with and without a tool (a 4xx with a tool means no tool calling), or a one-word embedding. Only what it could tell is recorded.
+- [x] `models.probed_capabilities`, `capabilities_probed_at`, `capabilities_probe_detail` (migration `f4c6e8a0b2d3`). `caps.effective` applies the findings to the default (`caps.corrected`: added only within the model's type; no chat removes streaming, resume, tools and vision); a declaration still replaces both.
+- [x] `GatewayService.probe_capabilities` through the resolved copy and its credential (`_api_key`, shared with `_provider`); `POST /models/{id}/probe-capabilities` (`model.register`, audited as `MODEL_UPDATED`). A failed probe keeps earlier findings.
+- [x] Agents: a version with tools on a catalogued model (or alias) without TOOLS is refused with a 422 naming `tools`.
+- [x] Console: *Ask the runtime* on the model's *Edit* dialog, with the findings. Checked in Chromium. Tests: `tests/api/test_capability_probe.py`. Docs: [models.md](../models.md#capabilities), api.md.
+- [ ] Not probed automatically when a deployment starts; vision on vLLM, SGLang and TGI, and reranking, aren't probed (no cheap question tells).
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

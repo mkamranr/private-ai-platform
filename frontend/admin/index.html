@@ -2341,9 +2341,14 @@
                 <span id="edit-caps-runtime" class="text-secondary"></span></label>
             </div>
             <div id="edit-caps-boxes"></div>
+            <div class="d-flex align-items-start gap-2 mt-2">
+              <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" id="edit-caps-probe">Ask the runtime</button>
+              <div class="small text-secondary" id="edit-caps-probed"></div>
+            </div>
             <div class="form-text small">What callers may ask of this model. The gateway refuses anything
-              else with a 400 naming what is missing. Declare them for a deployment launched with other
-              flags, or an external endpoint.</div>
+              else with a 400 naming what is missing. <em>Ask the runtime</em> corrects the runtime's
+              declaration with what the serving copy says it can do; declare them yourself for anything
+              a probe can't tell.</div>
           </div>
           <div id="edit-governance" class="governance mt-3">
             <div class="d-flex align-items-center gap-2 mb-2">

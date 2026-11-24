@@ -335,10 +335,33 @@ message would answer it with a new turn, repeating text the caller already has.
 
 `GET /v1/models` lists each entry's `capabilities`.
 
-**The declaration is a default, not a probe.** llama.cpp started with `--jinja` does call
-tools; an external endpoint may do less than everything. Declare the model's capabilities
-exactly on the model's *Edit* dialog (or `PATCH /api/v1/models/{id}` with
-`capabilities`). A declaration replaces the default; `null` goes back to it.
+**The declaration is a default.** llama.cpp started with `--jinja` does call tools; vLLM
+started without `--enable-auto-tool-choice` doesn't; an external endpoint may do less than
+everything. Two ways to correct it:
+
+- **Ask the runtime** (*Edit* dialog, or `POST /api/v1/models/{id}/probe-capabilities`).
+  The platform asks the copy the gateway uses, with the same credential:
+  - Ollama: `POST /api/show` lists the model's capabilities (chat, tools, vision,
+    embeddings).
+  - llama.cpp: `GET /props` says whether its chat template takes tools and whether it has
+    a vision projector.
+  - Everything else: a one-token chat completion, then the same with a tool offered (a
+    server without tool calling refuses it with a 4xx); an embedding model gets a one-word
+    embedding.
+
+  What it finds is kept on the model (`probed_capabilities`, with when and how in
+  `capabilities_probed_at` and `capabilities_probe_detail`) and corrects the default: a
+  capability found missing is removed, one found present is added if the model's type
+  allows it. A probe that can't reach the runtime keeps the earlier findings and says why.
+  It needs a running deployment (409 otherwise), and it isn't repeated by itself: ask
+  again after relaunching with other flags.
+- **Declare them** exactly (*Edit* dialog, or `PATCH /api/v1/models/{id}` with
+  `capabilities`). A declaration replaces both the default and the probe's findings;
+  `null` goes back to them.
+
+**Agents are checked when saved.** An agent with tools can't be saved on a model (or an
+alias of one) that can't call tools; the 422 names `tools`. A model name the catalogue
+doesn't know yet is left to the run-time check.
 
 ## Using an Ollama you already have
 

@@ -1756,6 +1756,36 @@ function showCapabilities(model) {
   toggle.onchange = () => {
     document.querySelectorAll('[data-capability]').forEach((box) => { box.disabled = toggle.checked; });
   };
+  showProbe(model);
+  const button = document.getElementById('edit-caps-probe');
+  button.onclick = async () => {
+    button.disabled = true;
+    document.getElementById('edit-caps-probed').textContent = 'Asking…';
+    try {
+      const updated = await api(`/models/${model.id}/probe-capabilities`, { method: 'POST' });
+      const index = modelCache.findIndex((m) => m.id === updated.id);
+      if (index >= 0) modelCache[index] = updated;
+      showCapabilities(updated);
+    } catch (err) {
+      document.getElementById('edit-caps-probed').textContent = err.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+/* E73: what the last probe of the serving runtime found. */
+function showProbe(model) {
+  const box = document.getElementById('edit-caps-probed');
+  if (!model.capabilities_probed_at) {
+    box.textContent = 'Not asked yet. Needs a running deployment.';
+    return;
+  }
+  const found = Object.entries(model.probed_capabilities || {})
+    .map(([name, yes]) => `${(CAPABILITIES.find(([v]) => v === name) || [name, name])[1]} ${yes ? 'yes' : 'no'}`);
+  box.innerHTML = `Asked ${esc(new Date(model.capabilities_probed_at).toLocaleString())}:
+    ${found.length ? esc(found.join(', ')) : 'nothing beyond the declaration'}.
+    <div class="mono" style="font-size: .75rem">${esc(model.capabilities_probe_detail || '')}</div>`;
 }
 
 function chosenCapabilities() {

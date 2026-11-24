@@ -219,6 +219,13 @@ class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: an administrator. Null: the runtime's declaration narrowed by the model's type.
     #: Set for a deployment launched with other flags, or an external endpoint.
     capabilities: Mapped[list | None] = mapped_column(JSONB)
+    #: E73: what a probe of the serving runtime found, capability name to yes or no
+    #: (``{"tools": false}``); only what it could tell. Null: never probed. Corrects the
+    #: runtime's declaration; an administrator's ``capabilities`` replace both.
+    probed_capabilities: Mapped[dict | None] = mapped_column(JSONB)
+    capabilities_probed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: How the probe found out, or why it failed.
+    capabilities_probe_detail: Mapped[str | None] = mapped_column(Text)
 
     # Runtime arguments from the manifest, e.g. extra vLLM flags.
     metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
@@ -231,7 +238,7 @@ class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     @property
     def effective_capabilities(self) -> frozenset[caps.Capability]:
         """E65: what the gateway lets callers ask of this model."""
-        return caps.effective(self.runtime, self.type, self.capabilities)
+        return caps.effective(self.runtime, self.type, self.capabilities, self.probed_capabilities)
 
     def __repr__(self) -> str:
         return f"<Model {self.name} {self.status}>"
