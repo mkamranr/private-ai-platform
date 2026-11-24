@@ -964,6 +964,18 @@ class VoiceSettings(BaseModel):
     retention_days: int = 30
 
 
+class BackendsSettings(BaseModel):
+    """E81: inference backends' load, kept as samples and alerted on."""
+
+    #: A WARNING when this many requests (or more) wait on a backend in two checks in a
+    #: row. 0: off.
+    load_alert_requests_waiting: int = Field(default=0, ge=0, le=100_000)
+    #: The same when its KV cache is at least this full (vLLM). 0: off.
+    load_alert_kv_cache_percent: int = Field(default=0, ge=0, le=100)
+    #: Load samples older than this are deleted.
+    load_retention_days: int = Field(default=7, ge=1, le=365)
+
+
 class HealthSettings(BaseModel):
     """Which dependencies must be up for /health/ready to return 200.
 
@@ -1016,6 +1028,7 @@ class Settings(BaseSettings):
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     airgap: AirgapSettings = Field(default_factory=AirgapSettings)
     health: HealthSettings = Field(default_factory=HealthSettings)
+    backends: BackendsSettings = Field(default_factory=BackendsSettings)
     workers: WorkersSettings = Field(default_factory=WorkersSettings)
     ops: OpsSettings = Field(default_factory=OpsSettings)
     chargeback: ChargebackSettings = Field(default_factory=ChargebackSettings)

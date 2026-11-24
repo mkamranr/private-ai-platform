@@ -106,6 +106,27 @@ class InferenceBackend(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         return f"<InferenceBackend {self.name} {self.backend_type} {self.status}>"
 
 
+class BackendMetricSample(Base):
+    """E81: what an inference backend reported about its load at one health check."""
+
+    __tablename__ = "backend_metric_samples"
+    __table_args__ = (
+        Index("ix_backend_metric_samples_backend_recorded", "backend_id", "recorded_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    backend_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("inference_backends.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    #: Backend-wide figures (``requests_waiting``, ``kv_cache_usage_percent``...).
+    values: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
 class AlertSeverity(enum.StrEnum):
     INFO = "INFO"
     WARNING = "WARNING"

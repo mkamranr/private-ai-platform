@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, literal_column, or_, select, text, update
+from sqlalchemy import delete, func, literal_column, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models.models_registry import Model, UsageRecord
@@ -17,6 +17,7 @@ from app.models.operations import (
     QUOTA_WILDCARD,
     Alert,
     AlertState,
+    BackendMetricSample,
     GatewayQuota,
     InferenceBackend,
     QuotaScope,
@@ -45,6 +46,40 @@ class InferenceBackendRepository(BaseRepository[InferenceBackend]):
         if enabled is not None:
             stmt = stmt.where(InferenceBackend.enabled.is_(enabled))
         return int((await self.session.execute(stmt)).scalar_one())
+
+    # -- E81: load samples -------------------------------------------------------
+    def add_sample(self, sample: BackendMetricSample) -> None:
+        self.session.add(sample)
+
+    async def latest_sample(self, backend_id: uuid.UUID) -> BackendMetricSample | None:
+        stmt = (
+            select(BackendMetricSample)
+            .where(BackendMetricSample.backend_id == backend_id)
+            .order_by(BackendMetricSample.recorded_at.desc(), BackendMetricSample.id.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def samples(
+        self, backend_id: uuid.UUID, *, since: dt.datetime, limit: int
+    ) -> Sequence[BackendMetricSample]:
+        """Oldest first, the newest ``limit`` since ``since``."""
+        stmt = (
+            select(BackendMetricSample)
+            .where(
+                BackendMetricSample.backend_id == backend_id,
+                BackendMetricSample.recorded_at >= since,
+            )
+            .order_by(BackendMetricSample.recorded_at.desc(), BackendMetricSample.id.desc())
+            .limit(limit)
+        )
+        return list(reversed((await self.session.execute(stmt)).scalars().all()))
+
+    async def prune_samples(self, *, before: dt.datetime) -> int:
+        result = await self.session.execute(
+            delete(BackendMetricSample).where(BackendMetricSample.recorded_at < before)
+        )
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def refresh(self, backend: InferenceBackend) -> None:
         """Reload server-generated columns (``updated_at``) after a flush.

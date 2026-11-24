@@ -83,7 +83,9 @@ DIGEST_MIN = 2
 #: Every alert source the platform raises today, for the channel source filter.
 KNOWN_SOURCES = (
     "backend_health",
+    "backend_load",
     "gpu_threshold",
+    "answer_faithfulness",
     "deployment",
     "quota_budget",
     "cost_budget",

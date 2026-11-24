@@ -588,6 +588,7 @@ Under `/api/v1`, authenticated with the platform JWT. See [backends.md](backends
 | POST | `/backends/{id}/test` | `backend.manage` — live check; updates status and raises/clears the alert |
 | GET | `/backends/{id}/models` | `backend.view` — models the server reports right now |
 | GET | `/backends/{id}/metrics` | `backend.view` — its load now as it reports it (`{fetched_at, values, models}`); vLLM and Ollama. See [backends.md](backends.md#load-and-loading-models) |
+| GET | `/backends/{id}/metrics/history` | `backend.view` — `?since_minutes=` (1..10080, default 60): the samples kept at each check, oldest first (`{since, samples: [{recorded_at, values}]}`) |
 | POST | `/backends/{id}/models/load` | `backend.manage` — `{model}`: Ollama loads a model it has and keeps it in memory. Audited |
 | POST | `/backends/{id}/models/unload` | `backend.manage` — `{model}`: Ollama unloads it from memory. Audited |
 | POST | `/backends/{id}/models/register` | `model.register` **and** `backend.manage` |

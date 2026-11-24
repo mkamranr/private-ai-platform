@@ -33,6 +33,11 @@ def backend_unhealthy_fingerprint(backend_id: uuid.UUID | str) -> str:
     return f"backend_unhealthy:{backend_id}"
 
 
+def backend_load_fingerprint(backend_id: uuid.UUID | str) -> str:
+    """E81: one load alert per backend."""
+    return f"backend_load:{backend_id}"
+
+
 def deployment_failed_fingerprint(deployment_id: uuid.UUID | str) -> str:
     return f"deployment_failed:{deployment_id}"
 

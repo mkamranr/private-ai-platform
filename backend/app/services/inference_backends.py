@@ -30,6 +30,7 @@ from typing import Any, ClassVar
 
 import httpx
 
+from app.config.settings import BackendsSettings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.interfaces.inference_backend import (
     BackendCapability,
@@ -47,12 +48,17 @@ from app.models.auth import User
 from app.models.models_registry import ModelType
 from app.models.operations import (
     AlertSeverity,
+    BackendMetricSample,
     BackendStatus,
     BackendType,
     InferenceBackend,
 )
 from app.repositories.operations import InferenceBackendRepository
-from app.services.alerts import AlertService, backend_unhealthy_fingerprint
+from app.services.alerts import (
+    AlertService,
+    backend_load_fingerprint,
+    backend_unhealthy_fingerprint,
+)
 from app.services.audit import AuditService
 from app.services.model_registry import ModelRegistryService
 
@@ -227,6 +233,20 @@ def parse_prometheus(text: str) -> tuple[dict[str, float], dict[str, dict[str, f
         }
 
     return fold(totals), {model: fold(found) for model, found in per_model.items()}
+
+
+def load_breach(values: dict[str, Any], levels: BackendsSettings) -> list[str]:
+    """E81: what in a load sample is over the alert levels, in words. Empty: nothing."""
+    found: list[str] = []
+    waiting = values.get("requests_waiting")
+    queue_at = levels.load_alert_requests_waiting
+    if queue_at and waiting is not None and waiting >= queue_at:
+        found.append(f"{waiting:.0f} requests waiting")
+    cache = values.get("kv_cache_usage_percent")
+    cache_at = levels.load_alert_kv_cache_percent
+    if cache_at and cache is not None and cache >= cache_at:
+        found.append(f"KV cache {cache:.0f}% used")
+    return found
 
 
 class VllmAdapter(_HttpAdapter):
@@ -576,6 +596,7 @@ class InferenceBackendService:
         backend = await self.get(backend_id)
         linked = await self.linked_model_names(backend_id)
         await self._alerts.clear(backend_unhealthy_fingerprint(backend.id))
+        await self._alerts.clear(backend_load_fingerprint(backend.id))
         await self._backends.delete(backend)
         await self._backends.flush()
         await self._audit.record(
@@ -623,11 +644,66 @@ class InferenceBackendService:
         await self._backends.flush()
         return result
 
-    async def check_all_enabled(self) -> list[tuple[InferenceBackend, ConnectionResult]]:
+    async def check_all_enabled(
+        self, *, load: BackendsSettings | None = None
+    ) -> list[tuple[InferenceBackend, ConnectionResult]]:
+        """Check every enabled backend; with ``load`` (E81), also record the load of each
+        healthy one that reports it, and raise or clear its load alert."""
         results = []
         for backend in await self._backends.list_backends(enabled=True, limit=1000):
-            results.append((backend, await self.check(backend)))
+            result = await self.check(backend)
+            if load is not None and result.ok:
+                await self.record_load(backend, load)
+            results.append((backend, result))
         return results
+
+    async def record_load(
+        self, backend: InferenceBackend, levels: BackendsSettings
+    ) -> BackendMetricSample | None:
+        """E81: keep one load sample, and raise the load alert when this sample and the
+        one before are both over a level; clear it when this one isn't. A backend that
+        reports no load, or fails to, records nothing."""
+        adapter = self.adapter_for(backend)
+        if BackendCapability.METRICS not in adapter.capabilities:
+            return None
+        try:
+            metrics = await adapter.metrics()
+        except Exception as exc:
+            log.info("backend_load_unreadable", backend=backend.name, error=_describe_error(exc))
+            return None
+        previous = await self._backends.latest_sample(backend.id)
+        sample = BackendMetricSample(
+            backend_id=backend.id, recorded_at=metrics.fetched_at, values=dict(metrics.values)
+        )
+        self._backends.add_sample(sample)
+        fingerprint = backend_load_fingerprint(backend.id)
+        found = load_breach(sample.values, levels)
+        if not found:
+            await self._alerts.clear(fingerprint)
+        elif previous is not None and load_breach(previous.values, levels):
+            await self._alerts.raise_alert(
+                fingerprint=fingerprint,
+                severity=AlertSeverity.WARNING,
+                source="backend_load",
+                title=f"Inference backend '{backend.name}' is overloaded: {', '.join(found)}"[:255],
+                message=(
+                    f"'{backend.name}' reported {', '.join(found)} in two checks in a row. "
+                    "Calls to its models are queueing; add capacity, spread the models over "
+                    "more backends, or lower their context length. Its load is under Models "
+                    "on its tile."
+                ),
+                resource_type="inference_backend",
+                resource_id=str(backend.id),
+            )
+        await self._backends.flush()
+        return sample
+
+    async def load_history(
+        self, backend_id: uuid.UUID, *, since: dt.datetime, limit: int = 2000
+    ) -> list[BackendMetricSample]:
+        """E81: the backend's load samples since ``since``, oldest first."""
+        await self.get(backend_id)
+        return list(await self._backends.samples(backend_id, since=since, limit=limit))
 
     # -- discovery -------------------------------------------------------------
     async def metrics(self, backend_id: uuid.UUID) -> BackendMetrics:

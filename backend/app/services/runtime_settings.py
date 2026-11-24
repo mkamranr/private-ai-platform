@@ -352,6 +352,30 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next answer judged",
     ),
     RuntimeSetting(
+        "backends.load_alert_requests_waiting",
+        "monitoring",
+        "Backend queue alert (requests waiting)",
+        "An inference backend with at least this many requests waiting, in two checks in a "
+        "row, raises a WARNING alert; it clears when the queue is shorter. vLLM reports its "
+        "queue. 0 turns it off.",
+        "Next backend check",
+    ),
+    RuntimeSetting(
+        "backends.load_alert_kv_cache_percent",
+        "monitoring",
+        "Backend KV cache alert (% used)",
+        "A vLLM backend whose KV cache is at least this full, in two checks in a row, raises "
+        "a WARNING alert: requests start queueing or being pre-empted. 0 turns it off.",
+        "Next backend check",
+    ),
+    RuntimeSetting(
+        "backends.load_retention_days",
+        "retention",
+        "Backend load history kept (days)",
+        "Inference backends' load samples (one per check) older than this are deleted.",
+        "Next retention run",
+    ),
+    RuntimeSetting(
         "agents.answer_score_retention_days",
         "retention",
         "Agent answer scores kept (days)",

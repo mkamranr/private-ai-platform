@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from dataclasses import asdict
 from typing import Annotated
@@ -17,6 +18,8 @@ from app.schemas.operations import (
     BackendCreateRequest,
     BackendDeletedResponse,
     BackendDetail,
+    BackendLoadHistory,
+    BackendMetricSampleRead,
     BackendMetricsRead,
     BackendModelAction,
     BackendRead,
@@ -186,6 +189,26 @@ async def backend_metrics(
     """E76: vLLM's requests, KV cache and tokens (from ``/metrics``); Ollama's models in
     memory (``/api/ps``). 422 for a type that reports none, or an unreachable backend."""
     return BackendMetricsRead(**asdict(await service.metrics(backend_id)))
+
+
+@router.get(
+    "/{backend_id}/metrics/history",
+    response_model=BackendLoadHistory,
+    summary="The backend's load over time, one sample per health check",
+)
+async def backend_load_history(
+    service: InferenceBackendServiceDep,
+    _actor: Annotated[User, require_permission(Perm.BACKEND_VIEW)],
+    backend_id: uuid.UUID = Path(...),
+    since_minutes: int = Query(60, ge=1, le=10080),
+) -> BackendLoadHistory:
+    """E81: recorded by the backend health job for backends that report their load."""
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=since_minutes)
+    rows = await service.load_history(backend_id, since=since)
+    return BackendLoadHistory(
+        since=since,
+        samples=[BackendMetricSampleRead(recorded_at=r.recorded_at, values=r.values) for r in rows],
+    )
 
 
 @router.post(
