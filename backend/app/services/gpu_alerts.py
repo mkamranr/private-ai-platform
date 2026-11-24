@@ -30,6 +30,11 @@ doesn't set comes from the platform. A combination that no longer makes sense (t
 warning at or above the platform's critical after the platform's was lowered) falls back
 to the platform's levels rather than alerting on nonsense.
 
+E75: a GPU can have its own levels too (``gpus.alert_thresholds``), over its node's and
+the platform's, key by key. Utilisation and power (as a share of the card's limit) can
+raise a WARNING, off unless set (``gpu.alert_utilization_warning_percent``,
+``gpu.alert_power_warning_percent``, or a node's or GPU's own).
+
 GPUs belong to no team, so their alerts go to channels that are not limited to one team.
 """
 
@@ -64,7 +69,18 @@ NODE_LEVELS: dict[str, str] = {
     "temperature_warning_celsius": "alert_temperature_warning_celsius",
     "temperature_critical_celsius": "alert_temperature_critical_celsius",
     "memory_warning_percent": "alert_memory_warning_percent",
+    # E75
+    "utilization_warning_percent": "alert_utilization_warning_percent",
+    "power_warning_percent": "alert_power_warning_percent",
 }
+
+
+def merged_levels(node: dict | None, gpu: dict | None) -> dict:
+    """E75: a GPU's own levels over its node's, key by key."""
+    return {
+        **{k: v for k, v in (node or {}).items() if v is not None},
+        **{k: v for k, v in (gpu or {}).items() if v is not None},
+    }
 
 
 def node_settings(settings: GpuSettings, levels: dict | None) -> GpuSettings:
@@ -158,6 +174,28 @@ def evaluate(
                 )
             )
 
+    utilization_at = settings.alert_utilization_warning_percent
+    if utilization_at and metric.utilization_percent >= utilization_at - points:
+        warning.append(
+            (
+                f"{metric.utilization_percent:.0f}% busy",
+                f"Utilisation {metric.utilization_percent:.0f}% is at or above the warning "
+                f"level ({utilization_at}%). Requests may queue.",
+            )
+        )
+    power_at = settings.alert_power_warning_percent
+    if power_at and metric.power_limit_watts:
+        share = metric.power_draw_watts * 100 / metric.power_limit_watts
+        if share >= power_at - points:
+            warning.append(
+                (
+                    f"power {share:.0f}% of limit",
+                    f"Drawing {metric.power_draw_watts:.0f} W of its "
+                    f"{metric.power_limit_watts:.0f} W limit ({share:.0f}%, warning level "
+                    f"{power_at}%). It may be power-capped.",
+                )
+            )
+
     found = critical + warning
     if not found:
         return None
@@ -218,7 +256,10 @@ class GpuAlertWatcher:
             now = self._clock()
             samples = await self._metrics.latest_per_gpu(now - SAMPLE_MAX_AGE)
             result.checked = len(samples)
-            levels = {gpu.id: node_settings(settings, own) for _, gpu, _, own in samples}
+            levels = {
+                gpu.id: node_settings(settings, merged_levels(own, gpu.alert_thresholds))
+                for _, gpu, _, own in samples
+            }
             history = await self._history(samples, levels, open_now, now)
             for metric, gpu, node_name, _ in samples:
                 fingerprint = gpu_alert_fingerprint(gpu.id)

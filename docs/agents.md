@@ -376,6 +376,13 @@ they were given: the same judge as the retrieval playground
   claims, unsupported ones in red. `GET /agents/{id}/answer-scores` returns the same, to
   anyone who can read the agent's runs.
 
+- **An alert when it falls.** With `agents.answer_faithfulness_alert_below` set (0 to 1,
+  for example 0.7), each judged answer compares the agent's average over its last
+  `agents.answer_faithfulness_alert_answers` (default 20) judged answers with that line.
+  Below it, a WARNING alert names the agent and its average and goes to its team's
+  channels; back at or above it, the alert clears. No alert until the agent has that many
+  judged answers.
+
 The judge is a model and can be wrong: read the claims, not just the number. Use a capable
 model, ideally not the one the agent uses.
 

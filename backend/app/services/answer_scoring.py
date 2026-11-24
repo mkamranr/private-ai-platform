@@ -14,6 +14,11 @@ judges them one at a time, with the same judge as the playground
 * **The passages are not kept.** They were retrieved under the asker's document access;
   once judged, only the claims and their verdict remain (the claims are sentences of the
   answer, which the run already holds).
+
+E75: after each judged answer, the agent's average over its last
+``agents.answer_faithfulness_alert_answers`` scored answers is compared with
+``agents.answer_faithfulness_alert_below``. Below it, a WARNING alert for the agent's team
+is raised (or updated); at or above it, the alert clears.
 """
 
 from __future__ import annotations
@@ -26,11 +31,15 @@ from typing import Any
 from app.config.settings import Settings
 from app.core.logging import get_logger
 from app.models.agents import Agent, AgentAnswerScore, AnswerScoreStatus
+from app.models.operations import AlertSeverity
 from app.repositories.agents import AgentAnswerScoreRepository
+from app.services.alerts import AlertService
 from app.services.answer_quality import AnswerQualityService, Charge, JudgeError
 from app.services.knowledge import SearchResult
 
 log = get_logger(__name__)
+
+FAITHFULNESS_ALERT_SOURCE = "answer_faithfulness"
 
 #: How far back the summary looks.
 SUMMARY_DAYS = 30
@@ -66,10 +75,14 @@ class AnswerScoringService:
         settings: Settings,
         scores: AgentAnswerScoreRepository,
         answers: AnswerQualityService,
+        *,
+        alerts: AlertService | None = None,
     ) -> None:
         self._settings = settings
         self._scores = scores
         self._answers = answers
+        #: E75: None (reading only) raises no faithfulness alerts.
+        self._alerts = alerts
 
     async def score_next(self) -> AgentAnswerScore | None:
         """Judge the oldest queued answer. None when nothing is queued."""
@@ -113,7 +126,41 @@ class AnswerScoringService:
         row.passages = None
         row.scored_at = now
         await self._scores.flush()
+        if row.status == AnswerScoreStatus.SCORED:
+            await self.check_faithfulness(agent, row.agent_id)
         return row
+
+    async def check_faithfulness(self, agent: Agent | None, agent_id: uuid.UUID) -> None:
+        """E75: raise, update or clear the agent's falling-faithfulness alert."""
+        if self._alerts is None:
+            return
+        fingerprint = f"{FAITHFULNESS_ALERT_SOURCE}:{agent_id}"
+        line = self._settings.agents.answer_faithfulness_alert_below
+        count = self._settings.agents.answer_faithfulness_alert_answers
+        values = await self._scores.recent_faithfulness(agent_id, limit=count) if line else []
+        if not line or len(values) < count:
+            await self._alerts.clear(fingerprint)
+            return
+        average = sum(values) / len(values)
+        if average >= line:
+            await self._alerts.clear(fingerprint)
+            return
+        name = agent.display_name if agent else str(agent_id)
+        await self._alerts.raise_alert(
+            fingerprint=fingerprint,
+            severity=AlertSeverity.WARNING,
+            source=FAITHFULNESS_ALERT_SOURCE,
+            title=f"Agent {name}: faithfulness {average:.0%} over its last {count} answers"[:255],
+            message=(
+                f"The last {count} judged answers of {name} average {average:.0%} of their "
+                f"claims supported by the passages they were given, under the alert line "
+                f"({line:.0%}). The agent may be answering beyond its knowledge bases: check "
+                "its prompt, its model and what its bases hold. Scores are on the Agents page."
+            ),
+            resource_type="agent",
+            resource_id=str(agent_id),
+            team_id=agent.team_id if agent else None,
+        )
 
     async def prune(self) -> int:
         days = self._settings.agents.answer_score_retention_days

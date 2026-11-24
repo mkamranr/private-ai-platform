@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Per-GPU alert levels, busy and power alerts, and falling faithfulness
+- **A GPU can have its own alert levels**, over its node's and the platform's: *Alert levels* on each row of the GPUs page. Empty fields use the level shown greyed (the node's, else the platform's).
+- **A GPU that is busy or near its power limit can raise a WARNING**: `gpu.alert_utilization_warning_percent` and `gpu.alert_power_warning_percent` (share of the card's power limit) on the Settings page, or per node or GPU. Both are off (0) by default; the sustain time and margins apply as for temperature.
+- **An agent whose answers stop being faithful raises a WARNING** for its team: set `agents.answer_faithfulness_alert_below` (for example 0.7) and how many recent judged answers to average (`agents.answer_faithfulness_alert_answers`, default 20). It clears when the average is back above the line. Needs answer scoring on.
+- **Upgrade.** Migration `a5d7f9b1c3e4`. The new alerts are off until set.
+
 ### Offline updates: an offline root key, and keys that expire
 - A key can be trusted as a **root** that signs trust updates but never bundles, so it can be kept offline. Once a site trusts a root, only the root can add, renew or revoke keys: a stolen signing key can no longer change what the site trusts.
 - Signing keys can have an **expiry date**. An expired key's bundles are refused until the root renews it. The Offline Updates page shows each key's expiry and warns 60 days ahead.
@@ -14,7 +20,6 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 - **Ask the runtime** on a model's *Edit* dialog asks the serving copy what it can do: Ollama and llama.cpp report it directly, and other runtimes get a one-token chat with and without a tool. What it finds corrects the runtime's default (a vLLM launched without tool calling no longer accepts tools); your own declaration still wins.
 - An agent with tools can no longer be saved on a model that can't call them.
 - **Upgrade.** Migration `f4c6e8a0b2d3`.
-
 
 ### Workflows: parallel For each
 - A *For each* step can run up to 10 items at once (*At once*); results keep the order of the list. When an item finishes, the next one starts in its place, even while others wait for an approval.

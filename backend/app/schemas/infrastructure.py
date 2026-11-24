@@ -58,6 +58,8 @@ class GpuRead(GpuSummary):
     cuda_version: str | None = None
     pci_bus_id: str | None = None
     nvlink_peers: list[int] = Field(default_factory=list)
+    #: E75: this GPU's own alert levels; null for none.
+    alert_thresholds: dict[str, int] | None = None
     created_at: dt.datetime
 
 
@@ -67,6 +69,9 @@ class GpuAlertLevels(BaseModel):
     temperature_warning_celsius: int | None = Field(default=None, ge=30, le=120)
     temperature_critical_celsius: int | None = Field(default=None, ge=30, le=120)
     memory_warning_percent: int | None = Field(default=None, ge=50, le=100)
+    #: E75. 0 turns the check off for this node or GPU.
+    utilization_warning_percent: int | None = Field(default=None, ge=0, le=100)
+    power_warning_percent: int | None = Field(default=None, ge=0, le=100)
 
 
 class NodeRead(ORMModel):

@@ -72,6 +72,21 @@ class SyncResult:
     error: str | None = None
 
 
+def _check_temperatures(chosen: dict[str, int], platform: GpuSettings, fallback: str) -> None:
+    """The warning temperature stays below the critical one, whichever level each comes
+    from (E70, E75)."""
+    warning = chosen.get("temperature_warning_celsius", platform.alert_temperature_warning_celsius)
+    critical = chosen.get(
+        "temperature_critical_celsius", platform.alert_temperature_critical_celsius
+    )
+    if warning >= critical:
+        raise ValidationError(
+            f"The warning temperature ({warning} °C) must be below the critical "
+            f"temperature ({critical} °C); a level left empty is {fallback}.",
+            details={"field": "temperature_warning_celsius"},
+        )
+
+
 class NodeService:
     """Node registration and inventory synchronisation."""
 
@@ -313,20 +328,7 @@ class NodeService:
         its critical whichever of the two each comes from."""
         node = await self.get_node(node_id)
         chosen = {k: v for k, v in levels.items() if v is not None}
-        merged = {
-            "warning": chosen.get(
-                "temperature_warning_celsius", platform.alert_temperature_warning_celsius
-            ),
-            "critical": chosen.get(
-                "temperature_critical_celsius", platform.alert_temperature_critical_celsius
-            ),
-        }
-        if merged["warning"] >= merged["critical"]:
-            raise ValidationError(
-                f"The warning temperature ({merged['warning']} °C) must be below the critical "
-                f"temperature ({merged['critical']} °C); a level left empty is the platform's.",
-                details={"field": "temperature_warning_celsius"},
-            )
+        _check_temperatures(chosen, platform, "the platform's")
         before = node.gpu_alert_thresholds
         node.gpu_alert_thresholds = chosen or None
         await self._nodes.flush()
@@ -339,6 +341,41 @@ class NodeService:
             metadata={"name": node.name, "before": before, "after": node.gpu_alert_thresholds},
         )
         return node
+
+    async def set_gpu_device_alert_levels(
+        self,
+        gpu_id: uuid.UUID,
+        levels: dict[str, int | None],
+        *,
+        platform: GpuSettings,
+        actor: User,
+    ) -> Gpu:
+        """E75: one GPU's own alert levels, over its node's and the platform's; an empty
+        set returns it to those. Checked against what it would fall back to."""
+        gpu = await self._gpus.get(gpu_id)
+        if gpu is None:
+            raise NotFoundError(f"No GPU with id {gpu_id}.")
+        node = await self.get_node(gpu.node_id)
+        chosen = {k: v for k, v in levels.items() if v is not None}
+        fallback = {k: v for k, v in (node.gpu_alert_thresholds or {}).items() if v is not None}
+        _check_temperatures({**fallback, **chosen}, platform, "its node's or the platform's")
+        before = gpu.alert_thresholds
+        gpu.alert_thresholds = chosen or None
+        await self._gpus.flush()
+        await self._audit.record(
+            AuditAction.NODE_GPU_LEVELS_CHANGED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="gpu",
+            resource_id=str(gpu_id),
+            metadata={
+                "node": node.name,
+                "gpu": gpu.index,
+                "before": before,
+                "after": gpu.alert_thresholds,
+            },
+        )
+        return gpu
 
     # -- synchronisation ---------------------------------------------------
     async def sync_node(self, node: Node, *, token: str | None = None) -> SyncResult:

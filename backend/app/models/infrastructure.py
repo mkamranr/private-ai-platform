@@ -262,6 +262,9 @@ class Gpu(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # topology-aware placement needs it, so it is collected from the start.
     nvlink_peers: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default=GpuHealth.UNKNOWN, nullable=False)
+    #: E75: this GPU's own alert levels (the keys of ``gpu_alerts.NODE_LEVELS``), over its
+    #: node's and the platform's, key by key. Null: none of its own.
+    alert_thresholds: Mapped[dict | None] = mapped_column(JSONB)
 
     node: Mapped[Node] = relationship(back_populates="gpus")
 

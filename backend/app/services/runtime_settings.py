@@ -189,6 +189,23 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Next GPU alert check (every minute)",
     ),
     RuntimeSetting(
+        "gpu.alert_utilization_warning_percent",
+        "monitoring",
+        "GPU utilisation warning (%)",
+        "A GPU busy at least this share of the time raises a WARNING alert, usually with a "
+        "sustain time, so only a card saturated for a while is reported. 0 turns it off. "
+        "Read by the gpu_alerts job.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
+        "gpu.alert_power_warning_percent",
+        "monitoring",
+        "GPU power warning (% of its limit)",
+        "A GPU drawing at least this share of its power limit raises a WARNING alert (GPUs "
+        "that report no limit are skipped). 0 turns it off. Read by the gpu_alerts job.",
+        "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
         "gpu.alert_sustain_minutes",
         "monitoring",
         "GPU alert: sustained for (minutes)",
@@ -315,6 +332,23 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "Agent answer judge model",
         "The alias or model that judges sampled agent answers. Empty judges none. A "
         "different, stronger model than the agents use gives a more useful verdict.",
+        "Next answer judged",
+    ),
+    RuntimeSetting(
+        "agents.answer_faithfulness_alert_below",
+        "monitoring",
+        "Agent faithfulness alert below",
+        "A WARNING alert is raised when an agent's average faithfulness over its last "
+        "scored answers (the number below) falls under this, from 0 to 1 (0.7 is a usual "
+        "line), and cleared when it is back at or above it. 0 turns it off.",
+        "Next answer judged",
+    ),
+    RuntimeSetting(
+        "agents.answer_faithfulness_alert_answers",
+        "monitoring",
+        "Agent faithfulness alert: answers averaged",
+        "How many of an agent's most recent scored answers the faithfulness alert averages. "
+        "No alert until an agent has that many.",
         "Next answer judged",
     ),
     RuntimeSetting(
