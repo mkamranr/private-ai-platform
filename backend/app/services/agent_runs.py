@@ -13,9 +13,9 @@ from __future__ import annotations
 import datetime as dt
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.core.errors import (
     AgentsStoppedError,
@@ -101,6 +101,7 @@ class AgentRunService:
         actor: User,
         conversation_id: str | None = None,
         record_usage: bool = True,
+        attribution: Mapping[str, Any] | None = None,
     ) -> tuple[AgentRun, AsyncIterator[RunEvent]]:
         """Create the run record and return it with its event stream.
 
@@ -139,6 +140,10 @@ class AgentRunService:
             agent_version_id=version.id,
             user_id=actor.id,
             conversation_id=conversation_id,
+            # E92: the key and end user of an `agent:` call, for chargeback's groupings.
+            api_key_id=(attribution or {}).get("api_key_id"),
+            end_user=(attribution or {}).get("end_user"),
+            end_user_trusted=bool((attribution or {}).get("end_user_trusted")),
             # The OTel trace id when tracing is deployed, so this run and its spans in
             # Tempo share one identifier; otherwise a fresh one, so the run is still
             # addressable through `/traces/{trace_id}` (M19).

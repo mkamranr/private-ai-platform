@@ -390,7 +390,8 @@ the Usage & Quotas page report percentiles from them:
   - **Agent and voice calls record time to first output**, what the caller waited:
     a streamed `agent:<slug>` call from admission to the first text shown (narration
     such as "Using lookup…", or the answer), and a voice turn's speech row from the end
-    of the person's speech to audio ready to play. A buffered `agent:` call has none.
+    of the person's speech to audio ready to play. A buffered `agent:` call shows
+    nothing until the whole answer, so its first output is when the answer is ready.
   - **Per-model figures leave those out** (the dashboard's model rows, chargeback by
     model): an agent's first output follows its tool calls and a voice turn's wait spans
     transcription, the agent and synthesis, so neither is the model's own time. Totals

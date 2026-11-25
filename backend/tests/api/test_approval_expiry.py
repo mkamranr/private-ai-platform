@@ -223,8 +223,9 @@ class TestAgentUsage:
         assert (row.prompt_tokens, row.completion_tokens) == (11, 7)
         assert row.streamed is stream
         assert row.end_user == "someone@example.com" and row.end_user_trusted is False
-        # E67: a streamed run records how long the caller waited; never a generation time.
-        assert (row.ttft_ms is not None) is stream and row.generation_ms is None
+        # E67: a run records how long the caller waited (E92: a buffered one, until the
+        # whole answer); never a generation time.
+        assert row.ttft_ms is not None and row.generation_ms is None
 
     async def test_an_agent_call_is_refused_by_an_exhausted_quota(
         self,

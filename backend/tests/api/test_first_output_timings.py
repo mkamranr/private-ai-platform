@@ -21,7 +21,12 @@ from app.core.interfaces.agent import RunEvent, RunEventType
 from app.models.models_registry import UsageRecord
 from app.repositories.chargeback import ChargebackRepository
 from app.repositories.models_registry import UsageRepository
-from app.services.agent_gateway import AgentStreamAccounting, run_agent_streamed
+from app.services.agent_gateway import (
+    AgentStreamAccounting,
+    attribution_of,
+    run_agent_buffered,
+    run_agent_streamed,
+)
 from app.services.gateway import GatewayContext, GatewayService
 from tests.api.test_replica_balancing import (  # noqa: F401  (fixtures)
     _model_with_copies,
@@ -35,7 +40,17 @@ WHEN = dt.datetime(2020, 2, 3, 12, tzinfo=dt.UTC)
 class Runs:
     """Stands in for AgentRunService.start: a tool call, then the answer."""
 
-    async def start(self, agent, **_: Any):
+    def __init__(self) -> None:
+        self.started: dict[str, Any] = {}
+
+    async def get_run(self, run_id):
+        return SimpleNamespace(
+            id=run_id, output="done", state="COMPLETED", prompt_tokens=3, completion_tokens=1
+        )
+
+    async def start(self, agent, **kwargs: Any):
+        self.started = kwargs
+
         async def events():
             yield RunEvent("r", RunEventType.LLM_RESPONSE, 1, {"prompt_tokens": 3})
             await asyncio.sleep(0.02)  # the model deciding; nothing shown yet
@@ -66,6 +81,38 @@ class TestAgentStreams:
         assert accounting.first_output_at is not None
         # Windows timers can wake a millisecond early, hence 15 ms for a 20 ms sleep.
         assert accounting.first_output_at - started >= 0.015
+
+    async def test_a_buffered_call_is_stamped_when_the_answer_is_ready(self):
+        """E92: a buffered caller sees nothing before the whole answer; it carries the
+        call's key and end user to the run."""
+        accounting = AgentStreamAccounting()
+        runs = Runs()
+        started = time.perf_counter()
+        attribution = {"api_key_id": uuid.uuid4(), "end_user": "ann", "end_user_trusted": True}
+        result = await run_agent_buffered(
+            agent=SimpleNamespace(),
+            runs=runs,  # type: ignore[arg-type]
+            actor=SimpleNamespace(),  # type: ignore[arg-type]
+            message="hi",
+            requested_model="agent:x",
+            conversation_id=None,
+            attribution=attribution,
+            accounting=accounting,
+        )
+        assert result["choices"][0]["message"]["content"] == "done"
+        assert accounting.first_output_at is not None
+        assert accounting.first_output_at - started >= 0.015  # after the run's work
+        assert runs.started["attribution"] == attribution
+
+    def test_attribution_of_a_call(self):
+        key = SimpleNamespace(id=uuid.uuid4())
+        context = GatewayContext(api_key=key, end_user="bob", end_user_trusted=False)  # type: ignore[arg-type]
+        assert attribution_of(context) == {
+            "api_key_id": key.id,
+            "end_user": "bob",
+            "end_user_trusted": False,
+        }
+        assert attribution_of(GatewayContext())["api_key_id"] is None
 
     async def test_finalising_records_it(self):
         recorded: dict[str, Any] = {}
