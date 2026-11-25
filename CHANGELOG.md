@@ -6,6 +6,9 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Backup: fuller team restore
+- Restoring a team now also brings back the models and aliases it owned, and its history: agent and workflow runs, their events and steps, and the approvals given in them. History is only added to; a run that finished since stays finished.
+
 ### Workflows: loops back, typed outputs, panning
 - A connection can go back to an earlier step (`"back": true`), running the steps between again up to `max_loops` times; the pass before is `{{ previous.<step>.<output> }}`. On the canvas, connect a step to one before it.
 - Step outputs have types, and templates are checked below the output: `{{ nodes.search.passages.0.text }}` is fine, `passages.first` or `context.size` is a problem. The builder shows each value's type.

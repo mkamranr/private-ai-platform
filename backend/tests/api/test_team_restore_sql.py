@@ -18,12 +18,28 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.agents import Agent, AgentRun, AgentTool, AgentVersion, RunState, Tool
+from app.models.agents import (
+    Agent,
+    AgentRun,
+    AgentRunEvent,
+    AgentTool,
+    AgentVersion,
+    ApprovalState,
+    RunState,
+    Tool,
+    ToolExecution,
+)
 from app.models.chargeback import CostBudget
-from app.models.models_registry import ApiClient, ApiKey
+from app.models.models_registry import ApiClient, ApiKey, Model, ModelAlias, ModelStatus
 from app.models.operations import GatewayQuota
 from app.models.teams import Team, TeamMembership
-from app.models.workflows import Workflow, WorkflowVersion
+from app.models.workflows import (
+    Workflow,
+    WorkflowApproval,
+    WorkflowRun,
+    WorkflowStep,
+    WorkflowVersion,
+)
 from tests.unit.test_release_tooling import load
 
 pytestmark = pytest.mark.asyncio
@@ -286,3 +302,159 @@ async def test_a_name_taken_since_refuses(session: AsyncSession, superuser):
 
     with pytest.raises(DBAPIError, match="SCOPED-REFUSED"):
         await apply(session, made["team"].id, staged)
+
+
+# ---------------------------------------------------------------------------
+# E85: history, approvals, and the models and aliases the team owned
+# ---------------------------------------------------------------------------
+async def add_history(session: AsyncSession, made: dict[str, Any], owner) -> dict[str, Any]:
+    team = made["team"]
+    tag = _tag()
+    model = Model(
+        name=f"team-model-{tag}",
+        display_name="Team model",
+        type="LLM",
+        storage_path="/data/models/t",
+        runtime="mock",
+        context_length=8192,
+        status=ModelStatus.AVAILABLE,
+        team_id=team.id,
+    )
+    shared = Model(
+        name=f"shared-model-{tag}",
+        display_name="Shared model",
+        type="LLM",
+        storage_path="/data/models/s",
+        runtime="mock",
+        context_length=8192,
+        status=ModelStatus.AVAILABLE,
+    )
+    session.add_all([model, shared])
+    await session.flush()
+    alias = ModelAlias(alias=f"team-alias-{tag}", model_id=model.id, team_id=team.id)
+    elsewhere = ModelAlias(alias=f"team-shared-{tag}", model_id=shared.id, team_id=team.id)
+    session.add_all([alias, elsewhere])
+    run = AgentRun(
+        agent_id=made["agent"].id,
+        agent_version_id=made["version"].id,
+        user_id=owner.id,
+        state=RunState.WAITING_FOR_APPROVAL,
+        input="Delete the file?",
+    )
+    session.add(run)
+    await session.flush()
+    session.add_all(
+        [
+            AgentRunEvent(run_id=run.id, sequence=1, type="RUN_STARTED", payload={}),
+            ToolExecution(
+                run_id=run.id,
+                tool_id=made["tool"].id,
+                tool_name="lookup",
+                arguments={},
+                approval_state=ApprovalState.APPROVED,
+                approver_id=owner.id,
+            ),
+        ]
+    )
+    wf_run = WorkflowRun(
+        workflow_id=made["workflow"].id,
+        version=1,
+        definition={"nodes": []},
+        trigger="manual",
+        status="SUCCEEDED",
+    )
+    session.add(wf_run)
+    await session.flush()
+    session.add_all(
+        [
+            WorkflowStep(
+                run_id=wf_run.id,
+                sequence=1,
+                node_id="ask",
+                node_type="approval",
+                status="SUCCEEDED",
+            ),
+            WorkflowApproval(
+                run_id=wf_run.id,
+                node_id="ask",
+                message="Send it?",
+                status="APPROVED",
+                decided_by=owner.id,
+            ),
+        ]
+    )
+    await session.flush()
+    return {
+        "model": model,
+        "shared": shared,
+        "alias": alias,
+        "elsewhere": elsewhere,
+        "run": run,
+        "wf_run": wf_run,
+    }
+
+
+async def test_history_models_and_aliases_come_back(session: AsyncSession, superuser):
+    made = await make_team(session, superuser)
+    extra = await add_history(session, made, superuser)
+    staged = await take_backup(session, made["team"].id)
+
+    # Since the backup: the run went on and finished (and must stay finished), the
+    # workflow run, its approval and the team's model and alias were deleted, and the
+    # shared model one alias pointed at was deleted.
+    await session.execute(
+        update(AgentRun).where(AgentRun.id == extra["run"].id).values(state=RunState.COMPLETED)
+    )
+    await session.execute(delete(WorkflowRun).where(WorkflowRun.id == extra["wf_run"].id))
+    await session.execute(delete(ModelAlias).where(ModelAlias.team_id == made["team"].id))
+    await session.execute(
+        delete(Model).where(Model.id.in_([extra["model"].id, extra["shared"].id]))
+    )
+    await session.flush()
+
+    await apply(session, made["team"].id, staged)
+
+    run = await session.get(AgentRun, extra["run"].id)
+    assert run.state == RunState.COMPLETED  # history is added to, never rewound
+    wf_run = await session.get(WorkflowRun, extra["wf_run"].id)
+    assert wf_run is not None and wf_run.status == "SUCCEEDED"
+    approval = (
+        await session.execute(select(WorkflowApproval).where(WorkflowApproval.run_id == wf_run.id))
+    ).scalar_one()
+    assert approval.decided_by == superuser.id and approval.status == "APPROVED"
+    steps = (
+        await session.execute(select(WorkflowStep).where(WorkflowStep.run_id == wf_run.id))
+    ).all()
+    assert len(steps) == 1
+    model = await session.get(Model, extra["model"].id)
+    assert model is not None and model.team_id == made["team"].id
+    assert await session.get(ModelAlias, extra["alias"].id) is not None
+    # The alias of a shared model deleted since is left out rather than refusing.
+    assert await session.get(ModelAlias, extra["elsewhere"].id) is None
+
+
+async def test_a_run_whose_user_is_gone_keeps_its_record(session: AsyncSession, superuser):
+    made = await make_team(session, superuser)
+    extra = await add_history(session, made, superuser)
+    staged = await take_backup(session, made["team"].id)
+    await session.execute(delete(AgentRun).where(AgentRun.id == extra["run"].id))
+    # As if the person who ran it had been deleted since.
+    await session.execute(
+        text("UPDATE stage_agent_runs SET user_id = :gone WHERE id = :run"),
+        {"gone": uuid.uuid4(), "run": extra["run"].id},
+    )
+    await session.flush()
+
+    await apply(session, made["team"].id, staged)
+
+    run = await session.get(AgentRun, extra["run"].id)
+    assert run is not None and run.user_id is None
+    events = (
+        await session.execute(select(AgentRunEvent).where(AgentRunEvent.run_id == run.id))
+    ).all()
+    executions = (
+        (await session.execute(select(ToolExecution).where(ToolExecution.run_id == run.id)))
+        .scalars()
+        .all()
+    )
+    assert len(events) == 1 and executions[0].approval_state == ApprovalState.APPROVED

@@ -903,6 +903,15 @@ _TEAM_VERSIONS = (
     "agent_version_id IN (SELECT v.id FROM public.agent_versions v "
     "JOIN public.agents a ON a.id = v.agent_id WHERE a.team_id = {team})"
 )
+#: E85: the runs of the team's agents and workflows.
+_TEAM_AGENT_RUNS = (
+    "run_id IN (SELECT r.id FROM public.agent_runs r JOIN public.agents a "
+    "ON a.id = r.agent_id WHERE a.team_id = {team})"
+)
+_TEAM_WORKFLOW_RUNS = (
+    "run_id IN (SELECT r.id FROM public.workflow_runs r JOIN public.workflows w "
+    "ON w.id = r.workflow_id WHERE w.team_id = {team})"
+)
 _TEAM_SUBJECTS = (
     "(scope = 'team' AND subject = {team_text}) OR (scope = 'api_key' AND subject IN "
     "(SELECT k.id::text FROM public.api_keys k JOIN public.api_clients c "
@@ -916,6 +925,12 @@ _TEAM_SUBJECTS = (
 TEAM_TABLES = (
     ("teams", "id = {team}", "upsert"),
     ("team_memberships", "team_id = {team}", "merge"),
+    # E85: the models the team owns (their catalogue entries and file lists; not the
+    # weights, which live on the model store, nor running copies) and its aliases.
+    ("models", "team_id = {team}", "upsert"),
+    ("model_files", "model_id IN (SELECT id FROM public.models WHERE team_id = {team})",
+     "upsert"),
+    ("model_aliases", "team_id = {team}", "upsert"),
     ("tools", "team_id = {team}", "upsert"),
     ("agents", "team_id = {team}", "upsert"),
     ("agent_versions", "agent_id IN (SELECT id FROM public.agents WHERE team_id = {team})",
@@ -930,7 +945,22 @@ TEAM_TABLES = (
      "upsert"),
     ("gateway_quotas", _TEAM_SUBJECTS, "upsert"),
     ("cost_budgets", _TEAM_SUBJECTS, "upsert"),
+    # E85: history. Runs of the team's agents and workflows, their events and steps, and
+    # the approvals asked and given in them, so the record of who approved what is back.
+    # Only what is missing is added: a run that has moved on since keeps its state.
+    ("agent_runs", "agent_id IN (SELECT id FROM public.agents WHERE team_id = {team})",
+     "merge"),
+    ("agent_run_events", _TEAM_AGENT_RUNS, "merge"),
+    ("tool_executions", _TEAM_AGENT_RUNS, "merge"),
+    ("agent_answer_scores", _TEAM_AGENT_RUNS, "merge"),
+    ("workflow_runs", "workflow_id IN (SELECT id FROM public.workflows WHERE team_id = {team})",
+     "merge"),
+    ("workflow_steps", _TEAM_WORKFLOW_RUNS, "merge"),
+    ("workflow_approvals", _TEAM_WORKFLOW_RUNS, "merge"),
 )
+#: E85: rows dropped, rather than refusing the restore, when what they need is gone since:
+#: an alias of a model (another team's, or shared) deleted since points at nothing.
+TEAM_DROP_DANGLING = frozenset({"model_aliases"})
 TEAM_NAMES = tuple(table for table, _, _ in TEAM_TABLES)
 TEAM_STAGING = "/tmp/aip-team"
 #: What the confirmation calls each table.
@@ -940,6 +970,11 @@ TEAM_LABELS = {
     "agent_skills": "agent skills", "workflows": "workflows",
     "workflow_versions": "workflow versions", "api_clients": "API clients",
     "api_keys": "API keys", "gateway_quotas": "quotas", "cost_budgets": "cost budgets",
+    "models": "models", "model_files": "model file records", "model_aliases": "model aliases",
+    "agent_runs": "agent runs", "agent_run_events": "agent run events",
+    "tool_executions": "tool calls and approvals", "agent_answer_scores": "answer scores",
+    "workflow_runs": "workflow runs", "workflow_steps": "workflow steps",
+    "workflow_approvals": "workflow approvals",
 }
 UNIQUES_SQL = (
     "SELECT t.relname, string_agg(a.attname, ',' ORDER BY k.ord) FROM pg_index i "
@@ -977,7 +1012,10 @@ def team_apply_sql(team: str, columns: dict, foreign_keys, uniques) -> list:
     """
     staged = set(columns)
     out = []
-    for table, column, ref_table, ref_column, nullable in foreign_keys:
+    # Rows dropped for a missing reference go first, so a row pointing at one of them
+    # (an alias's fallback) sees it gone.
+    ordered = sorted(foreign_keys, key=lambda fk: fk[0] not in TEAM_DROP_DANGLING)
+    for table, column, ref_table, ref_column, nullable in ordered:
         if table not in staged or column not in columns[table]:
             continue
         col, ref = _ident(column), _ident(ref_column)
@@ -990,10 +1028,11 @@ def team_apply_sql(team: str, columns: dict, foreign_keys, uniques) -> list:
                 f" AND NOT EXISTS (SELECT 1 FROM stage_{ref_table} r "
                 f"WHERE r.{ref} = stage_{table}.{col})"
             )
-        if _team_mode(table) != "upsert":
-            out.append(f"DELETE FROM stage_{table} WHERE {missing}")
-        elif nullable:
+        if nullable:
+            # E85: whatever the mode: a run whose user was deleted since keeps its record.
             out.append(f"UPDATE stage_{table} SET {col} = NULL WHERE {missing}")
+        elif _team_mode(table) != "upsert" or table in TEAM_DROP_DANGLING:
+            out.append(f"DELETE FROM stage_{table} WHERE {missing}")
         else:
             out.append(_refuse_if(
                 f"SELECT 1 FROM stage_{table} WHERE {missing}",

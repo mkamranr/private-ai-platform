@@ -736,6 +736,13 @@ matrix still listed as missing.
 - [x] Tests: `tests/unit/test_workflow_schema.py::TestTypedPaths`, `::TestBackEdges`, `tests/api/test_workflow_loops.py`. Docs: [workflows.md](../workflows.md#edges-back).
 - [ ] Paths under `any` outputs, and whether a value's type fits its setting, aren't checked.
 
+## E85: Fuller team restore: history, approvals, models and aliases
+
+- [x] `TEAM_TABLES` adds `models`, `model_files` and `model_aliases` (upserted, after the memberships) and the history: `agent_runs`, `agent_run_events`, `tool_executions`, `agent_answer_scores`, `workflow_runs`, `workflow_steps`, `workflow_approvals` (`merge`: only missing rows added, so a run that moved on keeps its state).
+- [x] A nullable reference to a row gone since is cleared in every mode (a run's deleted user keeps the run); `TEAM_DROP_DANGLING` (`model_aliases`) drops a row whose required reference is gone instead of refusing, and those go first.
+- [x] Tests: `tests/api/test_team_restore_sql.py` (history kept and not rewound, models, aliases, a gone user). Docs: [backup.md](../backup.md#restoring-a-team).
+- [ ] Model weights and deployments aren't in the database backup: a restored model needs deploying again. Memberships are still only added.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and
