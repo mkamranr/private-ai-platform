@@ -295,5 +295,6 @@ OPS__BACKUP_COPY_S3_CA_FILE=/etc/ssl/certs/backup-store-ca.pem   # a private CA
 * No other remote protocols (SFTP, rsync): mount them as a directory instead.
 * Scheduling runs through the ops runner. Without the runner, use cron with `make backup`.
 * No incremental backups; every run is full.
-* A team's agents, workflows, keys and quotas can't be restored on their own: a team
-  restore brings back its knowledge bases only.
+* A team restore doesn't bring back question history (chat conversations belong to
+  people, not the team) or model weights and deployments: a restored model needs
+  deploying again. Memberships are only added, never removed.
