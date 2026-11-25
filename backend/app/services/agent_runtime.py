@@ -109,6 +109,8 @@ class PlatformAgentRuntime(AgentRuntime):
         #: E83: kept in the checkpoint while a run waits for an approval, so a run that
         #: resumes (in another request, or after a restart) can still be scored.
         self._retrieved: dict[str, tuple[str, list[dict[str, Any]]]] = {}
+        #: E88: per run, the model copy its calls went to, kept with a judged answer.
+        self._answered_by: dict[str, uuid.UUID] = {}
 
     # -- execute -----------------------------------------------------------
     def execute(
@@ -173,6 +175,9 @@ class PlatformAgentRuntime(AgentRuntime):
             # can't call tools and the agent has some, rather than failing oddly midway.
             needs = (Capability.CHAT, Capability.TOOLS) if spec.tools else (Capability.CHAT,)
             provider, served_model = await self._provider_factory(spec.model, needs=needs)
+            deployment_id = getattr(provider, "deployment_id", None)
+            if isinstance(deployment_id, uuid.UUID):
+                self._answered_by[context.run_id] = deployment_id
         except Exception as exc:
             # The agent's model is not serving. A run failure with the reason, not a
             # crash: the operator needs to know it was the model, not the agent.
@@ -571,6 +576,7 @@ class PlatformAgentRuntime(AgentRuntime):
         """E70: queue a sampled answer for the judge. Never raises: a run that completed
         must not fail because its sample could not be queued."""
         retrieved = self._retrieved.pop(str(run.id), None)
+        answered_by = self._answered_by.pop(str(run.id), None)
         try:
             agents = RUNTIME.latest(self._settings).agents
             if (
@@ -592,6 +598,7 @@ class PlatformAgentRuntime(AgentRuntime):
                     question=question[:8000],
                     answer=output[:20000],
                     passages=passages,
+                    deployment_id=answered_by,
                 )
             )
         except Exception:  # pragma: no cover - defensive

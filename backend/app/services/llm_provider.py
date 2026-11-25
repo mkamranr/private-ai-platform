@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -106,7 +107,11 @@ class VLLMProvider(LLMProvider):
         timeout: float = DEFAULT_TIMEOUT,
         health_path: str = "/health",
         api_key: str | None = None,
+        deployment_id: uuid.UUID | None = None,
     ) -> None:
+        #: E88: the copy this provider talks to, when the gateway resolved one; agent runs
+        #: record it with a judged answer.
+        self.deployment_id = deployment_id
         # Configurable because `/health` is a vLLM convention, not an OpenAI one. Ollama
         # has no such route, and probing it there returns 404 forever — which the
         # deployment worker would report as "did not become healthy within 900s" for a

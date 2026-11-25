@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Rollouts: canary judged on first-token time and answer quality
+- `canary_max_ttft_ratio` stops a canary whose p95 time to first token (streamed calls) is that many times the other copies', so a canary given longer prompts isn't judged on total time alone.
+- `canary_max_faithfulness_drop` stops a canary whose judged agent answers are that much less faithful than the other copies' (needs answer scoring, and 5 judged answers a side). Each judged answer now records the copy that wrote it.
+- **Upgrade.** One migration (`alembic upgrade head`).
+
 ### Smaller monitoring and gateway items
 - GPU alert on PCIe replays: a warning when a card's replay counter climbs by `gpu.alert_pcie_replays_per_hour` in an hour (off by default; needs DCGM).
 - An agent's faithfulness alert clears when the agent is disabled or deleted, or has had no judged answer for `agents.answer_faithfulness_stale_days` (14).

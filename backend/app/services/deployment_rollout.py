@@ -32,6 +32,14 @@ latency over the watch is compared with the old copies' over the same minutes, o
 that did not fail: more than that many times slower stops the rollout as errors do. Too
 few calls on either side (``LATENCY_MIN_CALLS``) and latency isn't judged; the result
 says so.
+
+**Time to first token and answer quality (E88).** ``max_ttft_ratio`` compares the p95
+time to first token of streamed calls the same way, so a canary given longer prompts
+isn't judged on its total time alone. ``max_faithfulness_drop`` compares the average
+faithfulness of judged agent answers written by the canary copies during the watch with
+the other copies' (answers are judged in the background on a sample, so only those
+already judged when the watch ends count; fewer than ``FAITHFULNESS_MIN_ANSWERS`` on
+either side and it isn't judged).
 """
 
 from __future__ import annotations
@@ -44,6 +52,7 @@ from sqlalchemy import case, func, select
 
 from app.core.errors import AppError, ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.models.agents import AgentAnswerScore, AnswerScoreStatus
 from app.models.audit import AuditAction
 from app.models.auth import User
 from app.models.models_registry import (
@@ -66,6 +75,8 @@ log = get_logger(__name__)
 
 #: Fewer successful calls than this on the canary or the old copies: latency not judged.
 LATENCY_MIN_CALLS = 10
+#: E88: fewer judged answers than this on the canary or the old copies: quality not judged.
+FAITHFULNESS_MIN_ANSWERS = 5
 
 #: States in which a copy is still on its way to RUNNING or FAILED.
 _SETTLING = frozenset(
@@ -313,21 +324,56 @@ class RolloutService:
         failure = None
         if calls and share > limit:
             failure = f"{errors} of {calls} calls failed ({share:.1f}%, limit {limit:g}%)"
-        ratio_limit = canary.get("max_latency_ratio")
-        if ratio_limit:
-            others = [i for i in rollout.deployment_ids if i not in watched]
-            mine, mine_n = await self._p95(watched, since)
-            theirs, theirs_n = await self._p95(others, since)
-            results.update(latency_p95_ms=mine, baseline_p95_ms=theirs)
+        others = [i for i in rollout.deployment_ids if i not in watched]
+        for key, column, what, label, prefix in (
+            ("max_latency_ratio", UsageRecord.latency_ms, "p95 latency", "Latency", "latency"),
+            # E88: streamed calls only (the others have no first-token time).
+            (
+                "max_ttft_ratio",
+                UsageRecord.ttft_ms,
+                "p95 time to first token",
+                "Time to first token",
+                "ttft",
+            ),
+        ):
+            ratio_limit = canary.get(key)
+            if not ratio_limit:
+                continue
+            mine, mine_n = await self._p95(watched, since, column)
+            theirs, theirs_n = await self._p95(others, since, column)
+            if prefix == "latency":  # the E82 names, kept for the console and clients
+                results.update(latency_p95_ms=mine, baseline_p95_ms=theirs)
+            else:
+                results.update(ttft_p95_ms=mine, baseline_ttft_p95_ms=theirs)
             if min(mine_n, theirs_n) < LATENCY_MIN_CALLS or not theirs:
-                results["latency_note"] = (
-                    f"Latency not judged: {mine_n} successful calls on the canary and "
-                    f"{theirs_n} on the other copies (needs {LATENCY_MIN_CALLS} each)."
+                results[f"{prefix}_note"] = (
+                    f"{label} not judged: {mine_n} measured calls on the canary "
+                    f"and {theirs_n} on the other copies (needs {LATENCY_MIN_CALLS} each)."
                 )
             elif mine is not None and mine > theirs * float(ratio_limit) and failure is None:
                 failure = (
-                    f"p95 latency {mine:.0f} ms against {theirs:.0f} ms on the other copies "
+                    f"{what} {mine:.0f} ms against {theirs:.0f} ms on the other copies "
                     f"({mine / theirs:.2f}x, limit {float(ratio_limit):g}x)"
+                )
+        drop_limit = canary.get("max_faithfulness_drop")
+        if drop_limit:
+            mine_f, mine_a = await self._faithfulness(watched, since)
+            theirs_f, theirs_a = await self._faithfulness(others, since)
+            results.update(faithfulness=mine_f, baseline_faithfulness=theirs_f)
+            if min(mine_a, theirs_a) < FAITHFULNESS_MIN_ANSWERS:
+                results["faithfulness_note"] = (
+                    f"Answer quality not judged: {mine_a} judged answers from the canary and "
+                    f"{theirs_a} from the other copies (needs {FAITHFULNESS_MIN_ANSWERS} each)."
+                )
+            elif (
+                mine_f is not None
+                and theirs_f is not None
+                and theirs_f - mine_f > float(drop_limit)
+                and failure is None
+            ):
+                failure = (
+                    f"answers {mine_f:.0%} faithful against {theirs_f:.0%} on the other copies "
+                    f"(drop limit {float(drop_limit):.0%})"
                 )
         if failure:
             for ident in watched:
@@ -367,20 +413,42 @@ class RolloutService:
         total, failed = (await self._rollouts.session.execute(stmt)).one()
         return int(total or 0), int(failed or 0)
 
-    async def _p95(self, idents: list[str], since: dt.datetime) -> tuple[float | None, int]:
-        """E82: p95 latency of the copies' successful calls since ``since``, and how many."""
+    async def _p95(
+        self, idents: list[str], since: dt.datetime, column: Any = UsageRecord.latency_ms
+    ) -> tuple[float | None, int]:
+        """E82: p95 of ``column`` (latency; E88: time to first token) over the copies'
+        successful calls since ``since`` that measured it, and how many there were."""
         if not idents:
             return None, 0
         stmt = select(
-            func.percentile_cont(0.95).within_group(UsageRecord.latency_ms),
+            func.percentile_cont(0.95).within_group(column),
             func.count(UsageRecord.id),
         ).where(
             UsageRecord.deployment_id.in_([uuid.UUID(i) for i in idents]),
             UsageRecord.recorded_at >= since,
             UsageRecord.status_code < 400,
+            column.is_not(None),
         )
         p95, count = (await self._rollouts.session.execute(stmt)).one()
         return (float(p95) if p95 is not None else None), int(count or 0)
+
+    async def _faithfulness(
+        self, idents: list[str], since: dt.datetime
+    ) -> tuple[float | None, int]:
+        """E88: the average faithfulness of judged agent answers the copies wrote since
+        ``since``, and how many there were."""
+        if not idents:
+            return None, 0
+        stmt = select(
+            func.avg(AgentAnswerScore.faithfulness), func.count(AgentAnswerScore.id)
+        ).where(
+            AgentAnswerScore.deployment_id.in_([uuid.UUID(i) for i in idents]),
+            AgentAnswerScore.created_at >= since,
+            AgentAnswerScore.status == AnswerScoreStatus.SCORED,
+            AgentAnswerScore.faithfulness.is_not(None),
+        )
+        average, count = (await self._rollouts.session.execute(stmt)).one()
+        return (float(average) if average is not None else None), int(count or 0)
 
     async def _finish(
         self,
