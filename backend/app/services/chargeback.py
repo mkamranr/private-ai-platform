@@ -10,6 +10,12 @@
 * Agent tool calls (E67): each call that ran, at its ``tool:<name>`` rate's
   ``unit_price``, else ``tool:*``'s. A tool with neither is counted, not priced, and kept
   apart from unpriced model usage so a site that never prices tools isn't warned forever.
+  E86: workflow tool steps that ran count the same, on the workflow's team.
+* OCR (E86): pages read, at the OCR model's ``unit_price`` per page.
+
+**Another currency (E86).** A report can be shown in a currency the operator gave an
+exchange rate for (``chargeback.exchange_rates``): every amount is multiplied by it at
+the end, so rounding happens once. The rates themselves stay in ``chargeback.currency``.
 * GPU time: the hours each model's deployments held their GPUs (``gpu_allocations``),
   at that model's ``gpu_hour`` rate, split at every rate change. A deployment's GPUs cost
   the same whether it answers one call or a thousand, so the hours are **shared out by
@@ -54,10 +60,12 @@ from app.models.chargeback import (
     DEFAULT_TOOL_RATE,
     TOOL_RATE_PREFIX,
     UNIT_AUDIO_SECONDS,
+    UNIT_PAGES,
     UNIT_TOKENS,
     CostRate,
 )
 from app.models.models_registry import UsageRecord
+from app.models.workflows import Workflow
 from app.repositories.chargeback import GROUPS, ChargebackRepository, CostRateRepository
 from app.services.audit import AuditService
 
@@ -116,6 +124,9 @@ class _Line:
     tool_calls: int = 0
     tool_cost: Decimal | None = None
     unpriced_tool_calls: int = 0
+    #: E86: pages read by OCR.
+    ocr_pages: int = 0
+    ocr_cost: Decimal | None = None
     #: Tokens per model, for sharing out GPU time.
     model_tokens: dict[str, int] = field(default_factory=dict)
     #: Latency and streaming timings (E40); empty until the report fills them in.
@@ -132,6 +143,9 @@ class _Line:
 
     def add_tool_cost(self, amount: Decimal) -> None:
         self.tool_cost = (self.tool_cost or Decimal(0)) + amount
+
+    def add_ocr_cost(self, amount: Decimal) -> None:
+        self.ocr_cost = (self.ocr_cost or Decimal(0)) + amount
 
 
 @dataclass(slots=True)
@@ -221,11 +235,13 @@ class ChargebackService:
         audit: AuditService,
         *,
         currency: str,
+        exchange_rates: dict[str, Decimal] | None = None,
     ) -> None:
         self._rates = rates
         self._reports = reports
         self._audit = audit
         self.currency = currency
+        self.exchange_rates = dict(exchange_rates or {})
 
     async def commit(self) -> None:
         """Commit before the response is sent, so a page that reloads right after a
@@ -407,9 +423,18 @@ class ChargebackService:
         scope: Scope,
         now: dt.datetime | None = None,
         limit: int | None = MAX_ROWS,
+        currency: str | None = None,
     ) -> dict[str, Any]:
         """The cost report. ``limit`` caps the rows returned (not the totals); an export
-        passes ``None`` and gets every row."""
+        passes ``None`` and gets every row. E86: ``currency`` shows it in another currency
+        the operator gave an exchange rate for."""
+        if currency and currency != self.currency and currency not in self.exchange_rates:
+            known = ", ".join(sorted({self.currency, *self.exchange_rates}))
+            raise ValidationError(
+                f"No exchange rate for {currency}: reports can be shown in {known}. Rates are "
+                "set by the operator (CHARGEBACK__EXCHANGE_RATES).",
+                details={"field": "currency"},
+            )
         if group not in GROUPS:
             raise ValidationError(
                 f"Unknown grouping {group!r}.", details={"field": "group_by", "allowed": GROUPS}
@@ -440,6 +465,8 @@ class ChargebackService:
                 line.completion_tokens += completion
             elif unit == UNIT_AUDIO_SECONDS:
                 line.audio_seconds += prompt
+            elif unit == UNIT_PAGES:
+                line.ocr_pages += prompt
             else:
                 line.speech_characters += prompt
             rate = by_id.get(row["rate_id"]) if row["rate_id"] else None
@@ -455,12 +482,18 @@ class ChargebackService:
                 )
             elif unit == UNIT_AUDIO_SECONDS:
                 line.add_speech_cost(Decimal(prompt) / MINUTE * (rate.unit_price or 0))
+            elif unit == UNIT_PAGES:
+                line.add_ocr_cost(Decimal(prompt) * (rate.unit_price or 0))
             else:
                 line.add_speech_cost(Decimal(prompt) / MILLION * (rate.unit_price or 0))
 
         # E67: agent tool calls, on the same lines.
         for row in await self._reports.tool_calls(
-            group=group, start=begin, end=finish, where=scope.clause(Agent.team_id)
+            group=group,
+            start=begin,
+            end=finish,
+            where=scope.clause(Agent.team_id),
+            workflow_where=scope.clause(Workflow.team_id),
         ):
             line = self._line_for(group, row, lines)
             count = int(row["calls"])
@@ -513,8 +546,11 @@ class ChargebackService:
         # Totals are over every row, including any the response leaves out.
         every = [*rows, *([idle] if idle else [])]
         truncated = limit is not None and len(rows) > limit
-        return {
+        report = {
             "currency": self.currency,
+            # E86: the currencies it can be shown in, and the rate used (1: as priced).
+            "currencies": sorted({self.currency, *self.exchange_rates}),
+            "exchange_rate": None,
             "group_by": group,
             "start": start,
             "end": end,
@@ -544,9 +580,33 @@ class ChargebackService:
                 "tool_calls": sum(r["tool_calls"] for r in rows),
                 "tool_cost": _sum(r["tool_cost"] for r in rows),
                 "unpriced_tool_calls": sum(r["unpriced_tool_calls"] for r in rows),
+                "ocr_pages": sum(r["ocr_pages"] for r in rows),
+                "ocr_cost": _sum(r["ocr_cost"] for r in rows),
                 **_timing_fields(overall if rows else {}),
             },
         }
+        if currency and currency != self.currency:
+            self._convert(report, currency, self.exchange_rates[currency])
+        return report
+
+    @staticmethod
+    def _convert(report: dict[str, Any], currency: str, rate: Decimal) -> None:
+        """E86: every amount in ``currency``, from full-precision totals rounded once."""
+
+        def scale(row: dict[str, Any] | None) -> None:
+            if row is None:
+                return
+            for key, value in row.items():
+                if key.endswith("_cost") and value is not None:
+                    row[key] = _money(Decimal(value) * rate)
+
+        for row in report["rows"]:
+            scale(row)
+        scale(report["idle"])
+        scale(report["totals"])
+        report["exchange_rate"] = rate
+        report["priced_in"] = report["currency"]
+        report["currency"] = currency
 
     @staticmethod
     def _line_for(group: str, row: dict[str, Any], lines: dict[tuple[Any, ...], _Line]) -> _Line:
@@ -643,6 +703,7 @@ class ChargebackService:
         gpu_cost = _money(line.gpu_cost)
         speech_cost = _money(line.speech_cost)
         tool_cost = _money(line.tool_cost)
+        ocr_cost = _money(line.ocr_cost)
         return {
             "key": line.key,
             "label": line.label,
@@ -654,7 +715,7 @@ class ChargebackService:
             "token_cost": token_cost,
             "gpu_hours": _hours(line.gpu_hours),
             "gpu_cost": gpu_cost,
-            "total_cost": _sum([token_cost, gpu_cost, speech_cost, tool_cost]),
+            "total_cost": _sum([token_cost, gpu_cost, speech_cost, tool_cost, ocr_cost]),
             "unpriced_requests": line.unpriced_requests,
             "partial_requests": line.partial_requests,
             "audio_seconds": line.audio_seconds,
@@ -663,15 +724,26 @@ class ChargebackService:
             "tool_calls": line.tool_calls,
             "tool_cost": tool_cost,
             "unpriced_tool_calls": line.unpriced_tool_calls,
+            "ocr_pages": line.ocr_pages,
+            "ocr_cost": ocr_cost,
             **_timing_fields(line.timings),
         }
 
     # -- export -------------------------------------------------------------
     async def export_csv(
-        self, *, actor: User, group: str, start: dt.date, end: dt.date, scope: Scope
+        self,
+        *,
+        actor: User,
+        group: str,
+        start: dt.date,
+        end: dt.date,
+        scope: Scope,
+        currency: str | None = None,
     ) -> tuple[str, str]:
         """The report as CSV, and a file name. Audited: an export leaves the platform."""
-        report = await self.report(group=group, start=start, end=end, scope=scope, limit=None)
+        report = await self.report(
+            group=group, start=start, end=end, scope=scope, limit=None, currency=currency
+        )
         buffer = io.StringIO()
         writer = csv.writer(buffer, lineterminator="\r\n")
         writer.writerow(
@@ -765,8 +837,13 @@ UNIT_FIELDS = (
     "tool_calls",
     "tool_cost",
     "unpriced_tool_calls",
+    # E86, appended likewise.
+    "ocr_pages",
+    "ocr_cost",
 )
 _UNIT_ZEROS: dict[str, Any] = {
+    "ocr_pages": 0,
+    "ocr_cost": None,
     "audio_seconds": 0,
     "speech_characters": 0,
     "speech_cost": None,

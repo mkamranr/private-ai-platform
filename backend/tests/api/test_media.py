@@ -237,10 +237,17 @@ class TestOcrPipeline:
 
         service = KnowledgeService.__new__(KnowledgeService)
         service._ocr = FakeOcr()
+
+        class NoBases:  # E86: who the pages are charged to; no base here
+            async def get(self, base_id):
+                return None
+
+        service._bases = NoBases()
         service._settings = SimpleNamespace(
             knowledge=SimpleNamespace(ocr_model="enterprise-ocr", ocr_languages=["en", "ar"])
         )
-        parsed = await service._recognise(SimpleNamespace(filename="scan.png"), b"image-bytes")
+        document = SimpleNamespace(filename="scan.png", knowledge_base_id=None, uploaded_by=None)
+        parsed = await service._recognise(document, b"image-bytes")
 
         assert [s.text for s in parsed.segments] == ["First page text", "Second page text"]
         # The page becomes the citation location, so a chunk from a scan cites "page 2"

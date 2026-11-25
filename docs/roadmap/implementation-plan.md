@@ -743,6 +743,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_team_restore_sql.py` (history kept and not rewound, models, aliases, a gone user). Docs: [backup.md](../backup.md#restoring-a-team).
 - [ ] Model weights and deployments aren't in the database backup: a restored model needs deploying again. Memberships are still only added.
 
+## E86: Chargeback gaps: workflow tool steps, OCR per page, another currency
+
+- [x] `ChargebackRepository.tool_calls` adds succeeded workflow tool steps (not `awaiting` an approval) by `union_all`: the workflow's team, the run's `started_by`, the tool named by the step input's `tool_id`, the rate when the step started; `workflow_where` scopes them by `Workflow.team_id`.
+- [x] OCR: `MeteredOcrEngine` (from `GatewayService.ocr_engine_for_model`) records a usage row per call, endpoint `ocr`, `prompt_tokens` = `pages_read` (distinct pages, at least one; 0 and 502 on failure). `OCR_CHARGE` (a context variable) set by `KnowledgeService._recognise` charges the base's team and the uploader. `UNIT_PAGES`: priced at `unit_price` per page; `ocr_pages`, `ocr_cost` on rows, totals and the CSV.
+- [x] `chargeback.exchange_rates` (`{code: rate}`, validated); `report(currency=)` / `?currency=` on the report and export: `_convert` multiplies every `*_cost` once and reports `currency`, `priced_in`, `exchange_rate`, `currencies`; 422 for a currency without a rate. Console: the currency choice, and *Speech & OCR*.
+- [x] Tests: `tests/api/test_chargeback_units.py` (`TestOcr`, `TestWorkflowTools`, `TestCurrency`). Docs: [chargeback.md](../chargeback.md), `.env.example`.
+- [ ] Exchange rates are configured, not fetched; budgets stay in the platform's currency. A workflow tool step that failed isn't charged.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

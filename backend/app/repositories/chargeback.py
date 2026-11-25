@@ -28,6 +28,7 @@ from app.models.chargeback import (
 from app.models.infrastructure import GpuAllocation
 from app.models.models_registry import ApiClient, ApiKey, Model, UsageRecord
 from app.models.teams import Team
+from app.models.workflows import StepStatus, Workflow, WorkflowRun, WorkflowStep
 from app.repositories.base import BaseRepository
 from app.repositories.models_registry import timing_columns, timing_values
 
@@ -181,7 +182,13 @@ class ChargebackRepository:
         return [dict(row._mapping) for row in (await self.session.execute(stmt)).all()]
 
     async def tool_calls(
-        self, *, group: str, start: dt.datetime, end: dt.datetime, where: Any = None
+        self,
+        *,
+        group: str,
+        start: dt.datetime,
+        end: dt.datetime,
+        where: Any = None,
+        workflow_where: Any = None,
     ) -> list[dict[str, Any]]:
         """Agent tool calls made in ``[start, end)`` by ``group``, tool and rate (E67).
 
@@ -223,7 +230,45 @@ class ChargebackRepository:
         )
         if where is not None:
             calls = calls.where(where)
-        c = calls.subquery("tool_calls")
+        # E86: workflow tool steps that ran, on the workflow's team and whoever started
+        # the run. The step's input names the tool by id; the rate goes by its name.
+        # ``workflow_where`` filters on ``Workflow.team_id``.
+        step_tool = func.coalesce(Tool.name, "?")
+        step_name = func.concat(TOOL_RATE_PREFIX, step_tool)
+        step_rate = (
+            select(CostRate.id)
+            .where(
+                or_(CostRate.model == step_name, CostRate.model == DEFAULT_TOOL_RATE),
+                CostRate.effective_from <= WorkflowStep.started_at,
+            )
+            .order_by((CostRate.model == DEFAULT_TOOL_RATE).asc(), CostRate.effective_from.desc())
+            .limit(1)
+            .correlate(WorkflowStep, Tool)
+            .scalar_subquery()
+        )
+        steps = (
+            select(
+                Workflow.team_id.label("team_id"),
+                WorkflowRun.started_by.label("user_id"),
+                step_name.label("model"),
+                step_rate.label("rate_id"),
+            )
+            .select_from(WorkflowStep)
+            .join(WorkflowRun, WorkflowRun.id == WorkflowStep.run_id)
+            .join(Workflow, Workflow.id == WorkflowRun.workflow_id)
+            .outerjoin(Tool, cast(Tool.id, String) == WorkflowStep.input["tool_id"].astext)
+            .where(
+                WorkflowStep.node_type == "tool",
+                WorkflowStep.status == StepStatus.SUCCEEDED,
+                # A step that only asked for an approval ran nothing.
+                or_(WorkflowStep.output.is_(None), ~WorkflowStep.output.has_key("awaiting")),
+                WorkflowStep.started_at >= start,
+                WorkflowStep.started_at < end,
+            )
+        )
+        if workflow_where is not None:
+            steps = steps.where(workflow_where)
+        c = calls.union_all(steps).subquery("tool_calls")
 
         key_cols: list[Any] = []
         label_cols: list[Any] = []

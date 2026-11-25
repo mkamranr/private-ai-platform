@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Chargeback: workflow tool steps, OCR per page, other currencies
+- Workflow tool steps that ran are priced like agent tool calls, on the workflow's team.
+- OCR is metered per page (usage endpoint `ocr`) and priced at the OCR model's unit price per page, charged to the knowledge base's team.
+- Reports and exports can be shown in another currency at exchange rates you set (`CHARGEBACK__EXCHANGE_RATES`); nothing fetches rates.
+- **Upgrade.** No migration.
+
 ### Backup: fuller team restore
 - Restoring a team now also brings back the models and aliases it owned, and its history: agent and workflow runs, their events and steps, and the approvals given in them. History is only added to; a run that finished since stays finished.
 

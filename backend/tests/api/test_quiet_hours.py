@@ -23,6 +23,9 @@ from tests.api.test_notifications import (  # noqa: F401 - fixtures
 from tests.conftest import auth_header
 
 URL = "/api/v1/notifications/channels"
+#: The database clock stamps a delivery as due; dispatching a little ahead of it keeps a
+#: database clock slightly ahead of this one from leaving the delivery not yet due.
+AHEAD = dt.timedelta(seconds=5)
 
 
 def _around(now: dt.datetime) -> tuple[str, str]:
@@ -38,7 +41,7 @@ class TestDispatch:
         self, session: AsyncSession, settings: Settings, hook: Hook, clean
     ) -> None:
         # A little ahead of the database clock, which stamps the delivery as due.
-        now = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=5)
+        now = dt.datetime.now(dt.UTC) + AHEAD
         start, end = _around(now)
         window_end = (now + dt.timedelta(hours=1)).replace(second=0, microsecond=0)
         await _channel(session, settings, quiet_start=start, quiet_end=end)
@@ -60,7 +63,7 @@ class TestDispatch:
     async def test_critical_goes_out_during_quiet_hours(
         self, session: AsyncSession, settings: Settings, hook: Hook, clean
     ) -> None:
-        now = dt.datetime.now(dt.UTC)
+        now = dt.datetime.now(dt.UTC) + AHEAD
         start, end = _around(now)
         await _channel(session, settings, quiet_start=start, quiet_end=end)
         await _raise(session, "CRITICAL")
@@ -71,7 +74,7 @@ class TestDispatch:
     async def test_outside_the_window_nothing_is_held(
         self, session: AsyncSession, settings: Settings, hook: Hook, clean
     ) -> None:
-        now = dt.datetime.now(dt.UTC)
+        now = dt.datetime.now(dt.UTC) + AHEAD
         start = (now + dt.timedelta(hours=2)).strftime("%H:%M")
         end = (now + dt.timedelta(hours=3)).strftime("%H:%M")
         await _channel(session, settings, quiet_start=start, quiet_end=end)
@@ -141,7 +144,7 @@ class TestDigest:
     async def _held(
         self, session: AsyncSession, settings: Settings, hook: Hook, count: int, **channel_kw
     ) -> dt.datetime:
-        now = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=5)
+        now = dt.datetime.now(dt.UTC) + AHEAD
         start, end = _around(now)
         await _channel(session, settings, quiet_start=start, quiet_end=end, **channel_kw)
         for n in range(count):
@@ -202,7 +205,7 @@ class TestDigest:
     async def test_critical_is_never_part_of_a_digest(
         self, session: AsyncSession, settings: Settings, hook: Hook, clean
     ) -> None:
-        now = dt.datetime.now(dt.UTC)
+        now = dt.datetime.now(dt.UTC) + AHEAD
         start, end = _around(now)
         await _channel(session, settings, quiet_start=start, quiet_end=end, payload_format="chat")
         await _raise(session, "CRITICAL", fingerprint="e47:c", title="On fire")

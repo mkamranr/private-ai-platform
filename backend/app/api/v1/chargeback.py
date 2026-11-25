@@ -190,12 +190,17 @@ async def report(
     group_by: GroupBy = "team",
     start: Start = None,
     end: End = None,
+    currency: Annotated[str | None, Query(pattern=r"^[A-Z]{3}$")] = None,
 ) -> ChargebackReport:
     """Estimated cost per team, API key, platform user, end user or model, from recorded
     usage and GPU reservations at the configured rates. Unpriced amounts are `null`, never
     0. Rows follow team scope."""
     data = await service.report(
-        group=group_by, start=start or _default_start(), end=end or _today(), scope=scope
+        group=group_by,
+        start=start or _default_start(),
+        end=end or _today(),
+        scope=scope,
+        currency=currency,
     )
     return ChargebackReport.model_validate(data)
 
@@ -213,6 +218,7 @@ async def export(
     group_by: GroupBy = "team",
     start: Start = None,
     end: End = None,
+    currency: Annotated[str | None, Query(pattern=r"^[A-Z]{3}$")] = None,
 ) -> Response:
     """Every row, no cap. A POST because it is audited: the data leaves the platform."""
     body, filename = await service.export_csv(
@@ -221,6 +227,7 @@ async def export(
         start=start or _default_start(),
         end=end or _today(),
         scope=scope,
+        currency=currency,
     )
     await service.commit()
     return Response(

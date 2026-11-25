@@ -21,6 +21,8 @@ Nested settings use a double-underscore delimiter: ``DATABASE__HOST`` sets
 from __future__ import annotations
 
 import functools
+import re
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -870,6 +872,20 @@ class ChargebackSettings(BaseModel):
     """
 
     currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+    #: E86: what one unit of ``currency`` is worth in other currencies, for reports
+    #: shown in them, e.g. ``{"EUR": 0.92, "AED": 3.6725}``. Set by the operator: the
+    #: platform fetches no exchange rates. Rates and budgets stay in ``currency``.
+    exchange_rates: dict[str, Decimal] = Field(default_factory=dict)
+
+    @field_validator("exchange_rates")
+    @classmethod
+    def _rates(cls, value: dict[str, Decimal]) -> dict[str, Decimal]:
+        for code, rate in value.items():
+            if not re.fullmatch(r"[A-Z]{3}", code):
+                raise ValueError(f"{code!r} is not a three-letter currency code")
+            if rate <= 0:
+                raise ValueError(f"the exchange rate for {code} must be above 0")
+        return value
 
 
 class TracingSettings(BaseModel):

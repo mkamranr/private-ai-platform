@@ -6,17 +6,27 @@ January 2020 and unique model and tool names, as in ``test_chargeback.py``.
 
 from __future__ import annotations
 
+import datetime as dt
+import uuid
 from decimal import Decimal
 
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.interfaces.media import OcrBlock, OcrResult
 from app.core.permissions import Permission as Perm
+from app.core.scope import Scope
 from app.models.agents import ApprovalState, ToolExecution
 from app.models.auth import User
 from app.models.chargeback import CostRate
 from app.models.models_registry import UsageRecord
 from app.models.teams import TeamMembership
+from app.models.workflows import Workflow, WorkflowRun, WorkflowStep
+from app.repositories.audit import AuditRepository
+from app.repositories.chargeback import ChargebackRepository, CostRateRepository
+from app.services.audit import AuditService
+from app.services.chargeback import ChargebackService
+from app.services.media_provider import OCR_CHARGE, MeteredOcrEngine, OcrCharge
 from tests.api.conftest import _user_with
 from tests.api.test_agents import _make_agent, _make_run, _make_tool
 from tests.api.test_chargeback import PERIOD, URL, _at, _name, _team
@@ -196,3 +206,120 @@ class TestRates:
         )
         assert r.status_code == 201, r.text
         assert Decimal(r.json()["unit_price"]) == Decimal("0.006")
+
+
+# ---------------------------------------------------------------------------
+# E86: OCR per page, workflow tool steps, another currency
+# ---------------------------------------------------------------------------
+class TestOcr:
+    async def test_pages_are_priced_per_page(self, client, tokens, superuser, session):
+        model = _name("ocr")
+        await _speech(session, model, "ocr", 7)
+        await _rate(session, model, unit="0.01", prompt="1000")  # token price ignored
+        row = _row(await _report(client, tokens, superuser), model)
+        assert row["ocr_pages"] == 7 and row["prompt_tokens"] == 0
+        assert Decimal(row["ocr_cost"]) == Decimal("0.07")
+        assert Decimal(row["total_cost"]) == Decimal("0.07")
+
+    async def test_a_metered_engine_records_pages(self) -> None:
+        recorded: list[tuple] = []
+
+        class Engine:
+            async def recognise(self, image, **_):
+                return OcrResult(blocks=(OcrBlock("a", page=1), OcrBlock("b", page=3)))
+
+            async def health(self):
+                return True
+
+        async def meter(pages, status, latency, charge):
+            recorded.append((pages, status, charge))
+
+        engine = MeteredOcrEngine(Engine(), meter)
+        charge = OcrCharge(team_id=uuid.uuid4())
+        token = OCR_CHARGE.set(charge)
+        try:
+            await engine.recognise(b"x", model="m")
+        finally:
+            OCR_CHARGE.reset(token)
+        await engine.recognise(b"x", model="m")
+        assert recorded == [(2, 200, charge), (2, 200, None)]
+
+
+class TestWorkflowTools:
+    async def test_tool_steps_that_ran_are_priced(self, client, tokens, superuser, session):
+        team = await _team(session)
+        tool = await _make_tool(session)
+        workflow = Workflow(name=_name("wf"), display_name="Priced", team_id=team.id)
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(
+            workflow_id=workflow.id,
+            version=1,
+            definition={"nodes": []},
+            trigger="manual",
+            status="SUCCEEDED",
+            started_by=superuser.id,
+        )
+        session.add(run)
+        await session.flush()
+        for sequence, (status, output) in enumerate(
+            [
+                ("SUCCEEDED", {"content": "ok", "data": None, "truncated": False}),
+                ("SUCCEEDED", {"awaiting": "approval", "tool": tool.name}),  # only asked
+                ("FAILED", None),  # never ran the tool
+            ],
+            start=1,
+        ):
+            session.add(
+                WorkflowStep(
+                    run_id=run.id,
+                    sequence=sequence,
+                    node_id=f"call{sequence}",
+                    node_type="tool",
+                    status=status,
+                    input={"tool_id": str(tool.id), "arguments": {}},
+                    output=output,
+                    started_at=_at(8),
+                )
+            )
+        await session.flush()
+        await _rate(session, f"tool:{tool.name}", unit="0.25")
+
+        row = _row(await _report(client, tokens, superuser), f"tool:{tool.name}")
+        assert row["tool_calls"] == 1 and Decimal(row["tool_cost"]) == Decimal("0.25")
+        by_team = _row(await _report(client, tokens, superuser, "team"), str(team.id))
+        assert by_team["tool_calls"] == 1
+
+
+class TestCurrency:
+    async def test_shown_in_another_currency(self, session, superuser) -> None:
+        model = _name("fx")
+        await _speech(session, model, "ocr", 10)
+        await _rate(session, model, unit="1")
+        audit = AuditService(AuditRepository(session))
+        service = ChargebackService(
+            CostRateRepository(session),
+            ChargebackRepository(session),
+            audit,
+            currency="USD",
+            exchange_rates={"EUR": Decimal("0.5")},
+        )
+        start, end = dt.date(2020, 1, 1), dt.date(2020, 1, 31)
+        report = await service.report(
+            group="model", start=start, end=end, scope=Scope.everything(), currency="EUR"
+        )
+        row = _row(report, model)
+        assert report["currency"] == "EUR" and report["priced_in"] == "USD"
+        assert report["exchange_rate"] == Decimal("0.5")
+        assert report["currencies"] == ["EUR", "USD"]
+        assert row["ocr_cost"] == Decimal("5") and row["total_cost"] == Decimal("5")
+        plain = await service.report(group="model", start=start, end=end, scope=Scope.everything())
+        assert _row(plain, model)["total_cost"] == Decimal("10")
+
+    async def test_unknown_currency_is_refused(self, client, tokens, superuser) -> None:
+        r = await client.get(
+            f"{URL}/report",
+            params={**PERIOD, "currency": "JPY"},
+            headers=auth_header(tokens, superuser),
+        )
+        assert r.status_code == 422 and "No exchange rate for JPY" in r.text

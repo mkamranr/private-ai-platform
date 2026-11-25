@@ -61,9 +61,13 @@ DEFAULT_TOOL_RATE = "tool:*"
 UNIT_TOKENS = "tokens"
 UNIT_AUDIO_SECONDS = "audio_seconds"
 UNIT_CHARACTERS = "characters"
+#: E86: OCR counts pages read, priced at the OCR model's ``unit_price`` per page.
+UNIT_PAGES = "pages"
+OCR_ENDPOINT = "ocr"
 UNIT_BY_ENDPOINT = {
     "audio.transcriptions": UNIT_AUDIO_SECONDS,
     "audio.speech": UNIT_CHARACTERS,
+    OCR_ENDPOINT: UNIT_PAGES,
 }
 
 
