@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Gateway: keep a conversation on one copy
+- With `gateway.session_affinity` on, a chat's calls go to the same copy of a model (by `X-Session-Id`, or the chat's opening), so the copy's prefix cache holds the earlier turns. Copies' traffic shares still hold, and a conversation moves when its copy is much busier than the others. Off by default.
+- **Upgrade.** No migration.
+
 ### Inference backends: own alert levels, and pulling models onto Ollama
 - A vLLM backend can have its own load alert levels over the platform's (*This backend warns at* in its *Models*; 0 turns an alert off for it).
 - *Pull a model* fetches a model onto an Ollama backend, from the Ollama library or an internal registry (`registry.internal/library/llama3.2:3b`), then it can be loaded and registered.

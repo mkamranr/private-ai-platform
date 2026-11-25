@@ -32,6 +32,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `gateway.circuit_failure_threshold`, `circuit_window_seconds`, `circuit_open_seconds` | Gateway resilience | gateway circuit breaker | next gateway request |
 | `gateway.concurrency_lease_seconds` | Gateway resilience | per-model concurrency slots, and how long a copy counts a call that never reported finishing | next gateway request |
 | `gateway.load_balancing` | Gateway resilience | how calls pick among a model's copies: `least_busy`, `round_robin` or `first` (see [gateway-policy.md](gateway-policy.md#spreading-calls-across-copies)) | next gateway request |
+| `gateway.session_affinity`, `gateway.session_affinity_max_extra` | Gateway resilience | keep a conversation's chat calls on one copy for its prefix cache, unless that copy is busier than the least busy by more than the second (see [gateway-policy.md](gateway-policy.md#keeping-a-conversation-on-one-copy)) | next gateway request |
 | `gateway.replica_retries` | Gateway resilience | other copies a failed call is tried on before the alias's fallback (0–5) | next gateway request |
 | `gateway.stream_resume_max_chars` | Gateway resilience | longest answer (characters) a stream that breaks mid-answer is resumed on another copy for; 0 turns resuming off (see [gateway-policy.md](gateway-policy.md#resuming-a-broken-stream)) | next gateway request |
 | `ops.runner_stale_seconds`, `ops.max_log_lines` | Operations | ops runner status and reports | immediately |

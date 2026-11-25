@@ -271,6 +271,25 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         _one_of("least_busy", "round_robin", "first"),
     ),
     RuntimeSetting(
+        "gateway.session_affinity",
+        "gateway",
+        "Keep a conversation on one copy",
+        "Send each conversation's calls to the same copy of a model, so the copy's prefix "
+        "cache already holds its earlier turns (faster first tokens on long chats). A "
+        "conversation is the X-Session-Id header, or else the start of the chat. Copies' "
+        "traffic shares still hold.",
+        "Next gateway request",
+    ),
+    RuntimeSetting(
+        "gateway.session_affinity_max_extra",
+        "gateway",
+        "Conversation moves when its copy is busier by",
+        "With session affinity, a conversation's copy is passed over for the least busy "
+        "one when it has this many more calls in flight. 0 moves it on any difference.",
+        "Next gateway request",
+        _bounded(0, 1000),
+    ),
+    RuntimeSetting(
         "gateway.replica_retries",
         "gateway",
         "Retries on another copy",

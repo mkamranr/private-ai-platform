@@ -1404,6 +1404,8 @@ async def get_gateway_context(
         api_key=key,
         end_user=end_user.subject if end_user else None,
         end_user_trusted=end_user.trusted if end_user else False,
+        # E93: names the conversation for session affinity (used only when it is on).
+        session_id=request.headers.get("x-session-id") or None,
     )
 
 

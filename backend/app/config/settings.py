@@ -594,6 +594,13 @@ class GatewaySettings(BaseModel):
     #: E58: other copies of the same model a failed call is retried on, before the alias's
     #: fallback. A stream is retried only if it failed before sending anything.
     replica_retries: int = Field(default=1, ge=0, le=5)
+    #: E93: keep a conversation on one copy of a model, so the copy's prefix cache holds
+    #: its earlier turns. The conversation is the client's ``X-Session-Id`` header, or else
+    #: the start of the chat (system prompt and first user message).
+    session_affinity: bool = False
+    #: E93: a conversation's copy is passed over when it has this many more calls in
+    #: flight than the least busy copy, so affinity never piles work on one copy.
+    session_affinity_max_extra: int = Field(default=4, ge=0, le=1000)
     #: E66: a stream that breaks after sending text is finished by another copy, which is
     #: given the text sent so far to continue. That text is held while the stream runs, up
     #: to this many characters; a longer answer is not resumed. 0 turns resuming off.

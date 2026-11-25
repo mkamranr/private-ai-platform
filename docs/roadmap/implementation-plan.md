@@ -780,6 +780,13 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_backend_load.py` (`TestBackendLevels`), `tests/api/test_backend_operations.py` (`TestPull`). Docs: backends.md, api.md.
 - [ ] A pull shows no progress until it ends, and is lost if the request is cut off. vLLM still serves only the model it started with.
 
+## E93: Keeping a conversation on one copy
+
+- [x] `gateway.session_affinity` (runtime, off) and `gateway.session_affinity_max_extra` (runtime, 4). `session_key`: the `X-Session-Id` header (hashed past 256 characters), else a hash of the model, first system and first user message.
+- [x] `ReplicaBalancer.order(affinity=)`: weighted rendezvous hashing over copies with weight above 0 (shares hold, a new copy moves only its share), weight 0 last; passed over for the usual order when the copy has more than `max_extra` calls in flight beyond the least busy. Chat calls only (`chat_completion`, `prepare_stream`), through `resolve(affinity=)` and the alias fallback.
+- [x] Tests: `tests/api/test_session_affinity.py`. Docs: gateway-policy.md, settings.md.
+- [ ] Two chats with the same opening and no `X-Session-Id` share a copy. No metric of how often a conversation stays put.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and
