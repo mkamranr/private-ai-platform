@@ -24,11 +24,14 @@ was started with, so it can't load or unload.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import time
 import uuid
-from typing import Any, ClassVar
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, ClassVar, Final
 
 import httpx
+from sqlalchemy import and_, delete, or_, select
 
 from app.config.settings import BackendsSettings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -47,11 +50,14 @@ from app.models.audit import AuditAction
 from app.models.auth import User
 from app.models.models_registry import ModelType
 from app.models.operations import (
+    ACTIVE_PULL_STATES,
     AlertSeverity,
     BackendMetricSample,
+    BackendModelPull,
     BackendStatus,
     BackendType,
     InferenceBackend,
+    PullStatus,
 )
 from app.repositories.operations import InferenceBackendRepository
 from app.services.alerts import (
@@ -63,6 +69,13 @@ from app.services.audit import AuditService
 from app.services.model_registry import ModelRegistryService
 
 log = get_logger(__name__)
+
+#: E97: a running pull whose worker hasn't reported for this long is taken up again.
+PULL_STALE_SECONDS: Final = 120.0
+#: E97: how often a running pull's progress is saved.
+PULL_PROGRESS_SECONDS: Final = 2.0
+#: E97: finished pulls are kept this long.
+PULL_KEEP_DAYS: Final = 7
 
 
 # ---------------------------------------------------------------------------
@@ -359,26 +372,48 @@ class OllamaAdapter(_HttpAdapter):
     #: allows an hour.
     pull_timeout_seconds: ClassVar[float] = 3000.0
 
-    async def pull_model(self, name: str, *, insecure: bool = False) -> None:
-        """E90: ``/api/pull``, waiting for the whole model (no progress stream)."""
-        async with self._client() as client:
-            response = await client.post(
+    can_pull = True
+
+    async def pull_model(
+        self, name: str, *, insecure: bool = False
+    ) -> AsyncIterator[dict[str, Any]]:
+        """E97: ``/api/pull`` streamed: one JSON object per line (``status``, and
+        ``completed`` / ``total`` bytes while a layer downloads), ending ``success``."""
+        timeout = httpx.Timeout(self.pull_timeout_seconds, connect=self._timeout)
+        async with (
+            self._client() as client,
+            client.stream(
+                "POST",
                 "/api/pull",
-                json={"model": name, "stream": False, "insecure": insecure},
-                timeout=self.pull_timeout_seconds,
-            )
-        if response.status_code >= 400:
-            try:
-                detail = response.json().get("error") or response.text
-            except ValueError:
-                detail = response.text
-            raise ModelNotOnBackendError(f"Ollama could not pull {name!r}: {detail}"[:500])
-        try:
-            status = (response.json() or {}).get("status")
-        except ValueError:
-            status = None
-        if status not in (None, "success"):
-            raise ModelNotOnBackendError(f"Ollama could not pull {name!r}: {status}"[:500])
+                json={"model": name, "stream": True, "insecure": insecure},
+                timeout=timeout,
+            ) as response,
+        ):
+            if response.status_code >= 400:
+                raw = (await response.aread()).decode("utf-8", "replace")
+                try:
+                    detail = json.loads(raw).get("error") or raw
+                except ValueError:
+                    detail = raw
+                raise ModelNotOnBackendError(f"Ollama could not pull {name!r}: {detail}"[:500])
+            done = False
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get("error"):
+                    raise ModelNotOnBackendError(
+                        f"Ollama could not pull {name!r}: {event['error']}"[:500]
+                    )
+                done = done or event.get("status") == "success"
+                yield event
+            if not done:
+                raise ModelNotOnBackendError(f"Ollama stopped pulling {name!r} before it finished.")
 
     def _parse_models(self, payload: Any) -> list[DiscoveredModel]:
         """Ollama shape: ``{"models": [{"name": "llama3.2:latest", "details": {...}}]}``."""
@@ -799,33 +834,145 @@ class InferenceBackendService:
 
     async def pull_model(
         self, backend_id: uuid.UUID, model: str, *, insecure: bool, actor: User
-    ) -> None:
-        """E90: fetch a model onto the backend's disk (Ollama). Audited."""
+    ) -> BackendModelPull:
+        """E97: queue a model to fetch onto the backend's disk (Ollama); the worker pulls
+        it and records its progress. The same model already queued or running on this
+        backend is returned rather than pulled twice. Audited when queued."""
         backend = await self.get(backend_id)
         if not backend.enabled:
             raise ConflictError(f"'{backend.name}' is disabled.")
-        adapter = self.adapter_for(backend)
-        try:
-            await adapter.pull_model(model, insecure=insecure)
-        except UnsupportedBackendOperationError as exc:
-            raise ValidationError(f"'{backend.name}': {exc}") from exc
-        except ModelNotOnBackendError as exc:
-            raise ValidationError(
-                f"'{backend.name}': {exc}", details={"backend_id": str(backend_id), "model": model}
-            ) from exc
-        except Exception as exc:
-            raise ValidationError(
-                f"Could not pull {model!r} onto '{backend.name}': {_describe_error(exc)}",
-                details={"backend_id": str(backend_id), "model": model},
-            ) from exc
+        if not self.adapter_for(backend).can_pull:
+            raise ValidationError(f"'{backend.name}': This backend type can't fetch models.")
+        active = (
+            await self._backends.session.execute(
+                select(BackendModelPull).where(
+                    BackendModelPull.backend_id == backend_id,
+                    BackendModelPull.model == model,
+                    BackendModelPull.status.in_(ACTIVE_PULL_STATES),
+                )
+            )
+        ).scalar_one_or_none()
+        if active is not None:
+            return active
+        pull = BackendModelPull(
+            backend_id=backend_id, model=model, insecure=insecure, requested_by=actor.id
+        )
+        self._backends.session.add(pull)
+        await self._backends.flush()
         await self._audit.record(
             AuditAction.BACKEND_MODEL_PULLED,
             user_id=actor.id,
             username=actor.username,
             resource_type="inference_backend",
             resource_id=str(backend_id),
-            metadata={"name": backend.name, "model": model, "insecure": insecure},
+            metadata={
+                "name": backend.name,
+                "model": model,
+                "insecure": insecure,
+                "pull_id": str(pull.id),
+            },
         )
+        await self._backends.session.refresh(pull)
+        return pull
+
+    async def list_pulls(self, backend_id: uuid.UUID, *, limit: int = 20) -> list[BackendModelPull]:
+        """E97: the backend's latest pulls, newest first."""
+        await self.get(backend_id)
+        rows = await self._backends.session.execute(
+            select(BackendModelPull)
+            .where(BackendModelPull.backend_id == backend_id)
+            .order_by(BackendModelPull.created_at.desc())
+            .limit(limit)
+        )
+        return list(rows.scalars())
+
+    async def claim_pull(
+        self, *, stale_seconds: float = PULL_STALE_SECONDS
+    ) -> BackendModelPull | None:
+        """E97: the next pull to run: a queued one, or a running one whose worker has
+        stopped beating (Ollama resumes a partial download). Marked RUNNING."""
+        now = dt.datetime.now(dt.UTC)
+        stale = now - dt.timedelta(seconds=stale_seconds)
+        pull = (
+            await self._backends.session.execute(
+                select(BackendModelPull)
+                .where(
+                    or_(
+                        BackendModelPull.status == PullStatus.QUEUED,
+                        and_(
+                            BackendModelPull.status == PullStatus.RUNNING,
+                            BackendModelPull.heartbeat_at < stale,
+                        ),
+                    )
+                )
+                .order_by(BackendModelPull.created_at)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            )
+        ).scalar_one_or_none()
+        if pull is None:
+            return None
+        pull.status = PullStatus.RUNNING
+        pull.started_at = pull.started_at or now
+        pull.heartbeat_at = now
+        pull.error = None
+        await self._backends.flush()
+        return pull
+
+    async def run_pull(
+        self,
+        pull: BackendModelPull,
+        save: Callable[[], Awaitable[None]],
+        *,
+        every_seconds: float = PULL_PROGRESS_SECONDS,
+    ) -> BackendModelPull:
+        """E97: pull it, recording the backend's progress through ``save`` (a commit, in
+        the worker) at most every ``every_seconds``. Ends SUCCEEDED or FAILED; never
+        raises for the pull's own failure."""
+        backend = await self._backends.get(pull.backend_id)
+        try:
+            if backend is None or not backend.enabled:
+                raise ModelNotOnBackendError("The backend is gone or disabled.")
+            last = time.monotonic()
+            async for event in self.adapter_for(backend).pull_model(
+                pull.model, insecure=pull.insecure
+            ):
+                pull.stage = str(event.get("status") or "")[:255] or pull.stage
+                if isinstance(event.get("total"), int):
+                    pull.total_bytes = event["total"]
+                    pull.completed_bytes = int(event.get("completed") or 0)
+                if time.monotonic() - last >= every_seconds:
+                    pull.heartbeat_at = dt.datetime.now(dt.UTC)
+                    await save()
+                    last = time.monotonic()
+        except Exception as exc:
+            pull.status = PullStatus.FAILED
+            pull.error = (
+                str(exc) if isinstance(exc, ModelNotOnBackendError) else _describe_error(exc)
+            )[:2000]
+            log.warning(
+                "backend_pull_failed", pull=str(pull.id), model=pull.model, error=pull.error
+            )
+        else:
+            pull.status = PullStatus.SUCCEEDED
+            if pull.total_bytes:
+                pull.completed_bytes = pull.total_bytes
+            log.info("backend_pull_succeeded", pull=str(pull.id), model=pull.model)
+        pull.finished_at = dt.datetime.now(dt.UTC)
+        pull.heartbeat_at = pull.finished_at
+        await save()
+        return pull
+
+    async def prune_pulls(self, *, keep_days: int = PULL_KEEP_DAYS) -> int:
+        """E97: finished pulls older than ``keep_days`` are deleted."""
+        cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(days=keep_days)
+        result = await self._backends.session.execute(
+            delete(BackendModelPull).where(
+                BackendModelPull.status.not_in(ACTIVE_PULL_STATES),
+                BackendModelPull.finished_at < cutoff,
+            )
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def set_load_levels(
         self, backend_id: uuid.UUID, levels: dict[str, int | None], *, actor: User

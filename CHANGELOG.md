@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Model pulls in the background, with progress
+- *Pull a model* on an Ollama backend is queued and run by the worker: it carries on if the browser is closed, shows its stage and a progress bar in *Models*, and is taken up again after a restart.
+- `POST /backends/{id}/models/pull` returns 202 with the pull; `GET /backends/{id}/pulls` lists the latest.
+- **Upgrade.** One migration (`alembic upgrade head`).
+
 ### Follow-ups: reply shapes, redeploy image, retried tool steps, affinity metric
 - A workflow model step's reply is checked against its `json_schema`; one that doesn't match fails the step (and its retries apply).
 - *Deploy again* runs the image the copy last ran, while it is still allowed for the runtime.

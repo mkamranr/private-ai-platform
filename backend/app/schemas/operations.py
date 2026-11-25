@@ -132,6 +132,25 @@ class BackendModelPull(BaseModel):
     insecure: bool = False
 
 
+class BackendPullRead(ORMModel):
+    """E97: a model being fetched onto a backend, and how far it has got."""
+
+    id: uuid.UUID
+    backend_id: uuid.UUID
+    model: str
+    insecure: bool
+    status: str
+    #: What the backend last said it was doing (``pulling manifest``...).
+    stage: str | None = None
+    completed_bytes: int | None = None
+    total_bytes: int | None = None
+    error: str | None = None
+    requested_by: uuid.UUID | None = None
+    created_at: dt.datetime
+    started_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
+
+
 class BackendLoadLevels(BaseModel):
     """E90: a backend's own load alert levels; a level left null comes from the
     platform's (``backends.load_alert_*``), 0 turns that alert off for this backend."""

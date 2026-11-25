@@ -4760,7 +4760,26 @@ function backendPullForm(canPull) {
            title="A registry over plain HTTP, or with a certificate Ollama doesn't trust">
       <input type="checkbox" class="form-check-input" id="be-pull-insecure"> insecure registry</label>
     <button class="btn btn-sm btn-outline-primary">Pull</button>
-  </form>`;
+  </form>
+  <div id="be-pulls" class="small mt-2"></div>`;
+}
+
+/** E97: a backend's latest pulls, with a bar for each one still downloading. */
+function backendPullsHtml(pulls) {
+  if (!pulls.length) return '';
+  const size = (bytes) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`);
+  return `<table class="table table-sm align-middle mb-0"><tbody>${pulls.map((p) => {
+    const active = p.status === 'QUEUED' || p.status === 'RUNNING';
+    const percent = p.total_bytes ? Math.min(100, Math.round((100 * (p.completed_bytes || 0)) / p.total_bytes)) : null;
+    const progress = active && percent !== null
+      ? `<div class="progress" style="height:.5rem;width:10rem" title="${size(p.completed_bytes || 0)} of ${size(p.total_bytes)}">
+           <div class="progress-bar" style="width:${percent}%"></div></div>
+         <span class="text-secondary">${percent}% · ${esc(p.stage || '')}</span>`
+      : `<span class="text-secondary">${esc(active ? (p.stage || 'waiting for the worker') : (p.error || (p.total_bytes ? size(p.total_bytes) : '')))}</span>`;
+    return `<tr><td class="mono">${esc(p.model)}</td><td>${pill(p.status)}</td>
+      <td><div class="d-flex align-items-center gap-2">${progress}</div></td>
+      <td class="text-secondary text-nowrap">${esc(ago(p.created_at))}</td></tr>`;
+  }).join('')}</tbody></table>`;
 }
 
 /** E90: this backend's own load alert levels over the platform's. */
@@ -4824,27 +4843,40 @@ async function openDiscover(backendId, backendName, capabilities = []) {
       </table>` : empty('This backend reports no models.')) + backendPullForm(canLoad)
       + backendLevelsForm(detail);
     register.disabled = !models.length;
-    // E90: fetch a model onto the backend (Ollama), then show the list again.
-    document.getElementById('be-pull-form')?.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const button = event.target.querySelector('button');
-      guard(button, async () => {
-        const model = document.getElementById('be-pull-name').value.trim();
-        if (!model) return;
-        button.textContent = 'Pulling… (can take minutes)';
-        try {
-          const result = await api(`/backends/${backendId}/models/pull`, {
-            method: 'POST',
-            body: JSON.stringify({ model, insecure: document.getElementById('be-pull-insecure').checked }),
-          });
-          await show();
-          body.insertAdjacentHTML('afterbegin', `<div class="alert alert-success small">${esc(result.message)}</div>`);
-        } catch (err) {
-          body.insertAdjacentHTML('afterbegin', `<div class="alert alert-danger small">${esc(err.message)}</div>`);
-          button.textContent = 'Pull';
-        }
+    // E97: a pull is queued and run by the worker; its progress is shown here, and it
+    // carries on if this window is closed. The list is shown again once one finishes.
+    const pullsHost = document.getElementById('be-pulls');
+    if (pullsHost) {
+      let active = false;
+      const watch = async () => {
+        if (!document.body.contains(pullsHost)) return;
+        const pulls = await api(`/backends/${backendId}/pulls`).catch(() => []);
+        const still = pulls.some((p) => p.status === 'QUEUED' || p.status === 'RUNNING');
+        pullsHost.innerHTML = backendPullsHtml(pulls.slice(0, 5));
+        if (active && !still) { active = false; await show(); return; }
+        active = still;
+        if (still) setTimeout(watch, 2000);
+      };
+      watch();
+      document.getElementById('be-pull-form')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const button = event.target.querySelector('button');
+        guard(button, async () => {
+          const model = document.getElementById('be-pull-name').value.trim();
+          if (!model) return;
+          try {
+            await api(`/backends/${backendId}/models/pull`, {
+              method: 'POST',
+              body: JSON.stringify({ model, insecure: document.getElementById('be-pull-insecure').checked }),
+            });
+            document.getElementById('be-pull-name').value = '';
+            if (!active) { active = true; watch(); }
+          } catch (err) {
+            body.insertAdjacentHTML('afterbegin', `<div class="alert alert-danger small">${esc(err.message)}</div>`);
+          }
+        });
       });
-    });
+    }
     // E90: this backend's own alert levels; blank for the platform's.
     document.getElementById('be-levels-form')?.addEventListener('submit', (event) => {
       event.preventDefault();

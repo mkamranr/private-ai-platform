@@ -57,11 +57,19 @@ POST /api/v1/backends/{id}/models/pull
 On an air-gapped site, name a model on an internal registry that mirrors the Ollama
 library (`host/namespace/model:tag`); `insecure` allows one served over plain HTTP or with
 a certificate the Ollama doesn't trust. The Ollama does the download, not the platform, so
-it is the Ollama's network access that counts. The call waits until the whole model is on
-disk, which for a large one takes minutes (the console's proxy allows an hour, the call
-50 minutes); then load it, or register it with *Register all in catalogue*. Needs
-`backend.manage`, audited as `BACKEND_MODEL_PULLED`; 422 with Ollama's reason when the
-pull fails (no such model, registry unreachable).
+it is the Ollama's network access that counts.
+
+The call returns **202** with the pull, queued; the platform's worker runs it, so it
+carries on if the browser is closed or the request is cut off. *Models* shows the
+backend's latest pulls with a bar while one downloads (`GET /backends/{id}/pulls`, newest
+first): the stage Ollama reports (`pulling manifest`, a layer, `verifying sha256
+digest`), bytes done of the total, and once it ends `SUCCEEDED` or `FAILED` with
+Ollama's reason (no such model, registry unreachable). Asking for a model already queued
+or downloading on that backend returns that pull. A pull whose worker stopped (a
+restart) is taken up again after two minutes, and Ollama resumes what it had. Then load
+the model, or register it with *Register all in catalogue*. Needs `backend.manage`
+(reading pulls, `backend.view`), audited as `BACKEND_MODEL_PULLED` when queued. Finished
+pulls are kept a week.
 
 ### Load over time, and alerts on it
 
@@ -134,4 +142,4 @@ skipped. Calls the gateway makes to these models share one circuit breaker per b
 - Existing models are not backfilled with a `backend_id`.
 - Ollama reports no queue or KV cache, so only its models in memory are kept and it
   raises no load alert.
-- A pull shows no progress until it finishes, and stops if the request is cut off.
+- Pulls run one at a time per platform worker, so a large one makes the next wait.

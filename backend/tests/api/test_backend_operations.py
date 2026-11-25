@@ -3,14 +3,18 @@
 # ruff: noqa: F811  (pytest fixtures imported from the E1 tests)
 from __future__ import annotations
 
+import datetime as dt
 import json
+import uuid
 
 import httpx
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.main import _backend_service
 from app.models.audit import AuditLog
+from app.models.operations import BackendModelPull, PullStatus
 from app.services.inference_backends import parse_prometheus
 from tests.api.test_backends import (  # noqa: F401  (fixtures)
     _create,
@@ -171,9 +175,10 @@ class TestLoadUnload:
 
 
 class TestPull:
-    """E90: fetching a model onto an Ollama backend."""
+    """E90: fetching a model onto an Ollama backend. E97: queued, run by the worker,
+    with its progress."""
 
-    async def test_ollama(
+    async def test_queued_once(
         self,
         client: AsyncClient,
         tokens,
@@ -184,38 +189,30 @@ class TestPull:
     ) -> None:
         headers = auth_header(tokens, backend_admin)
         created = await _create(client, headers)
-        sent: list[dict] = []
-
-        def ollama(request: httpx.Request) -> httpx.Response:
-            assert request.url.path == "/api/pull"
-            body = json.loads(request.content)
-            sent.append(body)
-            if body["model"].startswith("nowhere"):
-                return httpx.Response(
-                    500, json={"error": "pull model manifest: file does not exist"}
-                )
-            return httpx.Response(200, json={"status": "success"})
-
-        fake_backend["ollama-host"] = ollama
         url = f"/api/v1/backends/{created['id']}/models/pull"
-        response = await client.post(
-            url,
-            json={"model": "registry.internal/library/llama3.2:3b", "insecure": True},
-            headers=headers,
+        body = {"model": "registry.internal/library/llama3.2:3b", "insecure": True}
+        response = await client.post(url, json=body, headers=headers)
+        assert response.status_code == 202, response.text
+        pull = response.json()
+        assert (pull["status"], pull["model"], pull["insecure"]) == (
+            "QUEUED",
+            "registry.internal/library/llama3.2:3b",
+            True,
         )
-        assert response.status_code == 200, response.text
-        assert sent == [
-            {"model": "registry.internal/library/llama3.2:3b", "stream": False, "insecure": True}
-        ]
-        response = await client.post(url, json={"model": "nowhere/x:1"}, headers=headers)
-        assert response.status_code == 422 and "file does not exist" in response.text
+        again = await client.post(url, json=body, headers=headers)
+        assert again.status_code == 202 and again.json()["id"] == pull["id"]  # not twice
+
+        listed = await client.get(
+            f"/api/v1/backends/{created['id']}/pulls", headers=auth_header(tokens, backend_viewer)
+        )
+        assert listed.status_code == 200 and [p["id"] for p in listed.json()] == [pull["id"]]
+
         response = await client.post(url, json={"model": "bad name; rm"}, headers=headers)
         assert response.status_code == 422
         response = await client.post(
             url, json={"model": "llama3.2"}, headers=auth_header(tokens, backend_viewer)
         )
         assert response.status_code == 403
-
         actions = (
             (
                 await session.execute(
@@ -242,3 +239,98 @@ class TestPull:
             headers=auth_header(tokens, backend_admin),
         )
         assert response.status_code == 422 and "can't fetch models" in response.text
+
+    async def _queued(self, client, tokens, backend_admin, model: str) -> dict:
+        headers = auth_header(tokens, backend_admin)
+        created = await _create(client, headers)
+        response = await client.post(
+            f"/api/v1/backends/{created['id']}/models/pull", json={"model": model}, headers=headers
+        )
+        assert response.status_code == 202, response.text
+        return response.json()
+
+    async def test_the_worker_records_progress(
+        self, app, client: AsyncClient, tokens, backend_admin, fake_backend, session
+    ) -> None:
+        pull = await self._queued(client, tokens, backend_admin, "llama3.2:3b")
+        sent: list[dict] = []
+
+        def ollama(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/pull"
+            sent.append(json.loads(request.content))
+            lines = [
+                {"status": "pulling manifest"},
+                {"status": "pulling 6a0746a1ec1a", "total": 2000, "completed": 500},
+                {"status": "pulling 6a0746a1ec1a", "total": 2000, "completed": 2000},
+                {"status": "verifying sha256 digest"},
+                {"status": "success"},
+            ]
+            return httpx.Response(200, content="\n".join(json.dumps(x) for x in lines) + "\n")
+
+        fake_backend["ollama-host"] = ollama
+        service = _backend_service(session, app.state.secret_cipher)
+        saved: list[tuple] = []
+
+        async def save() -> None:
+            saved.append((claimed.stage, claimed.completed_bytes))
+            await session.flush()
+
+        claimed = await service.claim_pull()
+        assert claimed is not None and str(claimed.id) == pull["id"]
+        assert claimed.status == PullStatus.RUNNING
+        assert await service.claim_pull() is None  # running and beating: not claimed twice
+        done = await service.run_pull(claimed, save, every_seconds=0)
+        assert sent == [{"model": "llama3.2:3b", "stream": True, "insecure": False}]
+        assert done.status == PullStatus.SUCCEEDED and done.finished_at is not None
+        assert (done.completed_bytes, done.total_bytes, done.stage) == (2000, 2000, "success")
+        assert ("pulling 6a0746a1ec1a", 500) in saved  # progress saved along the way
+
+    async def test_a_failed_pull_says_why(
+        self, app, client: AsyncClient, tokens, backend_admin, fake_backend, session
+    ) -> None:
+        await self._queued(client, tokens, backend_admin, "nowhere/x:1")
+        service = _backend_service(session, app.state.secret_cipher)
+        replies = iter(
+            [
+                httpx.Response(500, json={"error": "pull model manifest: file does not exist"}),
+                httpx.Response(
+                    200,
+                    content='{"status": "pulling manifest"}\n{"error": "max retries exceeded"}\n',
+                ),
+                httpx.Response(200, content='{"status": "pulling manifest"}\n'),
+            ]
+        )
+        fake_backend["ollama-host"] = lambda request: next(replies)
+        for words in ("file does not exist", "max retries exceeded", "before it finished"):
+            claimed = await service.claim_pull()
+            assert claimed is not None
+            done = await service.run_pull(claimed, session.flush)
+            assert done.status == PullStatus.FAILED and words in (done.error or ""), done.error
+            # Queued again to try the next reply.
+            done.status = PullStatus.QUEUED
+            await session.flush()
+
+    async def test_a_stalled_pull_is_taken_up_again(
+        self, app, client: AsyncClient, tokens, backend_admin, fake_backend, session
+    ) -> None:
+        await self._queued(client, tokens, backend_admin, "llama3.2:3b")
+        service = _backend_service(session, app.state.secret_cipher)
+        claimed = await service.claim_pull()
+        assert claimed is not None
+        claimed.heartbeat_at = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=5)
+        await session.flush()
+        again = await service.claim_pull()
+        assert again is not None and again.id == claimed.id
+
+    async def test_old_finished_pulls_are_pruned(
+        self, app, client: AsyncClient, tokens, backend_admin, fake_backend, session
+    ) -> None:
+        pull = await self._queued(client, tokens, backend_admin, "llama3.2:3b")
+        service = _backend_service(session, app.state.secret_cipher)
+        row = await session.get(BackendModelPull, uuid.UUID(pull["id"]))
+        assert row is not None
+        assert await service.prune_pulls() == 0  # queued: kept
+        row.status = PullStatus.SUCCEEDED
+        row.finished_at = dt.datetime.now(dt.UTC) - dt.timedelta(days=8)
+        await session.flush()
+        assert await service.prune_pulls() == 1

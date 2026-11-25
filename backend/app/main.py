@@ -163,12 +163,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     scoring_task: asyncio.Task[None] | None = None
 
+    # Fetches models onto backends (Ollama), outside any request (E97).
+    from app.workers.backend_pulls import BackendPullWorker
+
+    pull_worker = BackendPullWorker(
+        database.sessionmaker, lambda session: _backend_service(session, app.state.secret_cipher)
+    )
+    pull_task: asyncio.Task[None] | None = None
+
     if settings.workers.enabled:
         worker.start()
         deployment_task = asyncio.create_task(deployment_worker.run_forever())
         ingestion_task = asyncio.create_task(ingestion_worker.run_forever())
         workflow_task = asyncio.create_task(workflow_worker.run_forever())
         scoring_task = asyncio.create_task(scoring_worker.run_forever())
+        pull_task = asyncio.create_task(pull_worker.run_forever())
     else:
         log.info("workers_disabled", reason="WORKERS__ENABLED is false")
 
@@ -186,7 +195,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         worker.shutdown()
-        for task in (deployment_task, ingestion_task, workflow_task, scoring_task):
+        for task in (deployment_task, ingestion_task, workflow_task, scoring_task, pull_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -208,6 +217,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception:
                 log.warning("shutdown_close_failed", resource=name)
         log.info("platform_stopped")
+
+
+def _backend_service(session: Any, cipher: Any) -> Any:
+    """E97: the backend service the pull worker uses, built per pull against its own
+    session (as the scheduler's health check builds it)."""
+    from app.repositories.audit import AuditRepository
+    from app.repositories.operations import AlertRepository, InferenceBackendRepository
+    from app.services.alerts import AlertService
+    from app.services.audit import AuditService
+    from app.services.inference_backends import InferenceBackendService
+
+    audit = AuditService(AuditRepository(session))
+    return InferenceBackendService(
+        InferenceBackendRepository(session),
+        cipher,
+        audit,
+        AlertService(AlertRepository(session), audit),
+    )
 
 
 def _embedder(settings: Settings, database: Database, redis: RedisClient) -> Any:
