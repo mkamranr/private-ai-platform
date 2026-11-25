@@ -170,6 +170,195 @@ def path_problem(kind: OutputType, rest: list[str], name: str = "it") -> str | N
     return None
 
 
+def schema_type(schema: Any, depth: int = 0) -> OutputType:
+    """E89: a JSON Schema as an output type: objects by their ``properties``, arrays by
+    their ``items``; anything else (or deeper than 8 levels) is ``any``."""
+    if not isinstance(schema, Mapping) or depth > 8:
+        return "any"
+    kind = schema.get("type")
+    if isinstance(kind, list):  # ["string", "null"] and the like: the first real one
+        kind = next((k for k in kind if k != "null"), None)
+    if kind == "object" and isinstance(schema.get("properties"), Mapping):
+        return {str(k): schema_type(v, depth + 1) for k, v in schema["properties"].items()}
+    if kind == "array":
+        return [schema_type(schema.get("items"), depth + 1)]
+    return {"string": "text", "number": "number", "integer": "number", "boolean": "boolean"}.get(
+        str(kind), "any"
+    )
+
+
+def output_type(node: Mapping[str, Any], output: str) -> OutputType:
+    """E89: the type of one of ``node``'s outputs. A model step's ``json`` takes the
+    shape of its ``json_schema`` when it has one."""
+    if output == "error":
+        return "text"
+    kind = str(node.get("type"))
+    if kind == "llm" and output == "json":
+        schema = (node.get("config") or {}).get("json_schema")
+        if isinstance(schema, Mapping) and schema:
+            return schema_type(schema)
+    return OUTPUT_TYPES.get(kind, {}).get(output, "any")
+
+
+def walk_type(kind: OutputType, rest: list[str]) -> OutputType:
+    """E89: the type reached by reading ``rest`` from a value of ``kind`` (``any`` once
+    the shape is no longer known). Assumes the path is readable (see `path_problem`)."""
+    for part in rest:
+        if isinstance(kind, list):
+            kind = kind[0] if kind else "any"
+        elif isinstance(kind, dict):
+            kind = kind.get(part, "any")
+        else:
+            return "any"
+    return kind
+
+
+def template_type(path: str, by_id: Mapping[str, Mapping[str, Any]]) -> OutputType:
+    """E89: what a whole template ``{{ path }}`` gives, as far as the definition says;
+    ``any`` when only the run knows (the run's input, a transform's values...)."""
+    parts = path.split(".")
+    if parts[0] in ("nodes", "previous") and len(parts) >= 3 and parts[1] in by_id:
+        return walk_type(output_type(by_id[parts[1]], parts[2]), parts[3:])
+    if parts[0] == "run" and len(parts) == 2:
+        return "number" if parts[1] == "version" else "text"
+    return "any"
+
+
+#: E89: the value types each typed setting takes from a whole template. Text is allowed
+#: into a number or yes/no setting: the run converts it ("0.7", "true"), or fails the step.
+_FITS: Final[dict[str, tuple[str, ...]]] = {
+    "integer": ("number", "text"),
+    "number": ("number", "text"),
+    "boolean": ("boolean", "text"),
+    "enum": ("text",),
+    "string_list": ("list",),
+    "knowledge_bases": ("list",),
+    "object": ("object",),
+    "tool": ("text",),
+    "workflow": ("text",),
+}
+
+
+def _fits(kind: OutputType) -> str:
+    """The broad family of a type, for `_FITS`."""
+    if isinstance(kind, list):
+        return "list"
+    if isinstance(kind, dict):
+        return "object"
+    return str(kind)
+
+
+def setting_fit_problem(
+    spec: ConfigField, path: str, by_id: Mapping[str, Mapping[str, Any]]
+) -> str | None:
+    """E89: why the value of ``{{ path }}`` can't fill ``spec``; None if it can (or if
+    only the run can tell)."""
+    allowed = _FITS.get(spec.kind)
+    if allowed is None:
+        return None
+    kind = template_type(path, by_id)
+    family = _fits(kind)
+    if family == "any" or family in allowed:
+        if spec.kind in ("string_list", "knowledge_bases") and isinstance(kind, list):
+            inner = _fits(kind[0]) if kind else "any"
+            if inner not in ("text", "any"):
+                return (
+                    f"{spec.key} is a list of text values, but {{{{ {path} }}}} is "
+                    f"{type_name(kind)}."
+                )
+        return None
+    want = {
+        "integer": "a whole number",
+        "number": "a number",
+        "boolean": "true or false",
+        "enum": "one of " + ", ".join(spec.options),
+        "string_list": "a list of text values",
+        "knowledge_bases": "a list of knowledge base ids",
+        "object": "an object",
+        "tool": "a tool id",
+        "workflow": "a workflow id",
+    }[spec.kind]
+    return f"{spec.key} takes {want}, but {{{{ {path} }}}} is {type_name(kind)}."
+
+
+class SettingError(ValueError):
+    """E89: a templated setting whose rendered value doesn't fit it."""
+
+
+def coerce_setting(spec: ConfigField, value: Any) -> Any:
+    """E89: a rendered value for a typed setting, converted where it plainly means the
+    same thing (``"0.7"`` for a number, ``"true"`` for yes/no); SettingError otherwise."""
+    kind = spec.kind
+    shown = repr(value) if not isinstance(value, str) else repr(value[:60])
+    if value is None:
+        return None
+    if kind in ("integer", "number"):
+        number: float | int
+        if isinstance(value, bool):
+            raise SettingError(f"{spec.key} is a number, not {shown}.")
+        if isinstance(value, int | float):
+            number = value
+        elif isinstance(value, str):
+            try:
+                number = float(value.strip())
+            except ValueError:
+                raise SettingError(f"{spec.key} is a number, not {shown}.") from None
+        else:
+            raise SettingError(f"{spec.key} is a number, not {type(value).__name__}.")
+        if kind == "integer":
+            if float(number) != int(number):
+                raise SettingError(f"{spec.key} is a whole number, not {shown}.")
+            number = int(number)
+        low, high = spec.minimum, spec.maximum
+        if (low is not None and number < low) or (high is not None and number > high):
+            bounds = (
+                f"{low:g} to {high:g}"
+                if low is not None and high is not None
+                else f"at least {low:g}"
+                if low is not None
+                else f"at most {high:g}"
+            )
+            raise SettingError(f"{spec.key} is {bounds}, not {number:g}.")
+        return number
+    if kind == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+            return value.strip().lower() == "true"
+        raise SettingError(f"{spec.key} is true or false, not {shown}.")
+    if kind == "enum":
+        text = str(value).upper() if spec.key == "method" else str(value)
+        if text not in spec.options:
+            raise SettingError(f"{spec.key} is one of {', '.join(spec.options)}, not {shown}.")
+        return text
+    if kind in ("string_list", "knowledge_bases"):
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list) and all(isinstance(v, str | int | float) for v in value):
+            return [str(v) for v in value]
+        raise SettingError(f"{spec.key} is a list of text values, not {type(value).__name__}.")
+    if kind == "object":
+        if isinstance(value, Mapping):
+            return dict(value)
+        raise SettingError(f"{spec.key} is an object, not {type(value).__name__}.")
+    return value
+
+
+def render_config(
+    node_type: str, config: Mapping[str, Any], context: Mapping[str, Any]
+) -> dict[str, Any]:
+    """E89: `render` a step's settings, then check each typed setting that was a whole
+    template against what it takes (`coerce_setting`). Raises SettingError."""
+    rendered = render(config, context)
+    schema = NODE_SCHEMAS.get(node_type)
+    if schema is None or not isinstance(rendered, dict):
+        return rendered if isinstance(rendered, dict) else {}
+    for spec in schema.fields:
+        if spec.kind in _FITS and spec.templated and _is_whole_template(config.get(spec.key)):
+            rendered[spec.key] = coerce_setting(spec, rendered.get(spec.key))
+    return rendered
+
+
 #: What a run's ``{{ run.* }}`` templates can read.
 RUN_FIELDS: Final = ("id", "workflow_id", "trigger", "version")
 
@@ -280,6 +469,16 @@ NODE_SCHEMAS: Final[dict[str, NodeSchema]] = {
                     "boolean",
                     "Parse the reply as JSON (available as .json)",
                     templated=False,
+                ),
+                ConfigField(
+                    "json_schema",
+                    "object",
+                    "Expected JSON shape",
+                    templated=False,
+                    help=(
+                        "A JSON Schema of the reply (type, properties, items), so later "
+                        "steps' {{ nodes.<id>.json... }} paths are checked against it."
+                    ),
                 ),
             ),
             outputs=("text", "model", "usage", "json"),
@@ -793,6 +992,7 @@ def validate(definition: Any) -> list[Problem]:
         if node_id not in reachable:
             problems.append(Problem("Not reachable from the start node.", node_id))
     problems.extend(_reference_problems(definition))
+    problems.extend(_fit_problems(definition))
     return problems
 
 
@@ -932,6 +1132,27 @@ def _reference_problems(definition: Mapping[str, Any]) -> list[Problem]:
     return out
 
 
+def _fit_problems(definition: Mapping[str, Any]) -> list[Problem]:
+    """E89: typed settings filled by a whole template whose value can't fit them."""
+    by_id = node_map(definition)
+    out: list[Problem] = []
+    for node in nodes_of(definition):
+        schema = NODE_SCHEMAS.get(str(node.get("type")))
+        config = node.get("config") or {}
+        if schema is None or not isinstance(config, Mapping):
+            continue
+        for spec in schema.fields:
+            value = config.get(spec.key)
+            if not spec.templated or not _is_whole_template(value):
+                continue
+            match = _WHOLE_TEMPLATE.match(str(value))
+            assert match is not None  # noqa: S101 - checked just above
+            problem = setting_fit_problem(spec, match.group(1), by_id)
+            if problem:
+                out.append(Problem(problem, str(node.get("id"))))
+    return out
+
+
 def _output_problem(path: str, target: Mapping[str, Any], rest: list[str]) -> str | None:
     """Why ``rest`` (the path after the step id) can't be read from ``target``."""
     outputs = node_outputs(target)
@@ -941,10 +1162,9 @@ def _output_problem(path: str, target: Mapping[str, Any], rest: list[str]) -> st
     if rest[0] not in (*outputs, "error"):
         have = ", ".join(outputs) if outputs else "nothing"
         return f"{{{{ {path} }}}}: a {kind} step has no output {rest[0]!r} (it has {have})."
-    # E84: the rest of the path, through the output's type.
-    shape: OutputType = (
-        "text" if rest[0] == "error" else (OUTPUT_TYPES.get(str(kind), {}).get(rest[0], "any"))
-    )
+    # E84: the rest of the path, through the output's type (E89: a model step's json
+    # through its json_schema).
+    shape: OutputType = output_type(target, rest[0])
     deeper = path_problem(shape, rest[1:], rest[0])
     return f"{{{{ {path} }}}}: {deeper}." if deeper else None
 
@@ -1027,7 +1247,7 @@ def _type_problem(spec: ConfigField, value: Any) -> str | None:
     if kind in ("text", "template", "model", "json"):
         return None if kind == "json" or isinstance(value, str) else f"{spec.key} is text."
     if spec.templated and _is_whole_template(value):
-        return None  # checked once the run renders it
+        return None  # E89: its type is checked against the step it reads, and at run time
     if kind in ("integer", "number"):
         numeric = int if kind == "integer" else (int, float)
         if isinstance(value, bool) or not isinstance(value, numeric):

@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Workflows: types through settings, and the canvas across reloads
+- A template filling a typed setting is checked against what it reads (`temperature: "{{ nodes.search.passages }}"` is a problem), and at run time `"0.7"` becomes a number while `"warm"` fails the step, naming the setting.
+- A model step can declare the JSON shape of its reply (`json_schema`), so paths under its `json` are checked.
+- Unsaved canvas changes and their undo history survive a reload, and the open workflow opens again; copied steps paste across tabs and reloads.
+
 ### Gateway: keep a conversation on one copy
 - With `gateway.session_affinity` on, a chat's calls go to the same copy of a model (by `X-Session-Id`, or the chat's opening), so the copy's prefix cache holds the earlier turns. Copies' traffic shares still hold, and a conversation moves when its copy is much busier than the others. Off by default.
 - **Upgrade.** No migration.

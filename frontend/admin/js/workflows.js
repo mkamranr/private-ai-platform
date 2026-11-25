@@ -41,8 +41,64 @@ const wf = {
 const WF_BOX = { W: 168, H: 56, GX: 64, GY: 26, PAD: 16, SNAP: 8 };
 const WF_ZOOM = { MIN: 0.4, MAX: 2, STEP: 1.2 };
 const WF_HISTORY_MAX = 100;
-/** E79: copied steps, kept across workflows so they can be pasted into another. */
-let wfClipboard = null;
+/* E89: what survives a reload. The unsaved draft with its undo history, per workflow, and
+ * the open workflow live in sessionStorage (this tab); copied steps in localStorage, so
+ * they paste into another tab too. Storage can be full or blocked: then nothing is kept. */
+const WF_STORE = { DRAFT: 'aip.wf.draft.', OPEN: 'aip.wf.open', CLIPBOARD: 'aip.wf.clipboard' };
+
+function wfStoreGet(area, key) {
+  try { const raw = window[area].getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+function wfStoreSet(area, key, value) {
+  try { window[area].setItem(key, JSON.stringify(value)); return true; } catch { return false; }
+}
+
+function wfStoreDrop(area, key) {
+  try { window[area].removeItem(key); } catch { /* nothing kept */ }
+}
+
+/** Keep the open workflow's unsaved draft and history, against the server draft it began
+ *  from. A long history that doesn't fit is shortened, then dropped. */
+function keepDraft() {
+  if (!wf.selected || !wf.detail || !wf.draft) return;
+  const key = WF_STORE.DRAFT + wf.selected;
+  if (!wf.dirty) { wfStoreDrop('sessionStorage', key); return; }
+  const base = JSON.stringify(wf.detail.draft || { nodes: [], edges: [] });
+  const { past, future } = wf.history;
+  for (const keep of [WF_HISTORY_MAX, 20, 0]) {
+    if (wfStoreSet('sessionStorage', key, {
+      base, draft: JSON.stringify(wf.draft), past: past.slice(-keep), future: keep ? future.slice(-keep) : [],
+    })) return;
+  }
+  wfStoreDrop('sessionStorage', key);
+}
+
+function forgetDraft(id = wf.selected) {
+  if (id) wfStoreDrop('sessionStorage', WF_STORE.DRAFT + id);
+}
+
+/** The kept draft for the workflow just loaded, if it began from the draft the server has
+ *  now (one saved meanwhile, here or elsewhere, makes it stale: it is dropped). */
+function restoreDraft() {
+  const kept = wfStoreGet('sessionStorage', WF_STORE.DRAFT + wf.selected);
+  if (!kept) return false;
+  const base = JSON.stringify(wf.detail.draft || { nodes: [], edges: [] });
+  if (kept.base !== base || typeof kept.draft !== 'string' || kept.draft === base) { forgetDraft(); return false; }
+  try {
+    wf.draft = JSON.parse(kept.draft);
+  } catch { forgetDraft(); return false; }
+  wf.history = {
+    past: Array.isArray(kept.past) ? kept.past : [], future: Array.isArray(kept.future) ? kept.future : [],
+    last: kept.draft,
+  };
+  wf.dirty = true;
+  return true;
+}
+
+/** E79: copied steps, kept across workflows so they can be pasted into another (E89: and
+ *  across reloads and tabs). */
+let wfClipboard = wfStoreGet('localStorage', WF_STORE.CLIPBOARD);
 
 Object.assign(PILL_TONE, {
   SUCCEEDED: 'ok', PUBLISHED: 'ok', APPROVED: 'ok',
@@ -74,6 +130,8 @@ const WF_FIELDS = {
     { k: 'temperature', label: 'Temperature', kind: 'number', step: '0.1', half: true },
     { k: 'max_tokens', label: 'Max tokens', kind: 'number', half: true },
     { k: 'parse_json', label: 'Parse the reply as JSON (available as .json)', kind: 'check' },
+    { k: 'json_schema', label: 'Expected JSON shape (JSON Schema, optional)', kind: 'json', rows: 3,
+      help: 'e.g. {"type": "object", "properties": {"total": {"type": "number"}}}: paths under {{ nodes.<id>.json }} in later steps are checked against it.' },
   ],
   retrieval: [
     { k: 'knowledge_base_ids', label: 'Knowledge bases', kind: 'bases' },
@@ -156,14 +214,32 @@ async function renderWorkflows({ force = false } = {}) {
     };
   });
 
+  // E89: after a reload, the workflow that was open in this tab opens again.
+  if (!wf.selected) {
+    const open = wfStoreGet('sessionStorage', WF_STORE.OPEN);
+    if (!open || !list.some((w) => w.id === open)) return;
+    wf.selected = open;
+    try {
+      await loadDetail();
+    } catch {
+      wf.selected = null; wf.detail = null; wf.draft = null; wf.dirty = false;
+      wfStoreDrop('sessionStorage', WF_STORE.OPEN);
+      return;
+    }
+    document.querySelectorAll('.wf-table tr').forEach((tr) =>
+      tr.classList.toggle('table-active', Boolean(tr.querySelector(`[data-wf-open="${open}"]`))));
+    return;
+  }
+
   // The selection is not dropped because one list lacks it: a write can reach the list a
   // moment after its response. A workflow that is really gone answers 404 below.
-  if (!wf.selected) return;
   try {
     if (force && !wf.dirty) await loadDetail();
     else if (wf.tab === 'runs') await renderRunsTab();
   } catch (err) {
     if (!/No workflow/.test(err.message)) throw err;
+    forgetDraft();
+    wfStoreDrop('sessionStorage', WF_STORE.OPEN);
     wf.selected = null; wf.detail = null; wf.draft = null; wf.dirty = false;
     document.getElementById('wf-detail').innerHTML = '';
   }
@@ -188,7 +264,9 @@ function workflowRow(w) {
 }
 
 async function selectWorkflow(id) {
+  if (wf.selected && wf.selected !== id) forgetDraft();  // its changes were discarded
   wf.selected = id;
+  wfStoreSet('sessionStorage', WF_STORE.OPEN, id);
   wf.tab = 'builder';
   wf.dirty = false;
   await loadDetail();
@@ -205,8 +283,11 @@ async function loadDetail() {
   wf.dirty = false;
   wf.canvas = { sel: null, drag: null, connect: null, manual: false };
   resetHistory();
+  const restored = restoreDraft();  // E89: unsaved changes from before a reload
+  historyButtons();
   if (!wf.refs) await loadRefs();
   renderDetail();
+  if (restored) alert('Your unsaved changes to this workflow are back. Save or discard them.', 'info');
 }
 
 async function loadRefs() {
@@ -287,6 +368,8 @@ function renderDetail() {
   if (del) del.onclick = () => guard(del, async () => {
     if (!confirm(`Delete ${d.display_name} with its versions and run history? Archive keeps the history.`)) return;
     await api(`/workflows/${wf.selected}`, { method: 'DELETE' });
+    forgetDraft();
+    wfStoreDrop('sessionStorage', WF_STORE.OPEN);
     wf.selected = null; wf.detail = null; wf.dirty = false;
     document.getElementById('wf-detail').innerHTML = '';
     alert('Workflow deleted.', 'success');
@@ -323,6 +406,7 @@ function markDirty(record = true) {
   if (publish) { publish.disabled = false; publish.removeAttribute('title'); }
   const discard = document.getElementById('wf-discard');
   if (discard) discard.disabled = false;
+  keepDraft();
 }
 
 /* E79: undo and redo. Every change to the draft ends in markDirty, which records the
@@ -382,6 +466,7 @@ function copySelection() {
     edges: wf.draft.edges.filter((e) => ids.has(e.from) && ids.has(e.to)).map((e) => ({ ...e })),
     pastes: 0,
   };
+  wfStoreSet('localStorage', WF_STORE.CLIPBOARD, wfClipboard);
   return ids.size;
 }
 
@@ -394,9 +479,13 @@ function copyId(id, taken) {
 }
 
 function pasteClipboard() {
-  if (!wfClipboard?.nodes.length) return 0;
+  // E89: what was copied last, in any tab.
+  const kept = wfStoreGet('localStorage', WF_STORE.CLIPBOARD);
+  if (Array.isArray(kept?.nodes) && Array.isArray(kept?.edges)) wfClipboard = kept;
+  if (!wfClipboard?.nodes?.length) return 0;
   ensurePositions();
-  wfClipboard.pastes += 1;
+  wfClipboard.pastes = (wfClipboard.pastes || 0) + 1;
+  wfStoreSet('localStorage', WF_STORE.CLIPBOARD, wfClipboard);
   const shift = 32 * wfClipboard.pastes;
   const taken = new Set(wf.draft.nodes.map((n) => n.id));
   const rename = {};
@@ -481,6 +570,7 @@ async function saveDraft() {
     method: 'PATCH', body: JSON.stringify({ draft: wf.draft }),
   });
   wf.dirty = false;
+  forgetDraft();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -760,6 +850,7 @@ function wireBuilder() {
   const discard = document.getElementById('wf-discard');
   if (discard) discard.onclick = () => guard(discard, async () => {
     if (!confirm('Discard your unsaved changes?')) return;
+    forgetDraft();
     await loadDetail();
   });
   const check = document.getElementById('wf-validate');
@@ -1982,7 +2073,9 @@ onModalSubmit('wf-form', 'wf-error', async (form) => {
   });
   closeModal('wf-modal');
   form.reset();
+  if (wf.selected) forgetDraft();
   wf.selected = created.id;
+  wfStoreSet('sessionStorage', WF_STORE.OPEN, created.id);
   wf.tab = 'builder';
   // Shown from the response rather than re-read, which could run ahead of the write.
   wf.detail = created;
