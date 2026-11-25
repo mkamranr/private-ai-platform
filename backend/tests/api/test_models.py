@@ -269,6 +269,37 @@ class TestDeployment:
         fresh = await session.get(ModelDeployment, uuid.UUID(body["deployment_id"]))
         assert fresh is not None and fresh.model_id == serving_deployment.model_id
         assert (fresh.runtime, fresh.max_model_len, fresh.traffic_weight) == ("mock", 4096, 25)
+        assert fresh.image == serving_deployment.image  # E96: the image it last ran
+
+    async def test_deploy_again_keeps_an_allowed_image_only(
+        self,
+        client: AsyncClient,
+        tokens,
+        model_admin: User,
+        serving_deployment: ModelDeployment,
+        session: AsyncSession,
+        settings,
+        monkeypatch,
+    ) -> None:
+        """E96: a copy that ran an allow-listed image gets it back; one whose image was
+        taken off the list since gets the runtime's current image."""
+        monkeypatch.setattr(
+            settings.models, "runtime_image_allowlist", {"mock": ["ai-platform/mock-vllm:0.3.0"]}
+        )
+        url = f"/api/v1/deployments/{serving_deployment.id}/redeploy"
+        headers = auth_header(tokens, model_admin)
+        serving_deployment.state = DeploymentState.STOPPED
+        serving_deployment.image = "ai-platform/mock-vllm:0.3.0"
+        await session.flush()
+        body = (await client.post(url, headers=headers)).json()
+        fresh = await session.get(ModelDeployment, uuid.UUID(body["deployment_id"]))
+        assert fresh is not None and fresh.image == "ai-platform/mock-vllm:0.3.0"
+
+        serving_deployment.image = "somewhere/else:1"
+        await session.flush()
+        body = (await client.post(url, headers=headers)).json()
+        fresh = await session.get(ModelDeployment, uuid.UUID(body["deployment_id"]))
+        assert fresh is not None and fresh.image == "ai-platform/mock-vllm:0.2.0"
 
     async def test_model_with_active_deployment_cannot_be_deleted(
         self, client: AsyncClient, tokens, model_admin: User, serving_deployment: ModelDeployment

@@ -581,6 +581,9 @@ class WorkflowEngine:
 
             if outcome is None:  # pragma: no cover - the retry loop always sets one
                 return None, "The step produced no outcome."
+            if reached > 1:
+                # E96: earlier attempts reached the tool too; chargeback counts each.
+                outcome.output = {**outcome.output, "tool_calls": reached}
             outcome.output = _jsonable(outcome.output)
             step.output = outcome.output
             step.branch = outcome.branch
@@ -866,6 +869,11 @@ class WorkflowEngine:
                 output["json"] = json.loads(output["text"])
             except ValueError as exc:
                 raise NodeFailedError("The model's reply is not valid JSON.") from exc
+            # E96: a declared shape is checked, so a later step never reads a field that
+            # isn't there. Retries apply: the model may well answer right the next time.
+            problem = wd.schema_problem(config.get("json_schema"), output["json"])
+            if problem:
+                raise NodeFailedError(f"The model's reply doesn't match its json_schema: {problem}")
         return Outcome(output=output)
 
     async def _check_budget(self, run: WorkflowRun, model: str) -> None:

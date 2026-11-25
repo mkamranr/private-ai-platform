@@ -443,6 +443,34 @@ class TestExecution:
         assert bad["status"] == RunStatus.FAILED
         assert "temperature is a number, not 'warm'" in bad["error"]
 
+    async def test_a_reply_is_checked_against_its_shape(self, client, tokens, builder, wf) -> None:
+        """E96: a model step's json_schema is checked against the reply it parsed."""
+        schema = {
+            "type": "object",
+            "required": ["total"],
+            "properties": {"total": {"type": "number"}},
+        }
+        definition = chain(
+            node("start", "start"),
+            node(
+                "calc",
+                "llm",
+                model="llama-local",
+                prompt="sum",
+                parse_json=True,
+                json_schema=schema,
+            ),
+            node("end", "end", output={"total": "{{ nodes.calc.json.total }}"}),
+        )
+        workflow = await published(client, tokens, builder, definition)
+        wf.provider.reply = '{"total": "lots"}'
+        bad = await run(client, tokens, builder, workflow["id"], {})
+        assert bad["status"] == RunStatus.FAILED
+        assert "doesn't match its json_schema: json.total is a string, not number" in bad["error"]
+        wf.provider.reply = '{"total": 12}'
+        good = await run(client, tokens, builder, workflow["id"], {})
+        assert good["status"] == RunStatus.SUCCEEDED and good["output"] == {"total": 12}
+
     async def test_http_retries_then_succeeds(self, client, tokens, builder, wf) -> None:
         wf.http = Http(
             httpx.ConnectError("refused"),
@@ -812,6 +840,27 @@ class TestTools:
         step = next(s for s in result["steps"] if s["node_id"] == "ticket")
         assert step["output"] == {"tool_calls": len(wf.executor.calls)}
         assert len(wf.executor.calls) >= 1
+
+    async def test_a_retried_call_that_succeeded_counts_each_attempt(
+        self, client, tokens, builder, wf, session
+    ) -> None:
+        """E96: a step that reached the tool twice before it worked records both."""
+        tool = await make_tool(session)
+        outcomes = iter([False, True])
+        real = wf.executor.execute
+
+        async def flaky(invocation):
+            wf.executor.success = next(outcomes)
+            return await real(invocation)
+
+        wf.executor.execute = flaky
+        definition = tool_flow(tool)
+        wd.node_map(definition)["ticket"]["retry"] = {"max_attempts": 3}
+        workflow = await published(client, tokens, builder, definition)
+        result = await run(client, tokens, builder, workflow["id"], {"title": "x"})
+        assert result["status"] == RunStatus.SUCCEEDED, result
+        step = next(s for s in result["steps"] if s["node_id"] == "ticket")
+        assert step["output"]["tool_calls"] == 2 and step["output"]["data"] == {"ticket": 7}
 
     async def test_runs_carry_the_starters_permissions(
         self, client, tokens, builder, wf, session, settings

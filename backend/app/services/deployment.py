@@ -92,6 +92,8 @@ class DeploymentRequestSpec:
     tensor_parallel_size: int | None = None
     max_model_len: int | None = None
     gpu_memory_utilization: float | None = None
+    #: E96: the container image; must be allowed for the runtime. None: the runtime's.
+    image: str | None = None
 
 
 @dataclass(slots=True)
@@ -267,6 +269,18 @@ class DeploymentService:
             )
         return image
 
+    def _requested_image(self, spec: DeploymentRequestSpec, runtime: str) -> str:
+        """E96: the image asked for when it is allowed for the runtime, else refused; the
+        runtime's configured image when none was asked for."""
+        if not spec.image:
+            return self._image_for(runtime)
+        if spec.image not in self._allowed_images(runtime):
+            raise ValidationError(
+                f"Image {spec.image!r} is not allowed for the {runtime!r} runtime.",
+                details={"field": "image", "allowed": sorted(self._allowed_images(runtime))},
+            )
+        return spec.image
+
     def _allowed_images(self, runtime: str) -> set[str]:
         models = self._settings.models
         allowed = set(models.runtime_image_allowlist.get(runtime, []))
@@ -383,7 +397,7 @@ class DeploymentService:
                 uuid.UUID(reserved.reservation_id) if reserved.reservation_id else None
             ),
             runtime=runtime,
-            image=self._image_for(runtime),
+            image=self._requested_image(spec, runtime),
             internal_port=CONTAINER_PORT,
             tensor_parallel_size=spec.tensor_parallel_size or len(reserved.gpu_indices) or 1,
             max_model_len=spec.max_model_len or model.context_length,
@@ -1448,7 +1462,8 @@ class DeploymentService:
     async def redeploy(self, deployment_id: uuid.UUID, *, actor: User) -> ModelDeployment:
         """E91: a new copy of a stopped or failed one's model, with its runtime, tensor
         parallelism, context length, memory share and traffic share. Placed afresh (the
-        old node or GPUs may be gone or taken); the runtime's current image is used.
+        old node or GPUs may be gone or taken). E96: with the image it last ran while
+        that is still allowed for the runtime, else the runtime's current one.
 
         The one click after a team restore, which brings copies back as stopped records.
         """
@@ -1464,6 +1479,7 @@ class DeploymentService:
                 tensor_parallel_size=old.tensor_parallel_size,
                 max_model_len=old.max_model_len,
                 gpu_memory_utilization=old.gpu_memory_utilization,
+                image=old.image if old.image in self._allowed_images(old.runtime) else None,
             ),
             actor=actor,
         )

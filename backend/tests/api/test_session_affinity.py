@@ -77,6 +77,25 @@ class TestBalancer:
         assert 0.15 < moved / len(keys) < 0.35  # about a quarter, all to the new copy
         assert all(after[k] not in {c.id for c in copies} for k in keys if before[k] != after[k])
 
+    async def test_outcomes_are_counted(self) -> None:
+        """E96: how often a conversation stays on its copy, and how often it moves."""
+        from prometheus_client import REGISTRY
+
+        def count(outcome: str) -> float:
+            name = "ai_platform_gateway_session_affinity_total"
+            return REGISTRY.get_sample_value(name, {"outcome": outcome}) or 0.0
+
+        redis = MemoryRedis()
+        balancer = ReplicaBalancer(redis, 600, "least_busy", affinity_max_extra=0)
+        copies = [_Dep(), _Dep()]
+        model = uuid.uuid4()
+        pinned, overflow = count("pinned"), count("overflow")
+        first = (await balancer.order(model, copies, affinity="chat:m"))[0]
+        assert count("pinned") == pinned + 1
+        await balancer.acquire(first.id)
+        await balancer.order(model, copies, affinity="chat:m")
+        assert count("overflow") == overflow + 1
+
     async def test_a_busy_copy_is_passed_over(self) -> None:
         redis = MemoryRedis()
         balancer = ReplicaBalancer(redis, 600, "least_busy", affinity_max_extra=2)

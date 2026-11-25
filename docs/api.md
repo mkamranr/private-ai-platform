@@ -226,7 +226,7 @@ Under `/api/v1`, authenticated with the platform JWT.
 | GET | `/deployments/{id}` | `model.view` |
 | POST | `/deployments/{id}/stop` | `model.stop` |
 | POST | `/deployments/{id}/restart` | `model.stop` |
-| POST | `/deployments/{id}/redeploy` | `model.deploy` — a new copy with a stopped or failed copy's runtime, tensor parallelism, context length, memory share and traffic share, placed afresh; 202 like a deploy, 409 for a copy that still runs |
+| POST | `/deployments/{id}/redeploy` | `model.deploy` — a new copy with a stopped or failed copy's runtime, tensor parallelism, context length, memory share, traffic share and image (while allowed), placed afresh; 202 like a deploy, 409 for a copy that still runs |
 | DELETE | `/deployments/{id}` | `model.delete` |
 | GET | `/deployments/{id}/logs` | `model.view` |
 | GET | `/model-aliases` | `model.view` |
