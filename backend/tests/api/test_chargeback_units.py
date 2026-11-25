@@ -11,15 +11,16 @@ import uuid
 from decimal import Decimal
 
 from httpx import AsyncClient
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.interfaces.media import OcrBlock, OcrResult
 from app.core.permissions import Permission as Perm
 from app.core.scope import Scope
-from app.models.agents import ApprovalState, ToolExecution
+from app.models.agents import AgentRun, ApprovalState, ToolExecution
 from app.models.auth import User
 from app.models.chargeback import CostRate
-from app.models.models_registry import UsageRecord
+from app.models.models_registry import ApiClient, ApiKey, UsageRecord
 from app.models.teams import TeamMembership
 from app.models.workflows import Workflow, WorkflowRun, WorkflowStep
 from app.repositories.audit import AuditRepository
@@ -157,6 +158,38 @@ class TestTools:
         row = _row(await _report(client, tokens, superuser), f"tool:{tool.name}")
         assert Decimal(row["tool_cost"]) == Decimal("0.2") and row["unpriced_tool_calls"] == 0
 
+    async def test_grouped_by_key_and_end_user(self, client, tokens, superuser, session):
+        """E92: an `agent:` call's run keeps its key and end user, so its tool calls
+        group by them; a run started otherwise is on the "none" row."""
+        team = await _team(session)
+        tool = await self._calls(session, superuser, team, [True, True])
+        api_client = ApiClient(name=_name("client"))
+        session.add(api_client)
+        await session.flush()
+        key = ApiKey(
+            client_id=api_client.id, name="ci", prefix=_name("k")[:12], key_hash=uuid.uuid4().hex
+        )
+        session.add(key)
+        await session.flush()
+        run_id = (
+            await session.execute(
+                select(ToolExecution.run_id).where(ToolExecution.tool_id == tool.id).limit(1)
+            )
+        ).scalar_one()
+        await session.execute(
+            update(AgentRun)
+            .where(AgentRun.id == run_id)
+            .values(api_key_id=key.id, end_user="ann@corp", end_user_trusted=True)
+        )
+        await self._calls(session, superuser, team, [True])  # from the console
+        await session.flush()
+
+        by_key = await _report(client, tokens, superuser, "api_key")
+        assert _row(by_key, str(key.id))["tool_calls"] == 2
+        by_user = await _report(client, tokens, superuser, "end_user")
+        row = _row(by_user, "ann@corp")
+        assert row["tool_calls"] == 2 and row["trusted"] is True
+
     async def test_scoped_reports_see_their_teams_tools_only(
         self, client, tokens, superuser, session, settings
     ):
@@ -267,6 +300,7 @@ class TestWorkflowTools:
                 ("SUCCEEDED", {"content": "ok", "data": None, "truncated": False}),
                 ("SUCCEEDED", {"awaiting": "approval", "tool": tool.name}),  # only asked
                 ("FAILED", None),  # never ran the tool
+                ("FAILED", {"tool_calls": 2}),  # E92: reached the tool twice, then failed
             ],
             start=1,
         ):
@@ -286,9 +320,9 @@ class TestWorkflowTools:
         await _rate(session, f"tool:{tool.name}", unit="0.25")
 
         row = _row(await _report(client, tokens, superuser), f"tool:{tool.name}")
-        assert row["tool_calls"] == 1 and Decimal(row["tool_cost"]) == Decimal("0.25")
+        assert row["tool_calls"] == 3 and Decimal(row["tool_cost"]) == Decimal("0.75")
         by_team = _row(await _report(client, tokens, superuser, "team"), str(team.id))
-        assert by_team["tool_calls"] == 1
+        assert by_team["tool_calls"] == 3
 
 
 class TestCurrency:

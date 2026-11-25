@@ -35,6 +35,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID  # noqa: N811
@@ -330,6 +331,15 @@ class AgentRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     conversation_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    #: E92: the API key and end user an `agent:` call came through (None when started
+    #: from the console or a workflow), so its tool calls group by them in chargeback.
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL")
+    )
+    end_user: Mapped[str | None] = mapped_column(String(255))
+    end_user_trusted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
     # W3C trace id, 32 hex characters (M19, Phase 7). Assigned to every run, not only
     # when tracing is deployed: it is the platform's own correlation key, so
     # `/traces/{trace_id}` answers on a site that never started Tempo. When tracing IS

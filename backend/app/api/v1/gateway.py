@@ -40,6 +40,7 @@ from app.core.logging import get_logger
 from app.services.agent_gateway import (
     AgentStreamAccounting,
     agent_catalogue,
+    attribution_of,
     is_agent_model,
     load_agent,
     resolve_actor,
@@ -313,6 +314,7 @@ async def _run_agent(
                 requested_model=model,
                 conversation_id=conversation_id,
                 accounting=accounting,
+                attribution=attribution_of(context),
             ),
             media_type="text/event-stream",
             headers={
@@ -325,6 +327,7 @@ async def _run_agent(
             ),
         )
 
+    buffered = AgentStreamAccounting()
     try:
         result = await run_agent_buffered(
             agent=agent,
@@ -333,6 +336,8 @@ async def _run_agent(
             message=str(prompt),
             requested_model=model,
             conversation_id=conversation_id,
+            attribution=attribution_of(context),
+            accounting=buffered,
         )
     finally:
         await service.release(context)
@@ -343,5 +348,9 @@ async def _run_agent(
         prompt_tokens=int(result["usage"]["prompt_tokens"]),
         completion_tokens=int(result["usage"]["completion_tokens"]),
         streamed=False,
+        # E92: the whole answer is the first output a buffered caller sees.
+        ttft_ms=None
+        if buffered.first_output_at is None
+        else round((buffered.first_output_at - context.started) * 1000, 2),
     )
     return result

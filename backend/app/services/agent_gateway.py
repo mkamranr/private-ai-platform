@@ -155,6 +155,17 @@ class AgentStreamAccounting:
     first_output_at: float | None = None
 
 
+def attribution_of(context: Any) -> dict[str, Any]:
+    """E92: what an `agent:` call's run keeps of who called: the API key and end user,
+    so chargeback can group the run's tool calls by them."""
+    key = getattr(context, "api_key", None)
+    return {
+        "api_key_id": getattr(key, "id", None),
+        "end_user": getattr(context, "end_user", None),
+        "end_user_trusted": bool(getattr(context, "end_user_trusted", False)),
+    }
+
+
 async def run_agent_buffered(
     *,
     agent: Agent,
@@ -163,17 +174,25 @@ async def run_agent_buffered(
     message: str,
     requested_model: str,
     conversation_id: str | None,
+    attribution: dict[str, Any] | None = None,
+    accounting: AgentStreamAccounting | None = None,
 ) -> dict[str, Any]:
-    """Run to completion and answer in chat-completion shape."""
+    """Run to completion and answer in chat-completion shape.
+
+    E92: ``accounting.first_output_at`` is set when the answer is ready: a buffered
+    caller sees nothing before the whole answer, so that is its time to first output."""
     run, events = await runs.start(
         agent,
         message=message,
         actor=actor,
         conversation_id=conversation_id,
         record_usage=False,  # the gateway records it against the key (E17)
+        attribution=attribution,
     )
     async for _ in events:
         pass
+    if accounting is not None:
+        accounting.first_output_at = time.perf_counter()
 
     fresh = await runs.get_run(run.id)
     content = fresh.output or _explain(fresh)
@@ -213,6 +232,7 @@ async def run_agent_streamed(
     requested_model: str,
     conversation_id: str | None,
     accounting: AgentStreamAccounting | None = None,
+    attribution: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent, narrating progress as SSE deltas.
 
@@ -243,7 +263,7 @@ async def run_agent_streamed(
 
     try:
         async for chunk in _narrate(
-            frame, agent, runs, actor, message, conversation_id, accounting
+            frame, agent, runs, actor, message, conversation_id, accounting, attribution
         ):
             yield chunk
     except (GeneratorExit, asyncio.CancelledError):
@@ -260,6 +280,7 @@ async def _narrate(
     message: str,
     conversation_id: str | None,
     accounting: AgentStreamAccounting,
+    attribution: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     yield frame({"role": "assistant"})
 
@@ -269,6 +290,7 @@ async def _narrate(
         actor=actor,
         conversation_id=conversation_id,
         record_usage=False,  # the gateway records it against the key (E17)
+        attribution=attribution,
     )
 
     answered = False

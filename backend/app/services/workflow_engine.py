@@ -207,6 +207,8 @@ class WorkflowEngine:
         self._http_transport = http_transport
         #: E69: database work by concurrent steps takes turns (one session).
         self._db = asyncio.Lock()
+        #: E92: (run id, node id) -> attempts of a tool step that reached the tool.
+        self._tool_reached: dict[tuple[str, str], int] = {}
         self._handlers: dict[str, Callable[..., Awaitable[Outcome]]] = {
             "start": self._start,
             "llm": self._llm,
@@ -564,11 +566,15 @@ class WorkflowEngine:
             if attempt < attempts and backoff:
                 await asyncio.sleep(backoff * attempt)
 
+        reached = self._tool_reached.pop((str(run.id), node_id), 0)
         async with self._db:
             step.duration_ms = int((time.perf_counter() - started) * 1000)
             if error is not None:
                 step.status = StepStatus.FAILED
                 step.error = error[:4000]
+                if reached:
+                    # E92: chargeback charges a failed tool step for each call it made.
+                    step.output = {"tool_calls": reached}
                 step.finished_at = _now()
                 await self._steps.flush()
                 return None, error
@@ -1013,6 +1019,9 @@ class WorkflowEngine:
         if executor is None:
             raise NodeFailedError(f"No executor is available for {tool.type} tools.")
         definition = executable_definition(tool)
+        # E92: an attempt that reaches the tool is charged even if the step then fails.
+        key = (str(run.id), node_id)
+        self._tool_reached[key] = self._tool_reached.get(key, 0) + 1
         result = _truncate(
             await executor.execute(
                 ToolInvocation(

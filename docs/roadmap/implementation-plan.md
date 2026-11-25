@@ -600,7 +600,7 @@ matrix still listed as missing.
 - [x] `ChargebackRepository.usage` splits rows by unit (from the endpoint); `tool_calls` aggregates agent tool calls that ran, by the agent's team and the run's user, with the rate chosen per call in SQL. Rows and totals gain `audio_seconds`, `speech_characters`, `speech_cost`, `tool_calls`, `tool_cost`, `unpriced_tool_calls` (CSV columns appended); `total_cost` includes them, so cost budgets do too. Console: *Per unit* in the rate form and rates table, *Speech* and *Tools* columns in the report.
 - [x] `agent:` streams record `ttft_ms` (first visible text, `AgentStreamAccounting.first_output_at`); voice turns record it on the speech row (`GatewayContext.waiting_since` = the end of the person's speech). `timing_columns(direct_only=True)` leaves both out of per-model figures (usage summary, chargeback by model).
 - [x] Tests: `tests/api/test_chargeback_units.py`, `tests/api/test_first_output_timings.py`. Docs: [chargeback.md](../chargeback.md#speech-and-tool-cost), [gateway-policy.md](../gateway-policy.md#timings), speech.md.
-- [ ] ~~Workflow tool steps record no tool call and aren't priced; OCR isn't metered per page~~ (E86). Tool calls have no API key or end user to group by. ~~No currency conversion~~ (E86). A buffered `agent:` call has no first-output time.
+- [ ] ~~Workflow tool steps record no tool call and aren't priced; OCR isn't metered per page~~ (E86). ~~Tool calls have no API key or end user to group by~~ (E92). ~~No currency conversion~~ (E86). ~~A buffered `agent:` call has no first-output time~~ (E92).
 
 ## E68: Restore a team's setup; GPU alerts that don't flap (closes the feature-matrix team restore gap and the E52 flapping limit)
 
@@ -749,7 +749,7 @@ matrix still listed as missing.
 - [x] OCR: `MeteredOcrEngine` (from `GatewayService.ocr_engine_for_model`) records a usage row per call, endpoint `ocr`, `prompt_tokens` = `pages_read` (distinct pages, at least one; 0 and 502 on failure). `OCR_CHARGE` (a context variable) set by `KnowledgeService._recognise` charges the base's team and the uploader. `UNIT_PAGES`: priced at `unit_price` per page; `ocr_pages`, `ocr_cost` on rows, totals and the CSV.
 - [x] `chargeback.exchange_rates` (`{code: rate}`, validated); `report(currency=)` / `?currency=` on the report and export: `_convert` multiplies every `*_cost` once and reports `currency`, `priced_in`, `exchange_rate`, `currencies`; 422 for a currency without a rate. Console: the currency choice, and *Speech & OCR*.
 - [x] Tests: `tests/api/test_chargeback_units.py` (`TestOcr`, `TestWorkflowTools`, `TestCurrency`). Docs: [chargeback.md](../chargeback.md), `.env.example`.
-- [ ] Exchange rates are configured, not fetched; budgets stay in the platform's currency. A workflow tool step that failed isn't charged.
+- [ ] Exchange rates are configured, not fetched; budgets stay in the platform's currency. ~~A workflow tool step that failed isn't charged~~ (E92).
 
 ## E87: PCIe replay alert, stale faithfulness alerts, stream fallback, git connector
 
@@ -802,6 +802,14 @@ matrix still listed as missing.
 - [x] A paused agent run cancelled (`AgentRunService.cancel`, `PlatformAgentRuntime.cancel`) or whose approval expires clears `checkpoint`; migration `a2d4f6b8c0e1` clears it on runs that already ended.
 - [x] Tests: `tests/api/test_team_restore_sql.py` (members, copies), `tests/api/test_models.py::TestDeployment::test_a_stopped_copy_deploys_again`, `tests/api/test_ops.py`, `tests/unit/test_scoped_restore.py`, `tests/api/test_answer_scoring.py`, `tests/api/test_approval_expiry.py`. Docs: backup.md, models.md, agents.md, api.md.
 - [ ] A redeployed copy uses the runtime's current image, not the one it last ran; its GPUs are chosen afresh.
+
+## E92: Chargeback extras: failed tool steps, tool calls by key and end user, buffered agent timings
+
+- [x] `agent_runs.api_key_id`, `end_user`, `end_user_trusted` (migration `b3e5a7c9d1f2`), set by `AgentRunService.start(attribution=)` from an `agent:` call's context (`attribution_of`). `ChargebackRepository.tool_calls` carries them (workflow steps: none) and groups by `api_key` and `end_user`.
+- [x] `WorkflowEngine` counts the attempts of a tool step that reached the executor; a step that fails stores `{"tool_calls": n}` as its output, and chargeback sums `calls` (1 for a succeeded step, `n` for a failed one).
+- [x] A buffered `agent:` call records `ttft_ms` when its answer is ready (`run_agent_buffered(accounting=)`).
+- [x] Tests: `tests/api/test_chargeback_units.py` (`TestTools::test_grouped_by_key_and_end_user`, `TestWorkflowTools`), `tests/api/test_workflows.py::TestTools::test_a_failed_call_is_recorded_for_chargeback`, `tests/api/test_first_output_timings.py`. Docs: chargeback.md, gateway-policy.md.
+- [ ] A tool step that failed and then succeeded on a retry is one call.
 
 ## Phase acceptance (applies to each)
 

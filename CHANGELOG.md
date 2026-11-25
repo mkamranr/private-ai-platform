@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Chargeback: failed tool steps, tool calls by key and end user, buffered agent timings
+- A workflow tool step that failed is charged for each attempt that reached the tool; one that never reached it stays free.
+- Tool calls made by an agent run started through `/v1` (`agent:<slug>`) group under that call's API key and end user.
+- A buffered `agent:` call records its time to first output (when its answer is ready).
+
 ### Restore: exact members, copies to deploy again; paused runs cleaned up
 - A team restore can make the team's members exactly the backup's (`--exact-members`, *Members exactly as in the backup*), removing whoever joined since; by default members are still only added.
 - A restored team's models come back with their copies as stopped records; *Deploy again* (`POST /deployments/{id}/redeploy`) starts a new copy with a stopped or failed one's settings.

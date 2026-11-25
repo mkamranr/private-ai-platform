@@ -799,6 +799,20 @@ class TestTools:
         assert decided.json()["status"] == RunStatus.FAILED
         assert wf.executor.calls == []
 
+    async def test_a_failed_call_is_recorded_for_chargeback(
+        self, client, tokens, builder, wf, session
+    ) -> None:
+        """E92: a step that reached the tool and failed records how many calls it made;
+        one that never reached it records none."""
+        tool = await make_tool(session)
+        wf.executor.success = False
+        workflow = await published(client, tokens, builder, tool_flow(tool))
+        result = await run(client, tokens, builder, workflow["id"], {"title": "x"})
+        assert result["status"] == RunStatus.FAILED
+        step = next(s for s in result["steps"] if s["node_id"] == "ticket")
+        assert step["output"] == {"tool_calls": len(wf.executor.calls)}
+        assert len(wf.executor.calls) >= 1
+
     async def test_runs_carry_the_starters_permissions(
         self, client, tokens, builder, wf, session, settings
     ) -> None:

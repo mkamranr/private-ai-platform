@@ -11,7 +11,8 @@ import datetime as dt
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import String, case, cast, func, literal, or_, select, true
+from sqlalchemy import Integer, String, and_, case, cast, func, literal, or_, select, true
+from sqlalchemy.dialects.postgresql import UUID as PgUUID  # noqa: N811
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agents import Agent, AgentRun, Tool, ToolExecution
@@ -194,8 +195,9 @@ class ChargebackRepository:
 
         A call is one that ran (``success`` set), approved or not needed approval;
         refused and pending ones cost nothing. It belongs to the agent's team and the
-        run's user. Agent runs carry no API key or end user, so those groupings put
-        every call on their "none" row. ``where`` filters on ``Agent.team_id``.
+        run's user, and (E92) the API key and end user of an `agent:` call; runs started
+        otherwise, and workflow steps, are on those groupings' "none" row. ``where``
+        filters on ``Agent.team_id``.
 
         The rate is chosen per call like :meth:`usage`: the tool's own latest rate that
         had started, else the latest ``tool:*``. Never the token default ``*``.
@@ -216,8 +218,12 @@ class ChargebackRepository:
             select(
                 Agent.team_id.label("team_id"),
                 AgentRun.user_id.label("user_id"),
+                AgentRun.api_key_id.label("api_key_id"),
+                AgentRun.end_user.label("end_user"),
+                AgentRun.end_user_trusted.label("end_user_trusted"),
                 name.label("model"),
                 rate_id.label("rate_id"),
+                literal(1).label("calls"),
             )
             .select_from(ToolExecution)
             .join(AgentRun, AgentRun.id == ToolExecution.run_id)
@@ -246,12 +252,20 @@ class ChargebackRepository:
             .correlate(WorkflowStep, Tool)
             .scalar_subquery()
         )
+        # E92: a failed step is charged for each attempt that reached the tool.
+        failed_calls = cast(WorkflowStep.output["tool_calls"].astext, Integer)
         steps = (
             select(
                 Workflow.team_id.label("team_id"),
                 WorkflowRun.started_by.label("user_id"),
+                literal(None, PgUUID(as_uuid=True)).label("api_key_id"),
+                literal(None, String).label("end_user"),
+                literal(False).label("end_user_trusted"),
                 step_name.label("model"),
                 step_rate.label("rate_id"),
+                case(
+                    (WorkflowStep.status == StepStatus.FAILED, failed_calls), else_=literal(1)
+                ).label("calls"),
             )
             .select_from(WorkflowStep)
             .join(WorkflowRun, WorkflowRun.id == WorkflowStep.run_id)
@@ -259,9 +273,20 @@ class ChargebackRepository:
             .outerjoin(Tool, cast(Tool.id, String) == WorkflowStep.input["tool_id"].astext)
             .where(
                 WorkflowStep.node_type == "tool",
-                WorkflowStep.status == StepStatus.SUCCEEDED,
-                # A step that only asked for an approval ran nothing.
-                or_(WorkflowStep.output.is_(None), ~WorkflowStep.output.has_key("awaiting")),
+                or_(
+                    and_(
+                        WorkflowStep.status == StepStatus.SUCCEEDED,
+                        # A step that only asked for an approval ran nothing.
+                        or_(
+                            WorkflowStep.output.is_(None),
+                            ~WorkflowStep.output.has_key("awaiting"),
+                        ),
+                    ),
+                    and_(
+                        WorkflowStep.status == StepStatus.FAILED,
+                        WorkflowStep.output.has_key("tool_calls"),
+                    ),
+                ),
                 WorkflowStep.started_at >= start,
                 WorkflowStep.started_at < end,
             )
@@ -281,8 +306,21 @@ class ChargebackRepository:
             key_cols = [c.c.user_id]
             label_cols = [User.username.label("label"), User.full_name.label("detail")]
             joins = [(User, User.id == c.c.user_id)]
+        elif group == "api_key":
+            key_cols = [c.c.api_key_id]
+            label_cols = [ApiKey.name.label("label"), ApiClient.name.label("detail"), ApiKey.prefix]
+            joins = [
+                (ApiKey, ApiKey.id == c.c.api_key_id),
+                (ApiClient, ApiClient.id == ApiKey.client_id),
+            ]
+        elif group == "end_user":
+            key_cols = [c.c.end_user, c.c.end_user_trusted]
         stmt = select(
-            *key_cols, *label_cols, c.c.model, c.c.rate_id, func.count().label("calls")
+            *key_cols,
+            *label_cols,
+            c.c.model,
+            c.c.rate_id,
+            func.coalesce(func.sum(c.c.calls), 0).label("calls"),
         ).select_from(c)
         for target, condition in joins:
             stmt = stmt.outerjoin(target, condition)
@@ -293,7 +331,9 @@ class ChargebackRepository:
             # The keys a usage row has, so the report files both on the same lines.
             values.setdefault("team_id", None)
             values.setdefault("user_id", None)
-            values.update(api_key_id=None, end_user=None, end_user_trusted=False)
+            values.setdefault("api_key_id", None)
+            values.setdefault("end_user", None)
+            values.setdefault("end_user_trusted", False)
             out.append(values)
         return out
 

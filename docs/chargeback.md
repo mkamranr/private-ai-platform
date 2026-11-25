@@ -87,14 +87,18 @@ as **partial**. Their cost is a lower bound.
   and `speech_cost`; speech is not added to the token columns.
 - **Agent tool calls** are priced per call: every call that ran (succeeded or failed; not
   refused or still waiting for approval), at its tool's rate in force when it was asked
-  for. A call belongs to the agent's team and the run's user; agent runs carry no API key
-  or end user, so those groupings show tool calls on their "none" row, and the model
+  for. A call belongs to the agent's team and the run's user, and, for a run started by
+  an `agent:<slug>` call through `/v1`, to that call's API key and end user (trusted or
+  self-reported, as on its usage row). Runs started in the console, by voice or by a
+  workflow have neither, so those groupings show their calls on the "none" row. The model
   grouping shows each tool as `tool:<name>`. Rows show `tool_calls` and `tool_cost`.
   Tool calls with no tool rate are counted in `unpriced_tool_calls`, apart from unpriced
   model usage, so a site that doesn't price tools isn't warned about every call.
-- **Workflow tool steps** are priced the same way: a tool step that succeeded (not one
-  that only asked for an approval, and not one that failed) is one call, at its tool's
-  rate when the step started, on the workflow's team and the user who started the run.
+- **Workflow tool steps** are priced the same way, at the tool's rate when the step
+  started, on the workflow's team and the user who started the run: a step that succeeded
+  is one call (not one that only asked for an approval), and a step that failed is charged
+  for each attempt that reached the tool (recorded on the step as `tool_calls`). A step
+  that failed before reaching it (tool disabled, permission missing) costs nothing.
 - **OCR** is metered per page. Each OCR call (a scanned document or image read while
   ingesting) records a usage row with endpoint `ocr`: the pages its text came from (at
   least one) in place of tokens, the knowledge base's team, and the person who uploaded
@@ -231,5 +235,6 @@ rate card is a finance decision.
   fetches them, and a past report is converted at today's configured rate.
 - **Power or utilisation-weighted GPU cost.** GPU time is reservation time, the only GPU
   measure the platform can attribute to a model reliably.
-- **Tool steps that failed.** A workflow tool step that failed isn't charged, even if the
-  tool ran before failing; an agent tool call that failed is.
+- **Retried tool steps that succeeded.** A workflow tool step that failed on an earlier
+  attempt and then succeeded is one call; only a step that failed in the end counts each
+  attempt.
