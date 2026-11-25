@@ -95,6 +95,7 @@ class TestExport:
             username="=HYPERLINK(1)",
             message="+cmd",
             meta={"b": 1, "a": "x"},
+            at=dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1),  # older, whatever the clock
         )
         await _plant(session, resource_id=resource, username="bob")
 
