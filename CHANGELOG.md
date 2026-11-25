@@ -6,6 +6,13 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Follow-ups: reply shapes, redeploy image, retried tool steps, affinity metric
+- A workflow model step's reply is checked against its `json_schema`; one that doesn't match fails the step (and its retries apply).
+- *Deploy again* runs the image the copy last ran, while it is still allowed for the runtime.
+- A workflow tool step that succeeded after failed attempts is charged for each attempt that reached the tool.
+- `ai_platform_gateway_session_affinity_total{outcome}` counts conversations kept on their copy and those moved because it was busy.
+- **Upgrade.** No migration.
+
 ### Chargeback: failed tool steps, tool calls by key and end user, buffered agent timings
 - A workflow tool step that failed is charged for each attempt that reached the tool; one that never reached it stays free.
 - Tool calls made by an agent run started through `/v1` (`agent:<slug>`) group under that call's API key and end user.

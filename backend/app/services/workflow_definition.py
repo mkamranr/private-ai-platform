@@ -187,6 +187,66 @@ def schema_type(schema: Any, depth: int = 0) -> OutputType:
     )
 
 
+_JSON_TYPES: Final[dict[str, Any]] = {
+    "object": lambda v: isinstance(v, dict),
+    "array": lambda v: isinstance(v, list),
+    "string": lambda v: isinstance(v, str),
+    "number": lambda v: isinstance(v, int | float) and not isinstance(v, bool),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "boolean": lambda v: isinstance(v, bool),
+    "null": lambda v: v is None,
+}
+
+
+def schema_problem(schema: Any, value: Any, where: str = "json", depth: int = 0) -> str | None:
+    """E96: why ``value`` doesn't match ``schema``, or None. The part of JSON Schema a
+    reply's shape is written in: ``type`` (one or a list), ``enum``, ``required``,
+    ``properties`` and ``items``; anything else is not checked."""
+    if not isinstance(schema, Mapping) or depth > 16:
+        return None
+    kinds = schema.get("type")
+    if kinds is not None:
+        wanted = [kinds] if isinstance(kinds, str) else [k for k in kinds if isinstance(k, str)]
+        known = [k for k in wanted if k in _JSON_TYPES]
+        if known and not any(_JSON_TYPES[k](value) for k in known):
+            return f"{where} is {_json_type(value)}, not {' or '.join(known)}."
+    if "enum" in schema and isinstance(schema["enum"], list) and value not in schema["enum"]:
+        return (
+            f"{where} is {json.dumps(value)[:60]}, not one of {json.dumps(schema['enum'])[:120]}."
+        )
+    if isinstance(value, dict):
+        for key in schema.get("required") or []:
+            if isinstance(key, str) and key not in value:
+                return f"{where} has no {key!r}."
+        properties = schema.get("properties")
+        if isinstance(properties, Mapping):
+            for key, sub in properties.items():
+                if key in value:
+                    problem = schema_problem(sub, value[key], f"{where}.{key}", depth + 1)
+                    if problem:
+                        return problem
+    if isinstance(value, list) and isinstance(schema.get("items"), Mapping):
+        for index, item in enumerate(value):
+            problem = schema_problem(schema["items"], item, f"{where}.{index}", depth + 1)
+            if problem:
+                return problem
+    return None
+
+
+def _json_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, int | float):
+        return "a number"
+    if isinstance(value, str):
+        return "a string"
+    if isinstance(value, list):
+        return "an array"
+    return "an object"
+
+
 def output_type(node: Mapping[str, Any], output: str) -> OutputType:
     """E89: the type of one of ``node``'s outputs. A model step's ``json`` takes the
     shape of its ``json_schema`` when it has one."""

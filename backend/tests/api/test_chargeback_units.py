@@ -301,6 +301,8 @@ class TestWorkflowTools:
                 ("SUCCEEDED", {"awaiting": "approval", "tool": tool.name}),  # only asked
                 ("FAILED", None),  # never ran the tool
                 ("FAILED", {"tool_calls": 2}),  # E92: reached the tool twice, then failed
+                # E96: failed once, then worked: two calls.
+                ("SUCCEEDED", {"content": "ok", "data": None, "truncated": False, "tool_calls": 2}),
             ],
             start=1,
         ):
@@ -320,9 +322,9 @@ class TestWorkflowTools:
         await _rate(session, f"tool:{tool.name}", unit="0.25")
 
         row = _row(await _report(client, tokens, superuser), f"tool:{tool.name}")
-        assert row["tool_calls"] == 3 and Decimal(row["tool_cost"]) == Decimal("0.75")
+        assert row["tool_calls"] == 5 and Decimal(row["tool_cost"]) == Decimal("1.25")
         by_team = _row(await _report(client, tokens, superuser, "team"), str(team.id))
-        assert by_team["tool_calls"] == 3
+        assert by_team["tool_calls"] == 5
 
 
 class TestCurrency:

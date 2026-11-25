@@ -380,3 +380,33 @@ class TestTypedSettings:
             raise AssertionError("a mis-typed temperature was accepted")
         # A plain value or a template inside text isn't converted here.
         assert wd.render_config("llm", {"temperature": 0.5}, {})["temperature"] == 0.5
+
+
+class TestReplyShape:
+    """E96: a model's reply checked against its json_schema."""
+
+    SCHEMA: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "required": ["total", "lines"],
+        "properties": {
+            "total": {"type": "number"},
+            "currency": {"enum": ["EUR", "USD"]},
+            "lines": {"type": "array", "items": {"type": "object", "required": ["sku"]}},
+        },
+    }
+
+    def test_matches(self) -> None:
+        ok = {"total": 3, "currency": "EUR", "lines": [{"sku": "a"}], "extra": True}
+        assert wd.schema_problem(self.SCHEMA, ok) is None
+        assert wd.schema_problem(None, "anything") is None
+        assert wd.schema_problem({"type": ["string", "null"]}, None) is None
+
+    def test_says_where(self) -> None:
+        problem = lambda v: wd.schema_problem(self.SCHEMA, v)  # noqa: E731
+        assert problem([]) == "json is an array, not object."
+        assert problem({"lines": []}) == "json has no 'total'."
+        assert problem({"total": "3", "lines": []}) == "json.total is a string, not number."
+        assert problem({"total": True, "lines": []}) == "json.total is a boolean, not number."
+        assert "json.currency" in (problem({"total": 1, "lines": [], "currency": "GBP"}) or "")
+        assert problem({"total": 1, "lines": [{"sku": 1}, {}]}) == "json.lines.1 has no 'sku'."
+        assert wd.schema_problem({"type": "integer"}, 2.5) == "json is a number, not integer."

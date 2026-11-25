@@ -173,6 +173,9 @@ off by default), chat calls are kept on one copy per conversation:
   `gateway.session_affinity_max_extra` (default 4) calls in flight beyond the least busy
   copy, the call goes by the usual order instead. A failed call still moves to another
   copy.
+- `ai_platform_gateway_session_affinity_total{outcome}` counts chat calls with affinity:
+  `pinned` went to the conversation's copy, `overflow` went by the usual order because
+  that copy was too busy. A high overflow share means the copies are too few for the load.
 - Only chat calls (buffered and streamed); embeddings and audio aren't affected. Two chats
   that start with exactly the same system and user message count as one conversation
   unless they send `X-Session-Id`.

@@ -785,7 +785,7 @@ matrix still listed as missing.
 - [x] `gateway.session_affinity` (runtime, off) and `gateway.session_affinity_max_extra` (runtime, 4). `session_key`: the `X-Session-Id` header (hashed past 256 characters), else a hash of the model, first system and first user message.
 - [x] `ReplicaBalancer.order(affinity=)`: weighted rendezvous hashing over copies with weight above 0 (shares hold, a new copy moves only its share), weight 0 last; passed over for the usual order when the copy has more than `max_extra` calls in flight beyond the least busy. Chat calls only (`chat_completion`, `prepare_stream`), through `resolve(affinity=)` and the alias fallback.
 - [x] Tests: `tests/api/test_session_affinity.py`. Docs: gateway-policy.md, settings.md.
-- [ ] Two chats with the same opening and no `X-Session-Id` share a copy. No metric of how often a conversation stays put.
+- [ ] Two chats with the same opening and no `X-Session-Id` share a copy. ~~No metric of how often a conversation stays put~~ (E96).
 
 ## E89: Workflow types through settings; the canvas across reloads
 
@@ -793,7 +793,7 @@ matrix still listed as missing.
 - [x] `_fit_problems` in `validate`: a whole template in a typed setting checked against `template_type` of what it reads (`setting_fit_problem`; text allowed into numbers and yes/no, `any` passes). At run time `render_config` / `coerce_setting` convert `"0.7"`, `"300"`, `"true"` and fail the step naming the setting otherwise (`_render_settings` in model, retrieval, HTTP, delay and foreach steps).
 - [x] Console: the unsaved draft and its undo history per workflow, and the open workflow, in sessionStorage (restored only against the same server draft; dropped on save, discard, delete); copied steps in localStorage, shared across tabs.
 - [x] Tests: `tests/unit/test_workflow_schema.py` (`TestJsonSchema`, `TestTypedSettings`), `tests/api/test_workflows.py::TestExecution::test_a_templated_setting_is_checked`. Docs: workflows.md.
-- [ ] HTTP bodies, tool data and sub-workflow outputs stay `any`; the reply isn't validated against `json_schema`.
+- [ ] HTTP bodies, tool data and sub-workflow outputs stay `any`; ~~the reply isn't validated against `json_schema`~~ (E96).
 
 ## E91: Restore and paused-run cleanup
 
@@ -801,7 +801,7 @@ matrix still listed as missing.
 - [x] `TEAM_TABLES` adds `model_deployments` and `deployment_revisions` (`merge`); staged copies become `STOPPED` with no container, name, address, reservation or GPUs. `DeploymentService.redeploy` / `POST /deployments/{id}/redeploy` (`model.deploy`; 409 unless stopped or failed): a new copy with the old one's runtime, tensor parallelism, context length, memory share and traffic share. Console: *Deploy again*.
 - [x] A paused agent run cancelled (`AgentRunService.cancel`, `PlatformAgentRuntime.cancel`) or whose approval expires clears `checkpoint`; migration `a2d4f6b8c0e1` clears it on runs that already ended.
 - [x] Tests: `tests/api/test_team_restore_sql.py` (members, copies), `tests/api/test_models.py::TestDeployment::test_a_stopped_copy_deploys_again`, `tests/api/test_ops.py`, `tests/unit/test_scoped_restore.py`, `tests/api/test_answer_scoring.py`, `tests/api/test_approval_expiry.py`. Docs: backup.md, models.md, agents.md, api.md.
-- [ ] A redeployed copy uses the runtime's current image, not the one it last ran; its GPUs are chosen afresh.
+- [ ] ~~A redeployed copy uses the runtime's current image, not the one it last ran~~ (E96); its GPUs are chosen afresh.
 
 ## E92: Chargeback extras: failed tool steps, tool calls by key and end user, buffered agent timings
 
@@ -809,12 +809,21 @@ matrix still listed as missing.
 - [x] `WorkflowEngine` counts the attempts of a tool step that reached the executor; a step that fails stores `{"tool_calls": n}` as its output, and chargeback sums `calls` (1 for a succeeded step, `n` for a failed one).
 - [x] A buffered `agent:` call records `ttft_ms` when its answer is ready (`run_agent_buffered(accounting=)`).
 - [x] Tests: `tests/api/test_chargeback_units.py` (`TestTools::test_grouped_by_key_and_end_user`, `TestWorkflowTools`), `tests/api/test_workflows.py::TestTools::test_a_failed_call_is_recorded_for_chargeback`, `tests/api/test_first_output_timings.py`. Docs: chargeback.md, gateway-policy.md.
-- [ ] A tool step that failed and then succeeded on a retry is one call.
+- [ ] ~~A tool step that failed and then succeeded on a retry is one call~~ (E96).
 
 ## E95: Plan cleanup, second pass
 
 - [x] Open notes closed by later items are struck through with the item that closed them: E4 (E61), E5 (E62), E6 (E71), E7 (E60, E64), E9 (E21, E67, E86), E10 (E57, E78), E16 (E67, E92), E27 (E67), E40 (E67, E92), E52 (E70, E75, E87), E58 (E66, E77, E93).
 - [x] The feature matrix's rows for the gateway, workflows, restore and chargeback name E88 to E93.
+
+## E96: Follow-ups: reply shapes, redeploy image, retried tool steps, affinity metric
+
+- [x] `wd.schema_problem` checks `type`, `enum`, `required`, `properties` and `items`; a model step's parsed reply that doesn't match its `json_schema` fails the step (`NodeFailedError`, so retries apply).
+- [x] `DeploymentRequestSpec.image` (checked against `_allowed_images`); `redeploy` passes the old copy's image while it is allowed.
+- [x] A tool step that succeeds after attempts that reached the tool records `tool_calls`; chargeback counts `coalesce(tool_calls, 1)` per step.
+- [x] `ai_platform_gateway_session_affinity_total{outcome}` (`pinned`, `overflow`) in `ReplicaBalancer._pinned`.
+- [x] Tests: `tests/unit/test_workflow_schema.py::TestReplyShape`, `tests/api/test_workflows.py` (reply shape, retried call), `tests/api/test_chargeback_units.py::TestWorkflowTools`, `tests/api/test_models.py::TestDeployment::test_deploy_again_keeps_an_allowed_image_only`, `tests/api/test_session_affinity.py::TestBalancer::test_outcomes_are_counted`. Docs: workflows.md, models.md, chargeback.md, gateway-policy.md, api.md.
+- [ ] JSON Schema keywords beyond those five (`minimum`, `pattern`, `oneOf`...) aren't checked.
 
 ## Phase acceptance (applies to each)
 

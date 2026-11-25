@@ -134,7 +134,9 @@ logs when the container is up and falls back to the excerpt when it is not.
 *Deploy again* on a stopped or failed copy (`POST /deployments/{id}/redeploy`,
 `model.deploy`) requests a new copy of the same model with its runtime, tensor
 parallelism, context length, GPU memory share and traffic share, placed afresh (its old
-node or GPUs may be gone or taken) with the runtime's current image. It returns 202 like
+node or GPUs may be gone or taken). It runs the image the copy last ran while that is
+still allowed for the runtime (`models.runtime_images` or the allow-list), and the
+runtime's current image otherwise. It returns 202 like
 a deploy. This is the one step after a [team restore](backup.md#restoring-a-team), which
 brings a model's copies back as stopped records.
 

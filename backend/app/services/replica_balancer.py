@@ -48,6 +48,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from app.core import metrics
 from app.core.logging import get_logger
 
 log = get_logger(__name__)
@@ -147,7 +148,9 @@ class ReplicaBalancer:
             least = min(busy.get(d.id, 0) for d in serving)
             if busy.get(ranked[0].id, 0) - least > self._affinity_max_extra:
                 log.debug("session_affinity_overflow", deployment=str(ranked[0].id))
+                metrics.GATEWAY_SESSION_AFFINITY.labels("overflow").inc()
                 return None
+        metrics.GATEWAY_SESSION_AFFINITY.labels("pinned").inc()
         return ranked
 
     @staticmethod

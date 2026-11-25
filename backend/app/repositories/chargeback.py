@@ -263,9 +263,9 @@ class ChargebackRepository:
                 literal(False).label("end_user_trusted"),
                 step_name.label("model"),
                 step_rate.label("rate_id"),
-                case(
-                    (WorkflowStep.status == StepStatus.FAILED, failed_calls), else_=literal(1)
-                ).label("calls"),
+                # E96: a step that succeeded after earlier attempts reached the tool
+                # records them too; otherwise it is one call.
+                func.coalesce(failed_calls, literal(1)).label("calls"),
             )
             .select_from(WorkflowStep)
             .join(WorkflowRun, WorkflowRun.id == WorkflowStep.run_id)

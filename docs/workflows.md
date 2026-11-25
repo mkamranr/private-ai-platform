@@ -147,8 +147,10 @@ its forms from them. Validation follows the same schema:
 - **A model's JSON shape.** A model step with `parse_json` can declare `json_schema`, a
   JSON Schema of the reply (`type`, `properties`, `items`). Paths under its `json` are then
   checked like any typed output: `{{ nodes.calc.json.totl }}` is a problem when the
-  schema's object has `total`. The schema only types the paths; the reply isn't checked
-  against it.
+  schema's object has `total`. The reply is checked against it too: one that doesn't
+  match (`type`, `enum`, `required`, `properties` and `items`; other keywords aren't
+  checked) fails the step, saying where (*json.total is a string, not number*), and the
+  step's retries apply.
 - **Deeper paths follow the output's type.** A list is read by index
   (`nodes.search.passages.0.text`; `passages.first` is a problem), an object by its fields
   (a passage has `text`, `document`, `knowledge_base`, `location`, `score`,

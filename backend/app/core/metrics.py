@@ -135,6 +135,13 @@ GATEWAY_FALLBACKS = Counter(
     registry=REGISTRY,
 )
 
+GATEWAY_SESSION_AFFINITY = Counter(
+    "ai_platform_gateway_session_affinity_total",
+    "Chat calls with session affinity (E96): `pinned` went to the conversation's copy, "
+    "`overflow` went by the usual order because that copy was too busy.",
+    ["outcome"],
+)
+
 GATEWAY_REPLICA_FAILOVERS = Counter(
     "ai_platform_gateway_replica_failovers_total",
     "Calls retried on another running copy of the same model after one failed (E58).",

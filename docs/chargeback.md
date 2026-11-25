@@ -95,10 +95,10 @@ as **partial**. Their cost is a lower bound.
   Tool calls with no tool rate are counted in `unpriced_tool_calls`, apart from unpriced
   model usage, so a site that doesn't price tools isn't warned about every call.
 - **Workflow tool steps** are priced the same way, at the tool's rate when the step
-  started, on the workflow's team and the user who started the run: a step that succeeded
-  is one call (not one that only asked for an approval), and a step that failed is charged
-  for each attempt that reached the tool (recorded on the step as `tool_calls`). A step
-  that failed before reaching it (tool disabled, permission missing) costs nothing.
+  started, on the workflow's team and the user who started the run: each attempt that
+  reached the tool is a call, whether the step then failed or succeeded (recorded on the
+  step as `tool_calls` when it isn't one). A step that only asked for an approval, or
+  failed before reaching the tool (tool disabled, permission missing), costs nothing.
 - **OCR** is metered per page. Each OCR call (a scanned document or image read while
   ingesting) records a usage row with endpoint `ocr`: the pages its text came from (at
   least one) in place of tokens, the knowledge base's team, and the person who uploaded
@@ -235,6 +235,3 @@ rate card is a finance decision.
   fetches them, and a past report is converted at today's configured rate.
 - **Power or utilisation-weighted GPU cost.** GPU time is reservation time, the only GPU
   measure the platform can attribute to a model reliably.
-- **Retried tool steps that succeeded.** A workflow tool step that failed on an earlier
-  attempt and then succeeded is one call; only a step that failed in the end counts each
-  attempt.
