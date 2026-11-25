@@ -66,7 +66,7 @@ dashboard real signals.
 - [x] Revisions: `GET/POST /deployments/{id}/revisions`, `POST /deployments/{id}/rollback`. Append-only; GPUs kept reserved across the change; images limited to `runtime_images` plus `MODELS__RUNTIME_IMAGE_ALLOWLIST`; external runtimes refused. Audited `DEPLOYMENT_REVISED`, `DEPLOYMENT_ROLLED_BACK`.
 - [x] `GET /deployments/{id}/logs/stream` (SSE, new lines only, ten-minute cap).
 - [x] Admin: approval pills, filter and family grouping, Edit dialog with approval, two-step deploy wizard, Revisions dialog with rollback, live log viewer. Doc: [docs/model-governance.md](../model-governance.md).
-- [ ] Revisions are not zero-downtime (one container per deployment); blue/green needs replicas. ~~Blocking a model does not stop its containers automatically.~~ Closed in E26.
+- [ ] ~~Revisions are not zero-downtime (one container per deployment); blue/green needs replicas~~ (E61). ~~Blocking a model does not stop its containers automatically.~~ Closed in E26.
 
 ## E5: RAG depth (P1)
 
@@ -77,7 +77,7 @@ dashboard real signals.
 - [x] `POST /retrieval/playground`: candidates, reranked results, optional vector-order baseline, timings and warnings.
 - [x] Evaluation sets labelled by document lineage; synchronous runs (≤100 questions) scoring hit rate, recall, precision and MRR over distinct documents, with per-question results stored. Audited.
 - [x] Admin: retrieval settings, version badges, New version / Re-ingest / Versions on the Knowledge Bases page; new Retrieval Playground page with an Evaluation sets tab. Doc: [docs/rag-evaluation.md](../rag-evaluation.md).
-- [ ] Answer faithfulness scoring (needs a judge model), query history, asynchronous runs for large sets, are not included (per-document access arrived in E56, whole-base re-embed in E59). See rag-evaluation.md.
+- [ ] ~~Answer faithfulness scoring (needs a judge model), query history~~ (E62), asynchronous runs for large sets, are not included (per-document access arrived in E56, whole-base re-embed in E59). See rag-evaluation.md.
 
 ## E6: Workflows (P2)
 
@@ -88,7 +88,7 @@ dashboard real signals.
 - [x] Approvals: approval nodes and HIGH/CRITICAL tools pause the run; a decision resumes it inline; no self-approval unless the node allows it; audited. Workflow steps appear on the existing Approvals page beside agent tool calls (separate API, shared inbox in the console).
 - [x] Runs carry the starter's permissions (the publisher's for schedule and webhook runs); tool permissions are checked against them. Team scope for workflows, runs and approvals; definitions' knowledge base and model references checked on save and publish; `PUT /scope` accepts `workflow`.
 - [x] Admin: Workflows page with templates, builder (node list with typed forms, connection table, JSON view, auto-laid-out graph, validate), test and published runs, run trace with a coloured graph, triggers and versions. Doc: [docs/workflows.md](../workflows.md).
-- [ ] ~~No drag-and-drop canvas, typed per-node schemas, parallel branches~~ (E69), sub-workflows or loops. ~~No webhook body signatures.~~ Closed in E36. See workflows.md.
+- [ ] ~~No drag-and-drop canvas, typed per-node schemas, parallel branches~~ (E69), ~~sub-workflows or loops~~ (E71). ~~No webhook body signatures.~~ Closed in E36. See workflows.md.
 
 ## E7: Operations UI and release hardening (P0 for air-gapped production)
 
@@ -98,7 +98,7 @@ dashboard real signals.
 - [x] Version inventory, redacted effective configuration and a support bundle (health, inventory, config, alerts, ops history, optional Loki logs). Redaction in `core/redact.py`.
 - [x] Bundles: ECDSA P-256 signed manifest (`scripts/bundle_signing.py`), CycloneDX 1.5 SBOM and licence list (`scripts/sbom.py`); `install.sh`/`upgrade.sh --trust-key`; trust key outside the tree.
 - [x] Admin: Backup & Restore, Offline Updates and Diagnostics pages. Docs: [operations.md](../operations.md), [threat-model.md](../architecture/threat-model.md).
-- [ ] No partial restore or bundle upload through the console. See operations.md. (Scheduled backups and retention arrived in E12; runner-token rate limiting in E14.)
+- [ ] ~~No partial restore~~ (E60, E64) or bundle upload through the console. See operations.md. (Scheduled backups and retention arrived in E12; runner-token rate limiting in E14.)
 
 ## E8: Dashboard and settings (closes plan §5.1 and the §6 Settings page)
 
@@ -118,7 +118,7 @@ dashboard real signals.
 - [x] Unpriced is not free: no applicable rate gives `null` cost and an `unpriced` count; partial streams are flagged. Every report and export says it is an estimate.
 - [x] CSV export (POST, audited, every row, formula-safe cells).
 - [x] Chargeback page: grouping and period pickers, totals, unpriced warning, cost table, idle capacity, rates with status, add/remove rate. `chargeback.currency` runtime setting. Doc: [docs/chargeback.md](../chargeback.md).
-- [ ] No currency conversion; no cost for ingestion, tool calls or voice. (Budgets and cost alerts arrived in E12.)
+- [ ] ~~No currency conversion~~ (E86); ~~no cost for ingestion, tool calls or voice~~ (E21, E67, E86). (Budgets and cost alerts arrived in E12.)
 
 ## E10: Connector catalogue (closes plan §14 "Large connector catalogue")
 
@@ -127,7 +127,7 @@ dashboard real signals.
 - [x] Four new connectors, versions checked against PyPI and at least two weeks old, tool names taken from the published wheels: `time`, `sqlite`, `prometheus`, `redis`. The three reference manifests gained the catalogue fields. Seven in all.
 - [x] `GET /mcp/catalogue`, per-connector install (register and discover, grants nothing), and apply suggested risk (only tools nobody reviewed, never enables, audited `CONNECTOR_RISK_APPLIED`).
 - [x] Connector Catalogue page: state, network, writes, pinned package, configuration variables, problems, tool counts with "awaiting review", install and apply suggested risk.
-- [ ] No first-party connectors (read-only SQL, HTTP/OpenAPI with an allow-list); no container state in the catalogue (the control plane has no Docker socket).
+- [ ] ~~No first-party connectors (read-only SQL, HTTP/OpenAPI with an allow-list)~~ (E57, E78); no container state in the catalogue (the control plane has no Docker socket).
 
 ## E11: Release readiness (0.2.0)
 
@@ -186,7 +186,7 @@ dashboard real signals.
 - [x] Prometheus histograms `ai_platform_gateway_request_duration_seconds` and `ai_platform_gateway_output_tokens_per_second`, with Grafana panels beside the existing TTFT one.
 - [x] Console: a "First token (p50)" dashboard card (p95, tok/s, stream count); First token, p95 latency and Tok/s columns on Usage & Quotas. "—" when unmeasured.
 - [x] Tests: `tests/api/test_gateway_timings.py` (stored timings, role-only chunk, exclusions, exact percentiles, null with buffered-only traffic). Doc: [gateway-policy.md](../gateway-policy.md#timings).
-- [ ] `agent:` and voice calls are not timed (agent calls are recorded since E17, without timings). No buffered TTFT. ~~Timings are not in chargeback exports.~~ In chargeback reports and exports since E40.
+- [ ] ~~`agent:` and voice calls are not timed~~ (E67; buffered `agent:` calls E92). A direct buffered call has no TTFT (its first token is the whole answer). ~~Timings are not in chargeback exports.~~ In chargeback reports and exports since E40.
 
 ## E17: Approval expiry and agent usage (closes two agents.md known gaps)
 
@@ -277,7 +277,7 @@ dashboard real signals.
 - [x] The voice WebSocket's transcription and synthesis calls carry the session's user and the agent's team (`voice_ws._context`), so their rows appear under that person and team in usage, chargeback and team budgets. Before, the context was empty.
 - [x] Gateway admission: a keyless call made for a team is charged to the team budget; the team budget refuses it only with `gateway.enforce_platform_budgets` on (E24). A key's team is checked as before. The voice gateway reads runtime settings.
 - [x] No migration. Tests: `tests/api/test_voice_attribution.py`. Docs: [gateway-policy.md](../gateway-policy.md), [speech.md](../speech.md).
-- [ ] Voice rows still have no first-token timings (one buffered request each); ~~rerank calls are not accounted~~ (since E38).
+- [ ] ~~Voice rows still have no first-token timings~~ (E67: a turn's wait); ~~rerank calls are not accounted~~ (since E38).
 
 ## E28: The deployment worker stops what blocking could not (closes the E26 open item)
 
@@ -377,7 +377,7 @@ dashboard real signals.
 - [x] Rows, the idle row and the totals carry the six fields (null when unmeasured). The CSV appends them after `estimate`, empty when unmeasured.
 - [x] Console: *p95 latency* and *First token (p50)* columns on the Chargeback page.
 - [x] No migration. Tests: `tests/api/test_chargeback_timings.py`. Doc: [chargeback.md](../chargeback.md#timings).
-- [ ] Agent (`agent:`) and voice calls still carry no first-token timings, so they count in latency only.
+- [ ] ~~Agent (`agent:`) and voice calls still carry no first-token timings, so they count in latency only~~ (E67, E92).
 
 ## E41: Webhook rotation with an overlap (closes the E36 overlap item)
 
@@ -469,7 +469,7 @@ dashboard real signals.
 - [x] `GpuSettings`: `alerts_enabled`, `alert_temperature_warning_celsius` (83), `alert_temperature_critical_celsius` (90, warning must be lower), `alert_memory_warning_percent` (98, the node agent's level, above what model servers reserve). Runtime settings in a new *GPU monitoring* category. Uncorrectable ECC errors are always CRITICAL.
 - [x] `app/services/gpu_alerts.py` `GpuAlertWatcher`, run by the worker job `gpu_alerts` (`WORKERS__GPU_ALERT_INTERVAL_SECONDS`, 60): each GPU's newest sample from the last five minutes (`GpuMetricRepository.latest_per_gpu`, `DISTINCT ON`), one alert per GPU (`gpu_threshold:<gpu_id>`, resource `gpu`, no team) at the worst level, title naming the node, index and readings. Cleared on recovery, after five minutes without a sample, or when turned off. `gpu_threshold` added to the channel source filter. No migration.
 - [x] Tests: `tests/api/test_gpu_alerts.py`. Docs: [gpu.md](../gpu.md#threshold-alerts), settings.md, notifications.md.
-- [ ] ~~Latest sample only: no "sustained for N minutes" and no hysteresis~~ (E68). No per-node or per-GPU thresholds. Utilisation, power and PCIe replay counts are not alerted on.
+- [ ] ~~Latest sample only: no "sustained for N minutes" and no hysteresis~~ (E68). ~~No per-node or per-GPU thresholds~~ (E70, E75). ~~Utilisation, power and PCIe replay counts are not alerted on~~ (E75, E87).
 
 ## E53: Quota warnings, extended
 
@@ -524,7 +524,7 @@ matrix still listed as missing.
 - [x] `GatewayService._target` orders the healthy copies and keeps the rest on the target; `_switch_replica` moves a target in place, skipping open circuits, up to `gateway.replica_retries` (default 1). `_attempt` retries buffered calls on other copies before the alias fallback. `stream_chunks` moves a stream that failed before sending anything; the lease moves with it and is released in `finalise_stream`.
 - [x] Runtime settings `gateway.load_balancing` and `gateway.replica_retries`; metric `ai_platform_gateway_replica_failovers_total{model,kind}`. No migration.
 - [x] Tests: `tests/api/test_replica_balancing.py`. Docs: [gateway-policy.md](../gateway-policy.md#spreading-calls-across-copies), models.md, database.md, settings.md.
-- [ ] A stream that has sent part of its answer is not moved. No weights per copy and no session affinity for prefix caching. Chat, embeddings, transcription and speech all spread and retry on another copy; OCR and the platform's own internal calls spread but do not retry.
+- [ ] ~~A stream that has sent part of its answer is not moved~~ (E66). ~~No weights per copy~~ (E77) ~~and no session affinity for prefix caching~~ (E93). Chat, embeddings, transcription and speech all spread and retry on another copy; OCR and the platform's own internal calls spread but do not retry.
 
 ## E59: Rebuild a whole knowledge base (closes the feature-matrix re-embed gap)
 
@@ -810,6 +810,11 @@ matrix still listed as missing.
 - [x] A buffered `agent:` call records `ttft_ms` when its answer is ready (`run_agent_buffered(accounting=)`).
 - [x] Tests: `tests/api/test_chargeback_units.py` (`TestTools::test_grouped_by_key_and_end_user`, `TestWorkflowTools`), `tests/api/test_workflows.py::TestTools::test_a_failed_call_is_recorded_for_chargeback`, `tests/api/test_first_output_timings.py`. Docs: chargeback.md, gateway-policy.md.
 - [ ] A tool step that failed and then succeeded on a retry is one call.
+
+## E95: Plan cleanup, second pass
+
+- [x] Open notes closed by later items are struck through with the item that closed them: E4 (E61), E5 (E62), E6 (E71), E7 (E60, E64), E9 (E21, E67, E86), E10 (E57, E78), E16 (E67, E92), E27 (E67), E40 (E67, E92), E52 (E70, E75, E87), E58 (E66, E77, E93).
+- [x] The feature matrix's rows for the gateway, workflows, restore and chargeback name E88 to E93.
 
 ## Phase acceptance (applies to each)
 
