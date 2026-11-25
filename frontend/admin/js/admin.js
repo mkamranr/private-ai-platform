@@ -2333,8 +2333,15 @@ async function renderRolloutStatus() {
   const latency = canary.latency_p95_ms != null && canary.baseline_p95_ms
     ? ` p95 ${Math.round(canary.latency_p95_ms)} ms against ${Math.round(canary.baseline_p95_ms)} ms.`
     : (canary.latency_note ? ` ${esc(canary.latency_note)}` : '');
+  // E88: time to first token and the faithfulness of judged answers, when compared.
+  const ttft = canary.ttft_p95_ms != null && canary.baseline_ttft_p95_ms
+    ? ` First token p95 ${Math.round(canary.ttft_p95_ms)} ms against ${Math.round(canary.baseline_ttft_p95_ms)} ms.`
+    : (canary.ttft_note ? ` ${esc(canary.ttft_note)}` : '');
+  const faith = canary.faithfulness != null && canary.baseline_faithfulness != null && !canary.faithfulness_note
+    ? ` Answers ${Math.round(canary.faithfulness * 100)}% faithful against ${Math.round(canary.baseline_faithfulness * 100)}%.`
+    : (canary.faithfulness_note ? ` ${esc(canary.faithfulness_note)}` : '');
   const passed = canary.state === 'passed'
-    ? ` Canary passed: ${esc(canary.errors)} of ${esc(canary.calls)} calls failed.${latency}` : '';
+    ? ` Canary passed: ${esc(canary.errors)} of ${esc(canary.calls)} calls failed.${latency}${ttft}${faith}` : '';
   if (rollout.state === 'RUNNING') {
     host.innerHTML = `<div class="alert alert-info py-2 small d-flex align-items-center gap-2">
       <span><b>Rolling out</b> to every copy: ${rollout.done_count} of ${total} done.
@@ -2373,6 +2380,10 @@ onModalSubmit('revision-form', 'revision-error', async (form) => {
       canary_max_error_percent: numberField('rev-canary-errors') ?? 1,
       canary_copies: numberField('rev-canary-copies') || 1,
       canary_max_latency_ratio: numberField('rev-canary-latency'),
+      // E88: points of faithfulness in the form, a share (0 to 1) in the API.
+      canary_max_ttft_ratio: numberField('rev-canary-ttft'),
+      canary_max_faithfulness_drop: numberField('rev-canary-faith') == null
+        ? null : numberField('rev-canary-faith') / 100,
     } : {};
     const rollout = await api(`/models/${modal.dataset.model}/rollout`, {
       method: 'POST', body: JSON.stringify({ ...change, ...canary }),

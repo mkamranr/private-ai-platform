@@ -1007,7 +1007,12 @@ class GatewayService:
         #
         # A linked inference backend's own key comes first (E2); it was matched to this
         # exact endpoint when the target was resolved.
-        return VLLMProvider(target.internal_url, api_key=self._api_key(target))
+        deployment = getattr(target, "deployment", None)
+        return VLLMProvider(
+            target.internal_url,
+            api_key=self._api_key(target),
+            deployment_id=getattr(deployment, "id", None),
+        )
 
     async def ocr_engine_for_model(self, model: str) -> tuple[OcrEngine, str]:
         """Resolve an OCR alias to an engine, for callers that are not HTTP requests.

@@ -408,6 +408,12 @@ class RolloutRequest(BaseModel):
     canary_copies: int = Field(default=1, ge=1, le=64)
     #: E82: the canary's p95 latency more than this many times the other copies' stops it.
     canary_max_latency_ratio: float | None = Field(default=None, gt=1.0, le=100.0)
+    #: E88: the canary's p95 time to first token (streamed calls) more than this many
+    #: times the other copies' stops it.
+    canary_max_ttft_ratio: float | None = Field(default=None, gt=1.0, le=100.0)
+    #: E88: the canary's judged agent answers averaging more than this much less
+    #: faithful (0 to 1) than the other copies' stops it.
+    canary_max_faithfulness_drop: float | None = Field(default=None, gt=0.0, le=1.0)
 
     def canary(self) -> dict[str, Any] | None:
         if self.canary_percent is None:
@@ -418,6 +424,8 @@ class RolloutRequest(BaseModel):
             "max_error_percent": self.canary_max_error_percent,
             "copies": self.canary_copies,
             "max_latency_ratio": self.canary_max_latency_ratio,
+            "max_ttft_ratio": self.canary_max_ttft_ratio,
+            "max_faithfulness_drop": self.canary_max_faithfulness_drop,
         }
 
 

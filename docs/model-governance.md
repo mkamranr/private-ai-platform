@@ -241,7 +241,9 @@ POST /api/v1/models/{id}/rollout
   serving. Cancelling during the watch gives the copy its full share back.
 * The rollout's `canary` shows the settings and what happened: `state` (`watching`,
   `passed`, `failed`, `cancelled`), `deployment_ids`, `until`, `calls`, `errors`, and with
-  a latency limit `latency_p95_ms`, `baseline_p95_ms` (or `latency_note`).
+  a latency limit `latency_p95_ms`, `baseline_p95_ms` (or `latency_note`); with a first
+  token limit `ttft_p95_ms`, `baseline_ttft_p95_ms` (or `ttft_note`); with a quality limit
+  `faithfulness`, `baseline_faithfulness` (or `faithfulness_note`).
 
 **More than one canary copy.** `canary_copies` (default 1) copies are revised first, each
 on the canary's share as soon as it is healthy, then watched together; their calls and
@@ -255,10 +257,25 @@ that didn't fail. More than that many times slower stops the rollout as errors d
 fewer than 10 such calls on either side latency isn't judged, and `latency_note` says so:
 a quiet model can't show a difference.
 
+**Time to first token.** Latency is end to end, so a canary that happens to get longer
+prompts or answers looks slower. `canary_max_ttft_ratio` (above 1) compares the p95 time to
+first token instead, on streamed calls only (buffered calls have none), with the same
+10-call minimum (`ttft_note` otherwise).
+
+**Answer quality.** With [answer scoring](agents.md#answer-quality) on, each judged agent
+answer records the copy that wrote it. `canary_max_faithfulness_drop` (0 to 1, e.g. `0.1`)
+compares the average faithfulness of answers the canary copies wrote during the watch with
+the old copies': more than that much lower stops the rollout. Answers are sampled and
+judged in the background, so only those already judged when the watch ends count; with
+fewer than 5 on either side quality isn't judged (`faithfulness_note`). A longer watch, or
+a higher `agents.answer_scoring_percent` while it runs, gives it more to go on. Only agent
+answers that retrieved passages are judged; direct API calls never are.
+
 ```http
 POST /api/v1/models/{id}/rollout
 {"max_model_len": 16384, "canary_percent": 20, "canary_copies": 2,
- "canary_max_latency_ratio": 1.5}
+ "canary_max_latency_ratio": 1.5, "canary_max_ttft_ratio": 2,
+ "canary_max_faithfulness_drop": 0.1}
 ```
 
 In the console: *Canary first* under *Every copy, one at a time*.

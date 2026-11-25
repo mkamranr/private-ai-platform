@@ -473,6 +473,7 @@ class AgentAnswerScore(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         Index("ix_agent_answer_scores_agent_created", "agent_id", "created_at"),
         Index("ix_agent_answer_scores_status", "status"),
+        Index("ix_agent_answer_scores_deployment_created", "deployment_id", "created_at"),
         CheckConstraint(
             "status IN ('PENDING','SCORED','FAILED','SKIPPED')",
             name="answer_score_status",
@@ -511,3 +512,6 @@ class AgentAnswerScore(UUIDPrimaryKeyMixin, Base):
     #: E83: judge calls tried so far, and when the next may be (null: as soon as claimed).
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     next_attempt_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: E88: the model copy that wrote the answer (no foreign key: it outlives the copy),
+    #: so a canary rollout can compare its copies' answers with the others'.
+    deployment_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))

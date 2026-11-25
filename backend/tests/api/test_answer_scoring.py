@@ -88,12 +88,16 @@ class Collected:
         return row
 
 
-async def _complete_a_run(settings, *, passages=(PASSAGE,)) -> tuple[Collected, Any]:
+async def _complete_a_run(
+    settings, *, passages=(PASSAGE,), deployment_id: uuid.UUID | None = None
+) -> tuple[Collected, Any]:
     runs = Runs()
     collected = Collected()
 
     async def provider_factory(model: str, **_: Any):
-        return FakeProvider(chunks=["Reset it ", "from your profile."]), model
+        provider = FakeProvider(chunks=["Reset it ", "from your profile."])
+        provider.deployment_id = deployment_id  # as the gateway's provider carries it
+        return provider, model
 
     runtime = PlatformAgentRuntime(
         settings,
@@ -128,6 +132,14 @@ class TestQueueing:
         assert row.answer == "Reset it from your profile."
         assert row.passages[0]["document"] == "it-guide.md"
         assert row.passages[0]["location"] == "page 2"
+        assert row.deployment_id is None  # the fake provider names no copy
+
+    async def test_the_copy_that_answered_is_kept(self, settings) -> None:
+        """E88: so a canary rollout can compare its copies' answers with the others'."""
+        copy = uuid.uuid4()
+        collected, _ = await _complete_a_run(with_scoring(settings), deployment_id=copy)
+        (row,) = collected.rows
+        assert row.deployment_id == copy
 
     async def test_off_by_default(self, settings) -> None:
         collected, _ = await _complete_a_run(settings)

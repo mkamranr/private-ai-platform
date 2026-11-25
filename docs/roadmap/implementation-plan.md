@@ -681,7 +681,7 @@ matrix still listed as missing.
 - [x] `RolloutService.start(canary=)` (two copies at least). `_canary` sets the first revised copy's weight to `percent` and holds the rollout for `minutes`, then counts its usage records since (5xx share): over `max_error_percent` fails the rollout and sets it to 0, else back to 100 and the rest follow. Cancel during the watch restores 100.
 - [x] `PUT /deployments/{id}/traffic-weight` (`model.deploy`, audited `DEPLOYMENT_TRAFFIC_WEIGHT_CHANGED`); `RolloutRequest.canary_*`; `RolloutRead.canary`; `DeploymentRead.traffic_weight`.
 - [x] Console: *Canary first* fields, the watch in the rollout status, *This copy's share of traffic*, and a badge on the Deployments page. Checked in Chromium. Tests: `tests/api/test_canary_rollouts.py`. Docs: [model-governance.md](../model-governance.md#a-canary-first), api.md.
-- [ ] ~~One canary copy, judged on 5xx share only~~ (E82: several copies, and latency); not answer quality. Weights are per copy, not per revision.
+- [ ] ~~One canary copy, judged on 5xx share only~~ (E82: several copies, and latency), ~~not answer quality~~ (E88). Weights are per copy, not per revision.
 
 ## E78: More first-party connectors
 
@@ -719,7 +719,7 @@ matrix still listed as missing.
 - [x] `canary_max_latency_ratio`: `percentile_cont(0.95)` of successful calls' `latency_ms` on the canaries against the other copies since the watch began; judged only with `LATENCY_MIN_CALLS` (10) on each side, otherwise `latency_note`.
 - [x] Console: copies and latency fields under *Canary first*; the status names every canary and shows both p95s.
 - [x] Tests: `tests/api/test_canary_rollouts.py::TestSmarterCanary`. Docs: [model-governance.md](../model-governance.md#a-canary-first), api.md.
-- [ ] Latency is end to end (`latency_ms`), so a canary that happens to get longer prompts looks slower; time to first token is not compared.
+- [ ] ~~Latency is end to end (`latency_ms`), so a canary that happens to get longer prompts looks slower; time to first token is not compared~~ (E88: `canary_max_ttft_ratio`).
 
 ## E83: Judge retries, and paused runs scored
 
@@ -763,6 +763,14 @@ matrix still listed as missing.
 
 - [x] Open notes closed by later items struck through with the item that closed them (E64–E87), in this plan and the feature matrix.
 - [x] `docs/backup.md` and `docs/operations.md` no longer say a team or a knowledge base can't be restored on its own.
+
+## E88: Canary judged on time to first token and answer quality
+
+- [x] `canary_max_ttft_ratio`: `RolloutService._p95` takes the column; time to first token (`ttft_ms`, streamed calls that measured it) is compared like latency, with `ttft_p95_ms`, `baseline_ttft_p95_ms` or `ttft_note`.
+- [x] `agent_answer_scores.deployment_id` (migration `e9b1d3f5a7c8`, indexed with `created_at`): `GatewayService._provider` gives `VLLMProvider` the copy's id, the runtime keeps it per run and stores it with a queued answer.
+- [x] `canary_max_faithfulness_drop`: `_faithfulness` averages judged answers the copies wrote since the watch began; more than the drop below the other copies' fails the canary; fewer than `FAITHFULNESS_MIN_ANSWERS` (5) a side gives `faithfulness_note`. Console: two more fields under *Canary first*.
+- [x] Tests: `tests/api/test_canary_rollouts.py` (`TestQualityCanary`), `tests/api/test_answer_scoring.py` (the copy kept). Docs: model-governance.md, api.md.
+- [ ] Only answers already judged when the watch ends count, and only agent answers that retrieved passages are judged. An answer resumed on another copy is recorded on the copy the run started on.
 
 ## Phase acceptance (applies to each)
 

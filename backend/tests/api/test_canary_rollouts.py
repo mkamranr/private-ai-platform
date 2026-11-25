@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
+from app.models.agents import AgentAnswerScore, AnswerScoreStatus
 from app.models.audit import AuditLog
 from app.models.auth import User
 from app.models.models_registry import ModelDeployment, RolloutState, UsageRecord
@@ -87,7 +88,12 @@ class TestWeights:
 
 
 async def _calls(
-    session: AsyncSession, copy_id: str, ok: int, failed: int, latency_ms: float = 100.0
+    session: AsyncSession,
+    copy_id: str,
+    ok: int,
+    failed: int,
+    latency_ms: float = 100.0,
+    ttft_ms: float | None = None,
 ) -> None:
     for status in [200] * ok + [502] * failed:
         session.add(
@@ -98,6 +104,31 @@ async def _calls(
                 deployment_id=uuid.UUID(str(copy_id)),
                 status_code=status,
                 latency_ms=latency_ms,
+                streamed=ttft_ms is not None,
+                ttft_ms=ttft_ms,
+            )
+        )
+    await session.flush()
+
+
+async def _answers(
+    session: AsyncSession, owner: User, copy_id: str, faithfulness: float, count: int
+) -> None:
+    """E88: judged agent answers written by one copy."""
+    from tests.api.test_agents import _make_agent, _make_run
+
+    agent, version = await _make_agent(session, tools=[], owner=owner)
+    for _ in range(count):
+        run = await _make_run(session, agent, version, user=owner, permissions=[])
+        session.add(
+            AgentAnswerScore(
+                run_id=run.id,
+                agent_id=agent.id,
+                question="q",
+                answer="a",
+                status=AnswerScoreStatus.SCORED,
+                faithfulness=faithfulness,
+                deployment_id=uuid.UUID(str(copy_id)),
             )
         )
     await session.flush()
@@ -191,6 +222,8 @@ class TestCanary:
             "max_error_percent": 1.0,
             "copies": 1,
             "max_latency_ratio": None,
+            "max_ttft_ratio": None,
+            "max_faithfulness_drop": None,
         }
         await _drive(service, passes=4)
         body = (await client.get(url, headers=headers)).json()
@@ -314,3 +347,91 @@ class TestSmarterCanary:
             await session.refresh(copy)
             if str(copy.id) in given:
                 assert copy.traffic_weight == 100
+
+
+class TestQualityCanary:
+    """E88: time to first token, and the faithfulness of judged answers."""
+
+    async def _watching(self, service, session, model_admin, **canary):
+        model = await _model(session)
+        first = await _copy(session, model)
+        second = await _copy(session, model)
+        rollout = await service.rollouts().start(
+            model.id, _change(), actor=model_admin, canary={**CANARY, **canary}
+        )
+        await _drive(service, passes=4)
+        await session.refresh(rollout)
+        watched = rollout.canary["deployment_id"]
+        other = second if str(first.id) == watched else first
+        return rollout, watched, str(other.id)
+
+    async def test_slow_first_token_stops_it(self, service, session, model_admin) -> None:
+        rollout, watched, other = await self._watching(
+            service, session, model_admin, max_ttft_ratio=2.0
+        )
+        # Same total time, but the canary takes three times as long to start answering.
+        await _calls(session, watched, ok=20, failed=0, latency_ms=900, ttft_ms=600)
+        await _calls(session, other, ok=20, failed=0, latency_ms=900, ttft_ms=200)
+        await _calls(session, other, ok=30, failed=0)  # buffered: no first-token time
+        await _watch_ends(session, rollout)
+        await _drive(service, passes=2)
+        await session.refresh(rollout)
+        assert rollout.state == RolloutState.FAILED
+        assert "p95 time to first token 600 ms against 200 ms" in rollout.error
+        assert rollout.canary["ttft_p95_ms"] == 600
+
+    async def test_less_faithful_answers_stop_it(self, service, session, model_admin) -> None:
+        rollout, watched, other = await self._watching(
+            service, session, model_admin, max_faithfulness_drop=0.1
+        )
+        await _calls(session, watched, ok=20, failed=0)
+        await _answers(session, model_admin, watched, 0.6, 5)
+        await _answers(session, model_admin, other, 0.9, 6)
+        await _watch_ends(session, rollout)
+        await _drive(service, passes=2)
+        await session.refresh(rollout)
+        assert rollout.state == RolloutState.FAILED
+        assert "answers 60% faithful against 90%" in rollout.error
+        assert rollout.canary["faithfulness"] == pytest.approx(0.6)
+
+    async def test_a_small_drop_passes(self, service, session, model_admin) -> None:
+        rollout, watched, other = await self._watching(
+            service, session, model_admin, max_faithfulness_drop=0.1
+        )
+        await _calls(session, watched, ok=20, failed=0)
+        await _answers(session, model_admin, watched, 0.85, 5)
+        await _answers(session, model_admin, other, 0.9, 5)
+        await _watch_ends(session, rollout)
+        await _drive(service, passes=2)
+        await session.refresh(rollout)
+        assert rollout.canary["state"] == "passed"
+
+    async def test_too_few_judged_answers_is_not_judged(
+        self, service, session, model_admin
+    ) -> None:
+        rollout, watched, other = await self._watching(
+            service, session, model_admin, max_faithfulness_drop=0.1, max_ttft_ratio=2.0
+        )
+        await _calls(session, watched, ok=20, failed=0)
+        await _answers(session, model_admin, watched, 0.1, 2)
+        await _answers(session, model_admin, other, 0.9, 8)
+        await _watch_ends(session, rollout)
+        await _drive(service, passes=2)
+        await session.refresh(rollout)
+        assert rollout.canary["state"] == "passed"
+        assert "2 judged answers from the canary" in rollout.canary["faithfulness_note"]
+        assert "Time to first token not judged: 0 measured calls" in rollout.canary["ttft_note"]
+
+    def test_set_in_the_request(self) -> None:
+        from app.schemas.models_registry import RolloutRequest
+
+        request = RolloutRequest.model_validate(
+            {
+                "image": "vllm:next",
+                "canary_percent": 10,
+                "canary_max_ttft_ratio": 1.5,
+                "canary_max_faithfulness_drop": 0.05,
+            }
+        )
+        assert request.canary()["max_ttft_ratio"] == 1.5
+        assert request.canary()["max_faithfulness_drop"] == 0.05
