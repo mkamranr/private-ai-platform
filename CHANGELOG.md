@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Workflows: loops back, typed outputs, panning
+- A connection can go back to an earlier step (`"back": true`), running the steps between again up to `max_loops` times; the pass before is `{{ previous.<step>.<output> }}`. On the canvas, connect a step to one before it.
+- Step outputs have types, and templates are checked below the output: `{{ nodes.search.passages.0.text }}` is fine, `passages.first` or `context.size` is a problem. The builder shows each value's type.
+- The canvas pans by dragging with Space held or the middle button.
+- **Upgrade.** No migration. Definitions that were valid stay valid.
+
 ### Agents: judge retries, and paused runs scored
 - A judge call that fails because the model is down or over budget is tried again (twice by default, after 5 minutes and then 10, spread out), instead of the answer's score failing for good.
 - Answers from runs that paused for an approval are now sampled and judged like the others.

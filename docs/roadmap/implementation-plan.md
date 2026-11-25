@@ -728,6 +728,14 @@ matrix still listed as missing.
 - [x] Tests: `tests/api/test_answer_scoring.py::TestRetries`, `::TestPausedRuns`. Docs: [agents.md](../agents.md#answer-quality), settings.md.
 - [ ] A run cancelled while paused keeps its checkpoint, passages included, until its run is deleted.
 
+## E84: Workflow builder: typed outputs, deeper paths, edges back, panning
+
+- [x] `OUTPUT_TYPES` per step type (`text`, `number`, `boolean`, `any`, `[item]`, `{field: type}`); `NodeSchema.as_dict` adds `output_types` (`type_name`). `_output_problem` / `path_problem` follow a path below the output: list indexes, object fields, nothing under scalars, unchecked under `any`.
+- [x] Edges back (`back: true`, `max_loops` 1–20, default 3): `edges_of` leaves them out, so order, waits and cycle checks use the forward graph; `back_edges_of`, `loop_region`, `_back_edge_problems` (goes back, not start/end, a branch the source has and not `error`, no forward edge on the same branch, one per branch). `WorkflowEngine._follow_back_edges` after each batch: clears the region's entries (and skipped descendants of the target), keeps their outputs in `state.previous`, counts in `state.loops` (inner loops reset), fails a branch with nowhere else to go once spent. `{{ previous.<step>.<output> }}` in templates and validation.
+- [x] Console: an edge back drawn dashed over the top with ↺ and its count; connecting to an earlier step makes one; *Connections* has *back* and the count; insertable values show their type and, inside a loop, `previous.*`. Panning: Space + drag, middle button, or empty canvas when viewing.
+- [x] Tests: `tests/unit/test_workflow_schema.py::TestTypedPaths`, `::TestBackEdges`, `tests/api/test_workflow_loops.py`. Docs: [workflows.md](../workflows.md#edges-back).
+- [ ] Paths under `any` outputs, and whether a value's type fits its setting, aren't checked.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and
