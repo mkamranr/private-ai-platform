@@ -110,7 +110,7 @@ runs the whole platform and its tests.
 | | |
 |---|---|
 | **One API** | Chat, completions, embeddings, speech-to-text and text-to-speech at `/v1`, with streaming. |
-| **Resilient** | Aliases with fallbacks, circuit breakers, load balancing across copies, and a stream broken mid-answer resumed on another copy or on the alias's fallback. |
+| **Resilient** | Aliases with fallbacks, circuit breakers, load balancing across copies (optionally keeping a conversation on one copy for its prefix cache), and a stream broken mid-answer resumed on another copy or on the alias's fallback. |
 | **Quotas and budgets** | Tokens per minute, day and month, and concurrent calls, per key, team, end user or model, with warnings before the limit. |
 | **Usage and timings** | Tokens, latency, time to first token and throughput for every call, by model, key, team and person. |
 

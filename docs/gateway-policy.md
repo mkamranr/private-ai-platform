@@ -153,6 +153,30 @@ page, *Gateway resilience*):
 - `ai_platform_gateway_replica_failovers_total{model,kind}` counts moves (`kind` is
   `buffered`, `stream` or `stream_resume`).
 
+### Keeping a conversation on one copy
+
+Runtimes such as vLLM and SGLang cache the prompt prefix they have already processed. A
+long chat that lands on a different copy each turn has its whole history processed again
+every time; kept on one copy, each turn reuses what the copy already holds, and the first
+token comes sooner. With `gateway.session_affinity` on (Settings, *Gateway resilience*;
+off by default), chat calls are kept on one copy per conversation:
+
+- **The conversation** is the `X-Session-Id` header when the client sends one (Open WebUI
+  and most SDKs can add a header; up to 256 characters, a longer one is hashed). Without
+  it, a hash of the model, the first system message and the first user message, which
+  every later turn of the same chat repeats.
+- **The copy** is chosen by weighted rendezvous hashing, so each copy still gets its
+  [traffic share](model-governance.md#a-copys-share-of-traffic) across conversations (a
+  canary at 10% gets about a tenth of them), and adding or removing a copy moves only the
+  conversations it gains or held. A copy at weight 0 is failover only, as before.
+- **It never piles work up.** When a conversation's copy has more than
+  `gateway.session_affinity_max_extra` (default 4) calls in flight beyond the least busy
+  copy, the call goes by the usual order instead. A failed call still moves to another
+  copy.
+- Only chat calls (buffered and streamed); embeddings and audio aren't affected. Two chats
+  that start with exactly the same system and user message count as one conversation
+  unless they send `X-Session-Id`.
+
 ### Resuming a broken stream
 
 When a stream breaks after part of the answer has reached the caller (the copy crashed,
@@ -185,8 +209,8 @@ answer, under the same stream id, with no error.
 The continuation is the same model's, but not necessarily the words the broken copy would
 have written; a sentence can change direction where it resumes.
 
-Not built: weights per copy, and session affinity (one conversation pinned to one copy
-for prefix caching).
+Weights per copy are E77's [traffic shares](model-governance.md#a-copys-share-of-traffic);
+keeping a conversation on one copy is [above](#keeping-a-conversation-on-one-copy).
 
 ## Fallback aliases
 

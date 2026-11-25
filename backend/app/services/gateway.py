@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import math
 import time
@@ -238,6 +239,40 @@ class StreamAccounting:
         return (self.completion_tokens - 1) / seconds if seconds > 0 else None
 
 
+#: E93: longest ``X-Session-Id`` used as it is; a longer one is hashed.
+SESSION_ID_MAX = 256
+
+
+def session_key(body: dict[str, Any], session_id: str | None) -> str | None:
+    """E93: the conversation a chat call belongs to: the client's ``X-Session-Id``, or
+    else a hash of the model and the chat's start (its first system and first user
+    message), which every later turn of the same chat repeats. None when there is no user
+    message to go by."""
+    if session_id and session_id.strip():
+        raw = session_id.strip()
+        return "id:" + (raw if len(raw) <= SESSION_ID_MAX else _digest(raw))
+    messages = body.get("messages") or []
+    if not isinstance(messages, list):
+        return None
+    first = {"system": None, "user": None}
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role in first and first[role] is None:
+            first[role] = message.get("content")
+        if first["user"] is not None:
+            break
+    if first["user"] is None:
+        return None
+    start = json.dumps([body.get("model"), first["system"], first["user"]], sort_keys=True)
+    return "chat:" + _digest(start)
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:32]
+
+
 @dataclass(slots=True)
 class GatewayContext:
     """Everything needed to account for one call."""
@@ -261,6 +296,8 @@ class GatewayContext:
 
     #: E65: what the call asks of the model. A fallback that can't serve it is skipped.
     needs: frozenset[caps.Capability] = frozenset()
+    #: E93: the client's ``X-Session-Id``, naming the conversation for session affinity.
+    session_id: str | None = None
     #: E67: `time.perf_counter()` when the person started waiting for this call's output,
     #: if earlier than the call itself: the end of their utterance, for a voice turn's
     #: speech. Recorded as the row's time to first output.
@@ -313,7 +350,10 @@ class GatewayService:
             settings.gateway, redis, GatewayQuotaRepository(models.session)
         )
         self._balancer = ReplicaBalancer(
-            redis, settings.gateway.concurrency_lease_seconds, settings.gateway.load_balancing
+            redis,
+            settings.gateway.concurrency_lease_seconds,
+            settings.gateway.load_balancing,
+            settings.gateway.session_affinity_max_extra,
         )
 
     # -- authentication ----------------------------------------------------
@@ -405,7 +445,15 @@ class GatewayService:
             )
 
     # -- resolution (§12, §13) --------------------------------------------
-    async def resolve(self, requested: str, scope: Scope | None = None) -> ResolvedTarget:
+    def affinity_key(self, body: dict[str, Any], context: GatewayContext | None) -> str | None:
+        """E93: the conversation a chat call belongs to, when session affinity is on."""
+        if not self._settings.gateway.session_affinity:
+            return None
+        return session_key(body, context.session_id if context is not None else None)
+
+    async def resolve(
+        self, requested: str, scope: Scope | None = None, *, affinity: str | None = None
+    ) -> ResolvedTarget:
         """Turn a caller's model name into a live endpoint.
 
         Accepts an alias or a model name. Aliases win: that is what lets an operator
@@ -440,7 +488,7 @@ class GatewayService:
             )
 
         try:
-            return await self._target(requested, model, alias)
+            return await self._target(requested, model, alias, affinity)
         except (DependencyUnavailableError, ModelBlockedError) as exc:
             # A blocked model (E4) falls back exactly like one that is down: the alias's
             # callers keep working on the replacement the operator chose.
@@ -448,7 +496,7 @@ class GatewayService:
             if fallback is None or not self._visible(scope, fallback) or _blocked(fallback.model):
                 raise
             reason = "blocked" if isinstance(exc, ModelBlockedError) else "unavailable"
-            target = await self._target(requested, fallback.model, None)
+            target = await self._target(requested, fallback.model, None, affinity)
             target.fallback_from = requested
             metrics.GATEWAY_FALLBACKS.labels(reason).inc()
             log.info("alias_fallback", alias=requested, fallback=fallback.alias, reason=reason)
@@ -473,7 +521,11 @@ class GatewayService:
         return f"deployment:{deployment.id}"
 
     async def _target(
-        self, requested: str, model: Model, alias: ModelAlias | None
+        self,
+        requested: str,
+        model: Model,
+        alias: ModelAlias | None,
+        affinity: str | None = None,
     ) -> ResolvedTarget:
         if _blocked(model):
             # The caller is told the model exists but may not be used, by name: what
@@ -503,7 +555,7 @@ class GatewayService:
             )
 
         # E58: spread across copies. The rest are kept, in order, for a failed call.
-        ordered = await self._balancer.order(model.id, usable)
+        ordered = await self._balancer.order(model.id, usable, affinity=affinity)
         deployment = ordered[0]
         return ResolvedTarget(
             requested_model=requested,
@@ -1210,7 +1262,9 @@ class GatewayService:
     ) -> dict[str, Any]:
         """Non-streaming chat completion."""
         self.attribute(context, body)
-        target = await self.resolve(body.get("model", ""), context.scope)
+        target = await self.resolve(
+            body.get("model", ""), context.scope, affinity=self.affinity_key(body, context)
+        )
         context.needs = chat_needs(body)
         require_capabilities(target, context.needs)
         messages = self._messages(
@@ -1292,7 +1346,9 @@ class GatewayService:
         if not body.get("messages"):
             raise ValidationError("'messages' must contain at least one message.")
         target = await self.resolve(
-            body.get("model", ""), context.scope if context is not None else None
+            body.get("model", ""),
+            context.scope if context is not None else None,
+            affinity=self.affinity_key(body, context),
         )
         needs = chat_needs(body)
         require_capabilities(target, needs)

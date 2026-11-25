@@ -27,11 +27,21 @@ Strategies (``gateway.load_balancing``):
 * ``round_robin``: strict turns, ignoring load.
 * ``first``: always the oldest copy, the others only on failure. The behaviour before
   E58, kept for debugging (repeated calls hit the same instance).
+
+**Session affinity (E93).** With ``gateway.session_affinity`` a call can carry a
+conversation key, and the copies are ordered by weighted rendezvous hashing of that key:
+the same conversation lands on the same copy, so its prefix cache holds the earlier turns.
+Weighted, each copy still gets its traffic share across conversations (a canary at 10%
+gets about a tenth of them); and adding or removing a copy moves only the conversations it
+gains or held. A conversation's copy is passed over for the usual order when it has
+``gateway.session_affinity_max_extra`` more calls in flight than the least busy copy.
 """
 
 from __future__ import annotations
 
+import hashlib
 import itertools
+import math
 import time
 import uuid
 from collections.abc import Sequence
@@ -74,18 +84,39 @@ def _weight(deployment: object) -> int:
     return max(0, int(value if value is not None else 100))
 
 
+def _rendezvous(key: str, ident: uuid.UUID, weight: int) -> float:
+    """E93: a copy's score for a conversation; the highest wins. Weighted rendezvous
+    hashing: ``-weight / ln(u)`` for a uniform ``u`` from the key and the copy."""
+    digest = hashlib.sha256(f"{key}|{ident}".encode()).digest()
+    u = (int.from_bytes(digest[:8], "big") + 1) / (2**64 + 2)  # strictly inside (0, 1)
+    return -weight / math.log(u)
+
+
 class ReplicaBalancer:
-    def __init__(self, redis: Any, lease_seconds: int, strategy: str = "least_busy") -> None:
+    def __init__(
+        self,
+        redis: Any,
+        lease_seconds: int,
+        strategy: str = "least_busy",
+        affinity_max_extra: int = 4,
+    ) -> None:
         self._redis = redis
         self._lease = lease_seconds
+        self._affinity_max_extra = affinity_max_extra
         self._strategy = strategy if strategy in STRATEGIES else "least_busy"
 
-    async def order[T: _HasId](self, model_id: uuid.UUID, deployments: Sequence[T]) -> list[T]:
+    async def order[T: _HasId](
+        self, model_id: uuid.UUID, deployments: Sequence[T], *, affinity: str | None = None
+    ) -> list[T]:
         """``deployments`` in the order to try them: the first gets the call, the rest are
-        where a failed call is retried."""
+        where a failed call is retried. ``affinity`` (E93): the conversation's key."""
         candidates = sorted(deployments, key=lambda d: str(d.id))
         if len(candidates) <= 1 or self._strategy == "first":
             return list(deployments)
+        if affinity:
+            pinned = await self._pinned(affinity, candidates)
+            if pinned is not None:
+                return pinned
         turn = await self._turn(model_id)
         offset = turn % len(candidates)
         # E77: copies given different shares of the traffic are spread by share, under
@@ -101,6 +132,23 @@ class ReplicaBalancer:
             return rotated
         # Stable sort: equally busy copies keep their rotated order, so they take turns.
         return sorted(rotated, key=lambda d: busy.get(d.id, 0))
+
+    async def _pinned[T: _HasId](self, affinity: str, candidates: list[T]) -> list[T] | None:
+        """E93: the copies in the conversation's order, or None when its copy is too busy
+        (the usual order then applies). Copies at weight 0 come last, as failover."""
+        weights = {d.id: _weight(d) for d in candidates}
+        serving = [d for d in candidates if weights[d.id] > 0]
+        if not serving:
+            return None
+        ranked = sorted(serving, key=lambda d: -_rendezvous(affinity, d.id, weights[d.id]))
+        ranked += [d for d in candidates if weights[d.id] == 0]
+        busy = await self._in_flight([d.id for d in serving])
+        if busy is not None:
+            least = min(busy.get(d.id, 0) for d in serving)
+            if busy.get(ranked[0].id, 0) - least > self._affinity_max_extra:
+                log.debug("session_affinity_overflow", deployment=str(ranked[0].id))
+                return None
+        return ranked
 
     @staticmethod
     def _weighted[T: _HasId](turn: int, candidates: list[T], weights: dict) -> list[T]:
