@@ -4743,6 +4743,39 @@ function backendLoadPanel(load) {
     '<div class="small text-secondary">The backend reported nothing yet.</div>'}</div>`;
 }
 
+/** E90: fetch a model onto an Ollama backend, from its library or an internal registry. */
+function backendPullForm(canPull) {
+  if (!canPull) return '';
+  return `<form id="be-pull-form" class="d-flex flex-wrap align-items-center gap-2 small border-top pt-3 mt-2">
+    <span class="text-secondary">Pull a model:</span>
+    <input id="be-pull-name" class="form-control form-control-sm mono" style="width:22rem" required
+           maxlength="255" placeholder="registry.internal/library/llama3.2:3b"
+           title="As Ollama names it: a library name, or one on an internal registry">
+    <label class="form-check-label d-flex align-items-center gap-1"
+           title="A registry over plain HTTP, or with a certificate Ollama doesn't trust">
+      <input type="checkbox" class="form-check-input" id="be-pull-insecure"> insecure registry</label>
+    <button class="btn btn-sm btn-outline-primary">Pull</button>
+  </form>`;
+}
+
+/** E90: this backend's own load alert levels over the platform's. */
+function backendLevelsForm(detail) {
+  // Only vLLM reports a queue and a KV cache; Ollama's levels would never apply.
+  if (!detail || detail.backend_type !== 'vllm') return '';
+  const own = detail.load_alert_levels || {};
+  const input = (id, key, max, title) => `<input id="${id}" type="number" min="0" max="${max}"
+    class="form-control form-control-sm" style="width:5.5rem" placeholder="platform"
+    value="${own[key] ?? ''}" title="${title}">`;
+  return `<form id="be-levels-form" class="d-flex flex-wrap align-items-center gap-2 small border-top pt-3 mt-2">
+    <span class="text-secondary" title="Blank: the platform's level (Settings, Monitoring). 0: no alert for this backend.">This backend warns at:</span>
+    ${input('be-level-waiting', 'requests_waiting', 100000, 'Requests waiting, in two checks in a row')}
+    <span>requests waiting, or a KV cache</span>
+    ${input('be-level-cache', 'kv_cache_percent', 100, 'Percent of the KV cache used')}
+    <span>% full</span>
+    <button class="btn btn-sm btn-outline-secondary">Save</button>
+  </form>`;
+}
+
 async function openDiscover(backendId, backendName, capabilities = []) {
   document.getElementById('discover-title').textContent = `Models on ${backendName}`;
   const body = document.getElementById('discover-body');
@@ -4754,10 +4787,13 @@ async function openDiscover(backendId, backendName, capabilities = []) {
   // E76: Ollama can load a model it has into memory and unload it; vLLM and Ollama report
   // their load.
   const canLoad = capabilities.includes('deploy') && can('backend.manage');
+  const manage = can('backend.manage');
   const show = async () => {
-    const [models, load] = await Promise.all([
+    const [models, load, detail] = await Promise.all([
       api(`/backends/${backendId}/models`),
       capabilities.includes('metrics') ? backendLoad(backendId) : null,
+      // E90: its own load alert levels, to show and edit.
+      capabilities.includes('metrics') && manage ? api(`/backends/${backendId}`).catch(() => null) : null,
     ]);
     const inMemory = new Set(capabilities.includes('deploy') && load?.models
       ? load.models.map((m) => m.name) : []);
@@ -4780,8 +4816,52 @@ async function openDiscover(backendId, backendName, capabilities = []) {
                 inMemory.has(m.id) ? 'Unload' : 'Load'}</button>` : ''}</td>` : ''}
           </tr>`).join('')}
         </tbody>
-      </table>` : empty('This backend reports no models.'));
+      </table>` : empty('This backend reports no models.')) + backendPullForm(canLoad)
+      + backendLevelsForm(detail);
     register.disabled = !models.length;
+    // E90: fetch a model onto the backend (Ollama), then show the list again.
+    document.getElementById('be-pull-form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const button = event.target.querySelector('button');
+      guard(button, async () => {
+        const model = document.getElementById('be-pull-name').value.trim();
+        if (!model) return;
+        button.textContent = 'Pulling… (can take minutes)';
+        try {
+          const result = await api(`/backends/${backendId}/models/pull`, {
+            method: 'POST',
+            body: JSON.stringify({ model, insecure: document.getElementById('be-pull-insecure').checked }),
+          });
+          await show();
+          body.insertAdjacentHTML('afterbegin', `<div class="alert alert-success small">${esc(result.message)}</div>`);
+        } catch (err) {
+          body.insertAdjacentHTML('afterbegin', `<div class="alert alert-danger small">${esc(err.message)}</div>`);
+          button.textContent = 'Pull';
+        }
+      });
+    });
+    // E90: this backend's own alert levels; blank for the platform's.
+    document.getElementById('be-levels-form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const button = event.target.querySelector('button');
+      guard(button, async () => {
+        const value = (id) => {
+          const raw = document.getElementById(id).value.trim();
+          return raw === '' ? null : Number(raw);
+        };
+        try {
+          await api(`/backends/${backendId}/load-alert-levels`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              requests_waiting: value('be-level-waiting'), kv_cache_percent: value('be-level-cache'),
+            }),
+          });
+          body.insertAdjacentHTML('afterbegin', '<div class="alert alert-success small">Alert levels saved; they apply from the next health check.</div>');
+        } catch (err) {
+          body.insertAdjacentHTML('afterbegin', `<div class="alert alert-danger small">${esc(err.message)}</div>`);
+        }
+      });
+    });
     if (chart) drawBackendLoad(backendId);
     body.querySelectorAll('[data-be-load]').forEach((button) => {
       button.onclick = () => guard(button, async () => {

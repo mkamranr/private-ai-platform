@@ -19,9 +19,11 @@ from app.schemas.operations import (
     BackendDeletedResponse,
     BackendDetail,
     BackendLoadHistory,
+    BackendLoadLevels,
     BackendMetricSampleRead,
     BackendMetricsRead,
     BackendModelAction,
+    BackendModelPull,
     BackendRead,
     BackendUpdateRequest,
     ConnectionTestResponse,
@@ -242,6 +244,41 @@ async def unload_backend_model(
     request."""
     await service.set_loaded(backend_id, payload.model, loaded=False, actor=actor)
     return MessageResponse(message=f"{payload.model} is unloaded.")
+
+
+@router.post(
+    "/{backend_id}/models/pull",
+    response_model=MessageResponse,
+    summary="Fetch a model onto the backend from its registry",
+)
+async def pull_backend_model(
+    payload: BackendModelPull,
+    service: InferenceBackendServiceDep,
+    actor: Annotated[User, require_permission(Perm.BACKEND_MANAGE)],
+    backend_id: uuid.UUID = Path(...),
+) -> MessageResponse:
+    """E90: Ollama only. Waits until the whole model is on the backend's disk, which for
+    a large model takes minutes; then it can be loaded, and registered from *Models*."""
+    await service.pull_model(backend_id, payload.model, insecure=payload.insecure, actor=actor)
+    return MessageResponse(message=f"{payload.model} is on the backend now.")
+
+
+@router.put(
+    "/{backend_id}/load-alert-levels",
+    response_model=BackendRead,
+    summary="Set the backend's own load alert levels",
+)
+async def set_backend_load_levels(
+    payload: BackendLoadLevels,
+    service: InferenceBackendServiceDep,
+    actor: Annotated[User, require_permission(Perm.BACKEND_MANAGE)],
+    backend_id: uuid.UUID = Path(...),
+) -> BackendRead:
+    """E90: over the platform's ``backends.load_alert_*``; a level left out comes from the
+    platform, 0 turns that alert off for this backend. An empty body returns it to the
+    platform's levels."""
+    backend = await service.set_load_levels(backend_id, payload.model_dump(), actor=actor)
+    return BackendRead.model_validate(backend)
 
 
 @router.post(

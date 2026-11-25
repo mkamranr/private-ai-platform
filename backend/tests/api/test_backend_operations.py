@@ -168,3 +168,77 @@ class TestLoadUnload:
             url, json={"model": "qwen"}, headers=auth_header(tokens, backend_viewer)
         )
         assert response.status_code == 403
+
+
+class TestPull:
+    """E90: fetching a model onto an Ollama backend."""
+
+    async def test_ollama(
+        self,
+        client: AsyncClient,
+        tokens,
+        backend_admin,
+        backend_viewer,
+        fake_backend,
+        session: AsyncSession,
+    ) -> None:
+        headers = auth_header(tokens, backend_admin)
+        created = await _create(client, headers)
+        sent: list[dict] = []
+
+        def ollama(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/pull"
+            body = json.loads(request.content)
+            sent.append(body)
+            if body["model"].startswith("nowhere"):
+                return httpx.Response(
+                    500, json={"error": "pull model manifest: file does not exist"}
+                )
+            return httpx.Response(200, json={"status": "success"})
+
+        fake_backend["ollama-host"] = ollama
+        url = f"/api/v1/backends/{created['id']}/models/pull"
+        response = await client.post(
+            url,
+            json={"model": "registry.internal/library/llama3.2:3b", "insecure": True},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert sent == [
+            {"model": "registry.internal/library/llama3.2:3b", "stream": False, "insecure": True}
+        ]
+        response = await client.post(url, json={"model": "nowhere/x:1"}, headers=headers)
+        assert response.status_code == 422 and "file does not exist" in response.text
+        response = await client.post(url, json={"model": "bad name; rm"}, headers=headers)
+        assert response.status_code == 422
+        response = await client.post(
+            url, json={"model": "llama3.2"}, headers=auth_header(tokens, backend_viewer)
+        )
+        assert response.status_code == 403
+
+        actions = (
+            (
+                await session.execute(
+                    select(AuditLog.action).where(AuditLog.resource_id == created["id"])
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert actions.count("BACKEND_MODEL_PULLED") == 1
+
+    async def test_vllm_cannot(
+        self, client: AsyncClient, tokens, backend_admin, fake_backend
+    ) -> None:
+        created = await _create(
+            client,
+            auth_header(tokens, backend_admin),
+            backend_type="vllm",
+            base_url="http://vllm-host:8000",
+        )
+        response = await client.post(
+            f"/api/v1/backends/{created['id']}/models/pull",
+            json={"model": "qwen"},
+            headers=auth_header(tokens, backend_admin),
+        )
+        assert response.status_code == 422 and "can't fetch models" in response.text

@@ -41,10 +41,27 @@ POST /api/v1/backends/{id}/models/unload   {"model": "llama3.2:latest"}
 ```
 
 Both need `backend.manage`, an enabled backend, and are audited
-(`BACKEND_MODEL_LOADED`, `BACKEND_MODEL_UNLOADED`). Nothing is pulled: a model that isn't
-on the Ollama is refused (*pull it there first*), since the platform never downloads from
-the Internet. vLLM serves the one model it was started with, so it can't load or unload;
-to run models on GPUs the platform manages, deploy them from the Model Registry instead.
+(`BACKEND_MODEL_LOADED`, `BACKEND_MODEL_UNLOADED`). Loading never downloads: a model that
+isn't on the Ollama is refused (*pull it there first*). vLLM serves the one model it was
+started with, so it can't load or unload; to run models on GPUs the platform manages,
+deploy them from the Model Registry instead.
+
+**Pulling a model onto Ollama.** *Pull a model* in *Models* (or the API) has the Ollama
+fetch a model onto its own disk, by the name Ollama pulls it by:
+
+```http
+POST /api/v1/backends/{id}/models/pull
+{"model": "registry.internal/library/llama3.2:3b", "insecure": false}
+```
+
+On an air-gapped site, name a model on an internal registry that mirrors the Ollama
+library (`host/namespace/model:tag`); `insecure` allows one served over plain HTTP or with
+a certificate the Ollama doesn't trust. The Ollama does the download, not the platform, so
+it is the Ollama's network access that counts. The call waits until the whole model is on
+disk, which for a large one takes minutes (the console's proxy allows an hour, the call
+50 minutes); then load it, or register it with *Register all in catalogue*. Needs
+`backend.manage`, audited as `BACKEND_MODEL_PULLED`; 422 with Ollama's reason when the
+pull fails (no such model, registry unreachable).
 
 ### Load over time, and alerts on it
 
@@ -69,6 +86,19 @@ the first check under them:
 Both are 0 (off) by default. Samples older than `backends.load_retention_days` (7) are
 deleted by the hourly retention job, and with the backend. A backend that is down, or that
 reports nothing, keeps no samples.
+
+**A backend's own levels.** A backend serving a busy batch model can be expected to queue
+more than an interactive one. *This backend warns at* in its *Models* (vLLM backends), or
+the API, sets its own levels over the platform's:
+
+```http
+PUT /api/v1/backends/{id}/load-alert-levels   {"requests_waiting": 20, "kv_cache_percent": 0}
+```
+
+A level left out comes from the platform's, 0 turns that alert off for this backend, and
+an empty body returns it to the platform's. They apply from its next health check.
+`backend.manage`, audited as `BACKEND_LOAD_LEVELS_CHANGED`; the backend's
+`load_alert_levels` shows them.
 
 ## Outbound URL policy
 
@@ -102,5 +132,6 @@ skipped. Calls the gateway makes to these models share one circuit breaker per b
 - The gateway sends a backend's API key to that backend (and only to it). See
   [gateway-policy.md](gateway-policy.md#backend-api-keys).
 - Existing models are not backfilled with a `backend_id`.
-- Backend load is read when asked, not kept: there's no history and no alert on it.
-- GPU-threshold alerts and the MCP URL check are not wired to the shared policy yet.
+- Ollama reports no queue or KV cache, so only its models in memory are kept and it
+  raises no load alert.
+- A pull shows no progress until it finishes, and stops if the request is cut off.

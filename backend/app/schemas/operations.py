@@ -74,6 +74,8 @@ class BackendRead(ORMModel):
     version: str | None = None
     capabilities: list[str]
     model_count: int | None = None
+    #: E90: its own load alert levels over the platform's (null: the platform's).
+    load_alert_levels: dict[str, int] | None = None
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -118,6 +120,24 @@ class BackendModelAction(BaseModel):
     """E76: a model the backend already has, by its name there."""
 
     model: str = Field(min_length=1, max_length=255)
+
+
+class BackendModelPull(BaseModel):
+    """E90: a model to fetch onto an Ollama backend, by the name Ollama pulls it by: a
+    library name (``llama3.2:3b``) or one on an internal registry
+    (``registry.internal/library/llama3.2:3b``)."""
+
+    model: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/@-]*$")
+    #: Allow a registry served over plain HTTP or with a certificate Ollama doesn't trust.
+    insecure: bool = False
+
+
+class BackendLoadLevels(BaseModel):
+    """E90: a backend's own load alert levels; a level left null comes from the
+    platform's (``backends.load_alert_*``), 0 turns that alert off for this backend."""
+
+    requests_waiting: int | None = Field(default=None, ge=0, le=100_000)
+    kv_cache_percent: int | None = Field(default=None, ge=0, le=100)
 
 
 class DiscoveredModelRead(BaseModel):

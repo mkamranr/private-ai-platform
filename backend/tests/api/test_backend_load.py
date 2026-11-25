@@ -18,7 +18,11 @@ from app.repositories.audit import AuditRepository
 from app.repositories.operations import AlertRepository, InferenceBackendRepository
 from app.services.alerts import AlertService, backend_load_fingerprint
 from app.services.audit import AuditService
-from app.services.inference_backends import InferenceBackendService, load_breach
+from app.services.inference_backends import (
+    InferenceBackendService,
+    backend_levels,
+    load_breach,
+)
 from tests.api.test_backends import (  # noqa: F401  (fixtures)
     _create,
     backend_admin,
@@ -161,3 +165,67 @@ class TestRecorded:
             )
         ).all()
         assert left == []
+
+
+class TestBackendLevels:
+    """E90: a backend's own load alert levels, over the platform's."""
+
+    def test_merged(self) -> None:
+        own = backend_levels(LEVELS, {"requests_waiting": 50})
+        assert own.load_alert_requests_waiting == 50
+        assert own.load_alert_kv_cache_percent == 90  # the platform's
+        assert backend_levels(LEVELS, None) is LEVELS
+        off = backend_levels(LEVELS, {"requests_waiting": 0, "kv_cache_percent": 0})
+        assert load_breach({"requests_waiting": 999, "kv_cache_usage_percent": 99}, off) == []
+
+    async def test_a_busy_backend_alerts_later(
+        self,
+        client: AsyncClient,
+        tokens,
+        backend_admin,
+        backend_viewer,
+        fake_backend,
+        session,
+        settings,
+    ) -> None:
+        headers = auth_header(tokens, backend_admin)
+        created = await _create(
+            client, headers, backend_type="vllm", base_url="http://vllm-host:8000"
+        )
+        backend_id = uuid.UUID(str(created["id"]))
+        url = f"/api/v1/backends/{backend_id}/load-alert-levels"
+
+        response = await client.put(
+            url, json={"requests_waiting": 20, "kv_cache_percent": 0}, headers=headers
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["load_alert_levels"] == {
+            "requests_waiting": 20,
+            "kv_cache_percent": 0,
+        }
+        refused = await client.put(
+            url, json={"requests_waiting": 1}, headers=auth_header(tokens, backend_viewer)
+        )
+        assert refused.status_code == 403
+        assert (
+            await client.put(url, json={"kv_cache_percent": 101}, headers=headers)
+        ).status_code == 422
+
+        # 8 waiting and a full cache would alert at the platform's levels, not at its own.
+        service = _service(session, settings)
+        fake_backend["vllm-host"] = vllm(waiting=8, cache=99)
+        await service.check_all_enabled(load=LEVELS)
+        await service.check_all_enabled(load=LEVELS)
+        assert await _alert(session, backend_id) is None
+        fake_backend["vllm-host"] = vllm(waiting=25, cache=99)
+        await service.check_all_enabled(load=LEVELS)
+        await service.check_all_enabled(load=LEVELS)
+        alert = await _alert(session, backend_id)
+        assert alert is not None and "25 requests waiting" in alert.title
+        assert "KV cache" not in alert.title
+
+        # Back to the platform's.
+        response = await client.put(url, json={}, headers=headers)
+        assert response.status_code == 200 and response.json()["load_alert_levels"] is None
+        listed = await client.get(f"/api/v1/backends/{backend_id}", headers=headers)
+        assert listed.json()["load_alert_levels"] is None

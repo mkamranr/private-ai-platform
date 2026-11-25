@@ -673,7 +673,7 @@ matrix still listed as missing.
 - [x] `InferenceBackendAdapter.metrics`, `load_model`, `unload_model` (default: `UnsupportedBackendOperationError`) and `BackendMetrics`. vLLM: `METRICS` from Prometheus `/metrics` (`parse_prometheus`: requests running and waiting, KV-cache share, token counters, per `model_name`). Ollama: `METRICS` (`/api/ps`), `DEPLOY` and `STOP` (`/api/generate` with `keep_alive` -1 or 0; a 404 means the model isn't there).
 - [x] `GET /backends/{id}/metrics` (`backend.view`), `POST /backends/{id}/models/load|unload` (`backend.manage`, audited `BACKEND_MODEL_LOADED` / `BACKEND_MODEL_UNLOADED`).
 - [x] Console: the backend's load above its model list, and *Load* / *Unload* per Ollama model. Checked in Chromium. Tests: `tests/api/test_backend_operations.py`. Docs: [backends.md](../backends.md#load-and-loading-models), api.md.
-- [ ] ~~Load is read when asked: no history, no alert~~ (E81). Models are never pulled onto a backend; vLLM can't change the model it serves.
+- [ ] ~~Load is read when asked: no history, no alert~~ (E81). ~~Models are never pulled onto a backend~~ (E90: Ollama); vLLM can't change the model it serves.
 
 ## E77: Weighted copies and canary rollouts
 
@@ -711,7 +711,7 @@ matrix still listed as missing.
 - [x] `backends.load_alert_requests_waiting` and `backends.load_alert_kv_cache_percent` (runtime, 0 = off): `load_breach`, and `record_load` raises one `WARNING` (`backend_load_fingerprint`) after two samples in a row over a level, and clears it under them. Deleting the backend clears it.
 - [x] Console: a chart of the last six hours in the backend's *Models*.
 - [x] Tests: `tests/api/test_backend_load.py`. Docs: [backends.md](../backends.md#load-over-time-and-alerts-on-it), settings.md, api.md, `.env.example`.
-- [ ] Levels are the same for every backend; Ollama reports no queue, so only its samples are kept.
+- [ ] ~~Levels are the same for every backend~~ (E90); Ollama reports no queue, so only its samples are kept.
 
 ## E82: Smarter canary checks
 
@@ -771,6 +771,14 @@ matrix still listed as missing.
 - [x] `canary_max_faithfulness_drop`: `_faithfulness` averages judged answers the copies wrote since the watch began; more than the drop below the other copies' fails the canary; fewer than `FAITHFULNESS_MIN_ANSWERS` (5) a side gives `faithfulness_note`. Console: two more fields under *Canary first*.
 - [x] Tests: `tests/api/test_canary_rollouts.py` (`TestQualityCanary`), `tests/api/test_answer_scoring.py` (the copy kept). Docs: model-governance.md, api.md.
 - [ ] Only answers already judged when the watch ends count, and only agent answers that retrieved passages are judged. An answer resumed on another copy is recorded on the copy the run started on.
+
+## E90: A backend's own alert levels; pulling models onto Ollama
+
+- [x] `inference_backends.load_alert_levels` (migration `f1c3e5a7b9d2`): `backend_levels` lays a backend's own levels over `backends.load_alert_*` in `record_load`; `PUT /backends/{id}/load-alert-levels` (`backend.manage`, audited `BACKEND_LOAD_LEVELS_CHANGED`); 0 turns one off for it, `{}` returns to the platform's.
+- [x] `InferenceBackendAdapter.pull_model`; `OllamaAdapter` posts `/api/pull` (`stream: false`, `insecure`), waiting up to 50 minutes; `POST /backends/{id}/models/pull` (audited `BACKEND_MODEL_PULLED`), 422 with Ollama's reason. The model name is checked against a conservative pattern.
+- [x] Console: *Pull a model* (Ollama) and *This backend warns at* (vLLM) in a backend's *Models*.
+- [x] Tests: `tests/api/test_backend_load.py` (`TestBackendLevels`), `tests/api/test_backend_operations.py` (`TestPull`). Docs: backends.md, api.md.
+- [ ] A pull shows no progress until it ends, and is lost if the request is cut off. vLLM still serves only the model it started with.
 
 ## Phase acceptance (applies to each)
 

@@ -92,3 +92,7 @@ class InferenceBackendAdapter(ABC):
     async def unload_model(self, name: str) -> None:
         """E76 (STOP): unload a model from memory. It stays on the backend's disk."""
         raise UnsupportedBackendOperationError("This backend type can't unload models on request.")
+
+    async def pull_model(self, name: str, *, insecure: bool = False) -> None:
+        """E90 (DEPLOY): fetch a model onto the backend's disk from its registry."""
+        raise UnsupportedBackendOperationError("This backend type can't fetch models.")
