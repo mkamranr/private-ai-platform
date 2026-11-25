@@ -278,6 +278,35 @@ class GpuMetricRepository(BaseRepository[GpuMetric]):
         )
         return (await self.session.execute(stmt)).scalars().all()
 
+    async def pcie_replay_growth(
+        self, gpu_ids: Sequence[uuid.UUID], since: dt.datetime
+    ) -> dict[uuid.UUID, int]:
+        """E87: how much each GPU's PCIe replay counter grew since ``since``: its newest
+        reading less its oldest. A counter that went down (the driver reset it) counts
+        from the reset. GPUs that report no counter are left out."""
+        if not gpu_ids:
+            return {}
+        stmt = (
+            select(GpuMetric.gpu_id, GpuMetric.pcie_replay_counter)
+            .where(
+                GpuMetric.gpu_id.in_(gpu_ids),
+                GpuMetric.recorded_at >= since,
+                GpuMetric.pcie_replay_counter.is_not(None),
+            )
+            .order_by(GpuMetric.gpu_id, GpuMetric.recorded_at)
+        )
+        growth: dict[uuid.UUID, int] = {}
+        last: dict[uuid.UUID, int] = {}
+        for gpu_id, value in (await self.session.execute(stmt)).all():
+            previous = last.get(gpu_id)
+            if previous is not None:
+                step = value - previous if value >= previous else value
+                growth[gpu_id] = growth.get(gpu_id, 0) + step
+            else:
+                growth.setdefault(gpu_id, 0)
+            last[gpu_id] = value
+        return growth
+
     async def delete_older_than(self, cutoff: dt.datetime) -> int:
         """Enforce retention. Returns the number of rows removed."""
         result = cast(

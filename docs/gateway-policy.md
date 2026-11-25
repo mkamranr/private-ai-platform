@@ -165,8 +165,11 @@ answer, under the same stream id, with no error.
 
 - Only when the model can resume ([capability](models.md#capabilities) `resume`: vLLM,
   SGLang, llama.cpp and Ollama by default; an `external` endpoint only when declared), and
-  only within `gateway.replica_retries`. Not on an alias's fallback: another model would
-  write in another voice.
+  only within `gateway.replica_retries`.
+- **On the alias's fallback.** With no copy left to resume on, a stream on an alias with
+  a fallback carries on there, if the fallback's model can resume too. Another model
+  continues the text in its own voice, so the sentence may change register where it
+  resumes; the usage row records the fallback's model and `fallback_from`.
 - Not after a tool-call delta (half a call can't be continued), the finish, or the usage
   report has been sent.
 - The text is held up to `gateway.stream_resume_max_chars` characters (default 32,768);
@@ -193,8 +196,9 @@ operator knows whether a smaller model's answer is acceptable. The fallback is u
 1. the alias's model has nothing serving, or every deployment's circuit is open (any
    call, including streams); or
 2. a buffered call (chat without `stream`, embeddings, audio) fails upstream, in which
-   case it is retried **once** on the fallback. A stream that has started cannot be
-   retried.
+   case it is retried **once** on the fallback; or
+3. a stream fails: before any text was sent it starts again on the fallback, once no
+   other copy is left; after, it is resumed there (see above) if the fallback can resume.
 
 It is one hop only: the fallback's own fallback is never followed, so a cycle cannot
 loop. The caller still sees the name it asked for. The usage row records

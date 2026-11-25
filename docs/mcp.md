@@ -72,7 +72,7 @@ suggested at HIGH and is best left disabled.
 | Server | Why not |
 |---|---|
 | `fetch` | Exists to retrieve web pages, the one thing an air-gapped host cannot do |
-| `git` (`mcp-server-git`) | Needs the `git` binary. The bridge image is not built to provide it and may not install it (no OS packages in Dockerfiles) |
+| `git` (`mcp-server-git`) | Needs the `git` binary, which the bridge image doesn't have and may not install (no OS packages in Dockerfiles). It also works on a checkout on the bridge's own disk, so an internal Git server would need cloning and credentials the platform doesn't hold. Revisit if the bridge image gains `git` |
 | `everything` | A protocol test server that needs Node 24 or later; nothing for an agent to use |
 | `postgres` (`@modelcontextprotocol/server-postgres`) | Archived upstream, and its read-only guard can be bypassed with a multi-statement query |
 | Anything with `network: external` (Slack, GitHub.com, web search) | Cannot work air-gapped, and would be a path out of the site if it could |

@@ -311,6 +311,14 @@ class AgentAnswerScoreRepository(BaseRepository[AgentAnswerScore]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def last_scored_at(self, agent_id: uuid.UUID) -> dt.datetime | None:
+        """E87: when the agent's newest judged answer was judged."""
+        stmt = select(func.max(AgentAnswerScore.scored_at)).where(
+            AgentAnswerScore.agent_id == agent_id,
+            AgentAnswerScore.status == AnswerScoreStatus.SCORED,
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def recent_faithfulness(self, agent_id: uuid.UUID, *, limit: int) -> list[float]:
         """E75: the faithfulness of the agent's newest ``limit`` scored answers."""
         stmt = (

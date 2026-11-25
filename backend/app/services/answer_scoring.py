@@ -25,6 +25,10 @@ first after ``agents.answer_judge_retry_minutes`` and each further one twice as 
 up to a quarter more at random, so a backlog left by an outage reaches the judge spread
 out rather than at once. The passages stay until the last try. A reply that came back but
 could not be read (``JudgeError``) is not retried: asking again rarely reads better.
+
+E87: hourly, an open faithfulness alert is cleared when its agent is gone or disabled,
+the alert line is off, or the agent has had no judged answer for
+``agents.answer_faithfulness_stale_days``: nothing new would ever clear it otherwise.
 """
 
 from __future__ import annotations
@@ -187,6 +191,31 @@ class AnswerScoringService:
             resource_id=str(agent_id),
             team_id=agent.team_id if agent else None,
         )
+
+    async def clear_stale_alerts(self) -> int:
+        """E87: clear the faithfulness alerts no new answer will ever revisit. Returns how
+        many were cleared."""
+        if self._alerts is None:
+            return 0
+        agents = self._settings.agents
+        cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(days=agents.answer_faithfulness_stale_days)
+        cleared = 0
+        for fingerprint in await self._alerts.open_fingerprints(FAITHFULNESS_ALERT_SOURCE):
+            try:
+                agent_id = uuid.UUID(fingerprint.split(":", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            agent = await self._scores.session.get(Agent, agent_id)
+            last = await self._scores.last_scored_at(agent_id)
+            if (
+                agent is None
+                or not agent.enabled
+                or not agents.answer_faithfulness_alert_below
+                or last is None
+                or last < cutoff
+            ) and await self._alerts.clear(fingerprint):
+                cleared += 1
+        return cleared
 
     async def prune(self) -> int:
         days = self._settings.agents.answer_score_retention_days

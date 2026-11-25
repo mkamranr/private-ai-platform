@@ -98,7 +98,7 @@ runs the whole platform and its tests.
 
 | | |
 |---|---|
-| **GPU fleet** | Enrol GPU hosts with a one-time token. Live utilisation, memory, temperature and power per card, with alerts that don't flap, and alert levels per node or per card. |
+| **GPU fleet** | Enrol GPU hosts with a one-time token. Live utilisation, memory, temperature and power per card, with alerts that don't flap (PCIe replays included), and alert levels per node or per card. |
 | **Model registry** | Import or register models and deploy them with GPU-aware placement, after a dry run. Revisions roll back, logs stream live. |
 | **Runtimes** | vLLM, llama.cpp, Ollama, hosted OpenAI-compatible providers, or a mock runtime. What a model can do (tools, vision, streaming) is read from the runtime itself whenever a copy starts. |
 | **Inference backends** | Attach existing vLLM, Ollama or OpenAI-compatible servers, watch their health and load over time with alerts on queues and KV cache, catalogue their models in one click, and load or unload Ollama models from the console. |
@@ -110,7 +110,7 @@ runs the whole platform and its tests.
 | | |
 |---|---|
 | **One API** | Chat, completions, embeddings, speech-to-text and text-to-speech at `/v1`, with streaming. |
-| **Resilient** | Aliases with fallbacks, circuit breakers, load balancing across copies, and a stream broken mid-answer resumed on another copy. |
+| **Resilient** | Aliases with fallbacks, circuit breakers, load balancing across copies, and a stream broken mid-answer resumed on another copy or on the alias's fallback. |
 | **Quotas and budgets** | Tokens per minute, day and month, and concurrent calls, per key, team, end user or model, with warnings before the limit. |
 | **Usage and timings** | Tokens, latency, time to first token and throughput for every call, by model, key, team and person. |
 

@@ -24,6 +24,11 @@ E68, alerts that don't flap:
   are lowered by the margin, so it clears (or drops from CRITICAL to WARNING) only once the
   GPU is clearly back under the line, not when it dips a degree below it.
 
+E87: ``gpu.alert_pcie_replays_per_hour``: a WARNING when the GPU's PCIe replay counter
+grew by at least that much over the last hour. The counter is cumulative, so its growth,
+not its value, is what says the bus is retransmitting now; it clears once an hour passes
+with less. Like ECC errors it raises at once (it is already an hour's measure).
+
 E70: a node can have its own levels (``nodes.gpu_alert_thresholds``), for a hot room or
 cards rated for more. They replace the platform's for that node's GPUs; whatever the node
 doesn't set comes from the platform. A combination that no longer makes sense (the node's
@@ -118,7 +123,11 @@ class Breach:
 
 
 def evaluate(
-    metric: GpuMetric, settings: GpuSettings, *, recovering: bool = False
+    metric: GpuMetric,
+    settings: GpuSettings,
+    *,
+    recovering: bool = False,
+    pcie_replays: int | None = None,
 ) -> Breach | None:
     """The worst threshold ``metric`` crosses, or None when the GPU is within all of them.
 
@@ -183,6 +192,16 @@ def evaluate(
                 f"level ({utilization_at}%). Requests may queue.",
             )
         )
+    replays_at = settings.alert_pcie_replays_per_hour
+    if replays_at and pcie_replays is not None and pcie_replays >= replays_at:
+        warning.append(
+            (
+                f"{pcie_replays:,} PCIe replays in an hour",
+                f"Its PCIe replay counter grew by {pcie_replays:,} in the last hour (warning "
+                f"level {replays_at:,}): the bus is retransmitting. Check the riser, slot "
+                "and card; transfers to and from it are slowing down.",
+            )
+        )
     power_at = settings.alert_power_warning_percent
     if power_at and metric.power_limit_watts:
         share = metric.power_draw_watts * 100 / metric.power_limit_watts
@@ -204,6 +223,15 @@ def evaluate(
         reasons=tuple(reason for reason, _ in found),
         details=tuple(detail for _, detail in found),
     )
+
+
+#: E87: the window PCIe replay growth is measured over.
+REPLAY_WINDOW = dt.timedelta(hours=1)
+
+
+def _replays_breach(breach: Breach) -> bool:
+    """Whether the breach includes PCIe replays, which raise at once like ECC errors."""
+    return any("PCIe replays" in reason for reason in breach.reasons)
 
 
 def sustained(samples: Sequence[GpuMetric], settings: GpuSettings, minutes: int) -> bool:
@@ -261,16 +289,27 @@ class GpuAlertWatcher:
                 for _, gpu, _, own in samples
             }
             history = await self._history(samples, levels, open_now, now)
+            # E87: PCIe replay growth over the last hour, only when it is watched.
+            replays = (
+                await self._metrics.pcie_replay_growth(
+                    [gpu.id for _, gpu, _, _ in samples], now - REPLAY_WINDOW
+                )
+                if any(level.alert_pcie_replays_per_hour for level in levels.values())
+                else {}
+            )
             for metric, gpu, node_name, _ in samples:
                 fingerprint = gpu_alert_fingerprint(gpu.id)
                 is_open = fingerprint in open_now
-                breach = evaluate(metric, levels[gpu.id], recovering=is_open)
+                breach = evaluate(
+                    metric, levels[gpu.id], recovering=is_open, pcie_replays=replays.get(gpu.id)
+                )
                 if breach is None:
                     continue
                 if (
                     not is_open
                     and settings.alert_sustain_minutes
                     and not metric.ecc_errors_uncorrected
+                    and not _replays_breach(breach)
                     and not sustained(
                         history[gpu.id], levels[gpu.id], settings.alert_sustain_minutes
                     )
