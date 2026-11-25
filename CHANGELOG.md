@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Inference backends: own alert levels, and pulling models onto Ollama
+- A vLLM backend can have its own load alert levels over the platform's (*This backend warns at* in its *Models*; 0 turns an alert off for it).
+- *Pull a model* fetches a model onto an Ollama backend, from the Ollama library or an internal registry (`registry.internal/library/llama3.2:3b`), then it can be loaded and registered.
+- **Upgrade.** One migration (`alembic upgrade head`).
+
 ### Rollouts: canary judged on first-token time and answer quality
 - `canary_max_ttft_ratio` stops a canary whose p95 time to first token (streamed calls) is that many times the other copies', so a canary given longer prompts isn't judged on total time alone.
 - `canary_max_faithfulness_drop` stops a canary whose judged agent answers are that much less faithful than the other copies' (needs answer scoring, and 5 judged answers a side). Each judged answer now records the copy that wrote it.

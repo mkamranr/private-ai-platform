@@ -591,6 +591,8 @@ Under `/api/v1`, authenticated with the platform JWT. See [backends.md](backends
 | GET | `/backends/{id}/metrics/history` | `backend.view` — `?since_minutes=` (1..10080, default 60): the samples kept at each check, oldest first (`{since, samples: [{recorded_at, values}]}`) |
 | POST | `/backends/{id}/models/load` | `backend.manage` — `{model}`: Ollama loads a model it has and keeps it in memory. Audited |
 | POST | `/backends/{id}/models/unload` | `backend.manage` — `{model}`: Ollama unloads it from memory. Audited |
+| POST | `/backends/{id}/models/pull` | `backend.manage` — `{model, insecure?}`: Ollama fetches the model onto its disk (library or internal registry name); waits until done. 422 with Ollama's reason. Audited |
+| PUT | `/backends/{id}/load-alert-levels` | `backend.manage` — `{requests_waiting?, kv_cache_percent?}`: the backend's own load alert levels over the platform's (0: off for it; `{}`: the platform's). Audited |
 | POST | `/backends/{id}/models/register` | `model.register` **and** `backend.manage` |
 | GET | `/alerts` | `alert.view` — filters `state`, `open`, `severity` |
 | GET | `/alerts/summary` | `alert.view` — open counts by severity |

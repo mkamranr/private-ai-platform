@@ -235,6 +235,23 @@ def parse_prometheus(text: str) -> tuple[dict[str, float], dict[str, dict[str, f
     return fold(totals), {model: fold(found) for model, found in per_model.items()}
 
 
+#: E90: a backend's own level names, and the platform setting each stands in for.
+BACKEND_LEVEL_FIELDS = {
+    "requests_waiting": "load_alert_requests_waiting",
+    "kv_cache_percent": "load_alert_kv_cache_percent",
+}
+
+
+def backend_levels(platform: BackendsSettings, own: dict[str, Any] | None) -> BackendsSettings:
+    """E90: the platform's load alert levels with a backend's own over them."""
+    update = {
+        BACKEND_LEVEL_FIELDS[key]: int(value)
+        for key, value in (own or {}).items()
+        if key in BACKEND_LEVEL_FIELDS and value is not None
+    }
+    return platform.model_copy(update=update) if update else platform
+
+
 def load_breach(values: dict[str, Any], levels: BackendsSettings) -> list[str]:
     """E81: what in a load sample is over the alert levels, in words. Empty: nothing."""
     found: list[str] = []
@@ -337,6 +354,31 @@ class OllamaAdapter(_HttpAdapter):
 
     async def unload_model(self, name: str) -> None:
         await self._keep_alive(name, 0)
+
+    #: E90: fetching a model of several gigabytes takes a while; the console's proxy
+    #: allows an hour.
+    pull_timeout_seconds: ClassVar[float] = 3000.0
+
+    async def pull_model(self, name: str, *, insecure: bool = False) -> None:
+        """E90: ``/api/pull``, waiting for the whole model (no progress stream)."""
+        async with self._client() as client:
+            response = await client.post(
+                "/api/pull",
+                json={"model": name, "stream": False, "insecure": insecure},
+                timeout=self.pull_timeout_seconds,
+            )
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("error") or response.text
+            except ValueError:
+                detail = response.text
+            raise ModelNotOnBackendError(f"Ollama could not pull {name!r}: {detail}"[:500])
+        try:
+            status = (response.json() or {}).get("status")
+        except ValueError:
+            status = None
+        if status not in (None, "success"):
+            raise ModelNotOnBackendError(f"Ollama could not pull {name!r}: {status}"[:500])
 
     def _parse_models(self, payload: Any) -> list[DiscoveredModel]:
         """Ollama shape: ``{"models": [{"name": "llama3.2:latest", "details": {...}}]}``."""
@@ -677,6 +719,7 @@ class InferenceBackendService:
         )
         self._backends.add_sample(sample)
         fingerprint = backend_load_fingerprint(backend.id)
+        levels = backend_levels(levels, backend.load_alert_levels)  # E90
         found = load_breach(sample.values, levels)
         if not found:
             await self._alerts.clear(fingerprint)
@@ -753,6 +796,57 @@ class InferenceBackendService:
             resource_id=str(backend_id),
             metadata={"name": backend.name, "model": model},
         )
+
+    async def pull_model(
+        self, backend_id: uuid.UUID, model: str, *, insecure: bool, actor: User
+    ) -> None:
+        """E90: fetch a model onto the backend's disk (Ollama). Audited."""
+        backend = await self.get(backend_id)
+        if not backend.enabled:
+            raise ConflictError(f"'{backend.name}' is disabled.")
+        adapter = self.adapter_for(backend)
+        try:
+            await adapter.pull_model(model, insecure=insecure)
+        except UnsupportedBackendOperationError as exc:
+            raise ValidationError(f"'{backend.name}': {exc}") from exc
+        except ModelNotOnBackendError as exc:
+            raise ValidationError(
+                f"'{backend.name}': {exc}", details={"backend_id": str(backend_id), "model": model}
+            ) from exc
+        except Exception as exc:
+            raise ValidationError(
+                f"Could not pull {model!r} onto '{backend.name}': {_describe_error(exc)}",
+                details={"backend_id": str(backend_id), "model": model},
+            ) from exc
+        await self._audit.record(
+            AuditAction.BACKEND_MODEL_PULLED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="inference_backend",
+            resource_id=str(backend_id),
+            metadata={"name": backend.name, "model": model, "insecure": insecure},
+        )
+
+    async def set_load_levels(
+        self, backend_id: uuid.UUID, levels: dict[str, int | None], *, actor: User
+    ) -> InferenceBackend:
+        """E90: the backend's own load alert levels; none set returns it to the
+        platform's. Apply from its next health check. Audited."""
+        backend = await self.get(backend_id)
+        chosen = {k: v for k, v in levels.items() if v is not None and k in BACKEND_LEVEL_FIELDS}
+        before = backend.load_alert_levels
+        backend.load_alert_levels = chosen or None
+        await self._backends.flush()
+        await self._audit.record(
+            AuditAction.BACKEND_LOAD_LEVELS_CHANGED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="inference_backend",
+            resource_id=str(backend_id),
+            metadata={"name": backend.name, "before": before, "after": backend.load_alert_levels},
+        )
+        await self._backends.refresh(backend)  # updated_at is set by the database
+        return backend
 
     async def discover(self, backend_id: uuid.UUID) -> list[DiscoveredModel]:
         backend = await self.get(backend_id)

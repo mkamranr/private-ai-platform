@@ -93,6 +93,9 @@ class InferenceBackend(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: What the adapter declares it can do, recorded at the last check (plan §5.2).
     capabilities: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     model_count: Mapped[int | None] = mapped_column(Integer)
+    #: E90: this backend's own load alert levels, over the platform's
+    #: (``{"requests_waiting": n, "kv_cache_percent": n}``; 0 turns one off for it).
+    load_alert_levels: Mapped[dict | None] = mapped_column(JSONB)
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
