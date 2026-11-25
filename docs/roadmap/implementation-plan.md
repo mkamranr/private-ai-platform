@@ -697,7 +697,7 @@ matrix still listed as missing.
 - [x] Undo and redo: `markDirty` records the draft as JSON before each change (`recordHistory`, 100 deep); `resetHistory` on load. One document-level key handler (not in form fields or dialogs).
 - [x] Fixed: a dragged step drifted from the pointer when the canvas grew, because the page's scroll anchoring moved the page under it (`overflow-anchor: none` while the canvas is shown).
 - [x] Checked in Chromium (`e79.js`: zoomed drag, group move, paste with references, duplicate, cut, box select, undo to the start, shortcuts ignored in the JSON box). Docs: [workflows.md](../workflows.md#the-canvas).
-- [ ] ~~No panning by dragging~~ (E84); history and clipboard don't survive a reload.
+- [ ] ~~No panning by dragging~~ (E84); ~~history and clipboard don't survive a reload~~ (E89).
 
 ## E80: Capabilities read when a copy starts
 
@@ -734,7 +734,7 @@ matrix still listed as missing.
 - [x] Edges back (`back: true`, `max_loops` 1–20, default 3): `edges_of` leaves them out, so order, waits and cycle checks use the forward graph; `back_edges_of`, `loop_region`, `_back_edge_problems` (goes back, not start/end, a branch the source has and not `error`, no forward edge on the same branch, one per branch). `WorkflowEngine._follow_back_edges` after each batch: clears the region's entries (and skipped descendants of the target), keeps their outputs in `state.previous`, counts in `state.loops` (inner loops reset), fails a branch with nowhere else to go once spent. `{{ previous.<step>.<output> }}` in templates and validation.
 - [x] Console: an edge back drawn dashed over the top with ↺ and its count; connecting to an earlier step makes one; *Connections* has *back* and the count; insertable values show their type and, inside a loop, `previous.*`. Panning: Space + drag, middle button, or empty canvas when viewing.
 - [x] Tests: `tests/unit/test_workflow_schema.py::TestTypedPaths`, `::TestBackEdges`, `tests/api/test_workflow_loops.py`. Docs: [workflows.md](../workflows.md#edges-back).
-- [ ] Paths under `any` outputs, and whether a value's type fits its setting, aren't checked.
+- [ ] Paths under `any` outputs (E89: a model's `json` with a `json_schema`), ~~and whether a value's type fits its setting~~ (E89), aren't checked.
 
 ## E85: Fuller team restore: history, approvals, models and aliases
 
@@ -786,6 +786,14 @@ matrix still listed as missing.
 - [x] `ReplicaBalancer.order(affinity=)`: weighted rendezvous hashing over copies with weight above 0 (shares hold, a new copy moves only its share), weight 0 last; passed over for the usual order when the copy has more than `max_extra` calls in flight beyond the least busy. Chat calls only (`chat_completion`, `prepare_stream`), through `resolve(affinity=)` and the alias fallback.
 - [x] Tests: `tests/api/test_session_affinity.py`. Docs: gateway-policy.md, settings.md.
 - [ ] Two chats with the same opening and no `X-Session-Id` share a copy. No metric of how often a conversation stays put.
+
+## E89: Workflow types through settings; the canvas across reloads
+
+- [x] `json_schema` on the model step: `schema_type` turns it into an output type, `output_type` uses it for `json`, so `path_problem` checks paths under it.
+- [x] `_fit_problems` in `validate`: a whole template in a typed setting checked against `template_type` of what it reads (`setting_fit_problem`; text allowed into numbers and yes/no, `any` passes). At run time `render_config` / `coerce_setting` convert `"0.7"`, `"300"`, `"true"` and fail the step naming the setting otherwise (`_render_settings` in model, retrieval, HTTP, delay and foreach steps).
+- [x] Console: the unsaved draft and its undo history per workflow, and the open workflow, in sessionStorage (restored only against the same server draft; dropped on save, discard, delete); copied steps in localStorage, shared across tabs.
+- [x] Tests: `tests/unit/test_workflow_schema.py` (`TestJsonSchema`, `TestTypedSettings`), `tests/api/test_workflows.py::TestExecution::test_a_templated_setting_is_checked`. Docs: workflows.md.
+- [ ] HTTP bodies, tool data and sub-workflow outputs stay `any`; the reply isn't validated against `json_schema`.
 
 ## Phase acceptance (applies to each)
 

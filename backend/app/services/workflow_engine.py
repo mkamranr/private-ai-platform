@@ -92,6 +92,15 @@ MAX_HTTP_BODY: Final = 16_000
 ProviderFactory = Callable[..., Awaitable[tuple[Any, str]]]
 
 
+def _render_settings(kind: str, config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """E89: a step's settings rendered, each typed one that was a template checked; one
+    that doesn't fit fails the step, saying which and why."""
+    try:
+        return wd.render_config(kind, config, context)
+    except wd.SettingError as exc:
+        raise NodeFailedError(str(exc)) from exc
+
+
 class NodeFailedError(Exception):
     """A node's own failure (as opposed to a bug in the engine)."""
 
@@ -819,7 +828,7 @@ class WorkflowEngine:
     ) -> Outcome:
         if self._provider_factory is None:
             raise NodeFailedError("Model calls are not available here.")
-        rendered = wd.render(config, context)
+        rendered = _render_settings("llm", config, context)
         async with self._db:
             await self._require_usable(run, models=[str(rendered["model"])])
             await self._check_budget(run, str(rendered["model"]))
@@ -911,7 +920,7 @@ class WorkflowEngine:
     ) -> Outcome:
         if self._knowledge is None:
             raise NodeFailedError("Knowledge retrieval is not available here.")
-        rendered = wd.render(config, context)
+        rendered = _render_settings("retrieval", config, context)
         await self._require_usable(
             run, knowledge_bases=[str(v) for v in rendered.get("knowledge_base_ids") or []]
         )
@@ -1030,7 +1039,7 @@ class WorkflowEngine:
         context: dict[str, Any],
         node_state: dict[str, Any],
     ) -> Outcome:
-        rendered = wd.render(config, context)
+        rendered = _render_settings("http", config, context)
         url = check_outbound_url(wd._as_text(rendered.get("url")), field="url")
         method = str(rendered.get("method") or "GET").upper()
         headers = {str(k): wd._as_text(v) for k, v in (rendered.get("headers") or {}).items()}
@@ -1123,7 +1132,8 @@ class WorkflowEngine:
         context: dict[str, Any],
         node_state: dict[str, Any],
     ) -> Outcome:
-        seconds = int(config.get("seconds") or 0)
+        # E89: a templated wait is checked like any typed setting.
+        seconds = int(_render_settings("delay", config, context).get("seconds") or 0)
         return Outcome(
             output={"waited_seconds": seconds},
             wait="delay",
@@ -1165,10 +1175,11 @@ class WorkflowEngine:
         items = wd.render(config.get("items"), context)
         if not isinstance(items, list):
             raise NodeFailedError(f"items is not a list (it is {type(items).__name__}).")
-        limit = int(config.get("max_items") or wd.DEFAULT_MAX_ITEMS)
+        settings = _render_settings("foreach", config, context)  # E89
+        limit = int(settings.get("max_items") or wd.DEFAULT_MAX_ITEMS)
         if len(items) > limit:
             raise NodeFailedError(f"{len(items)} items; this step takes at most {limit}.")
-        concurrency = max(1, min(int(config.get("concurrency") or 1), wd.MAX_CONCURRENCY))
+        concurrency = max(1, min(int(settings.get("concurrency") or 1), wd.MAX_CONCURRENCY))
         carry_on = config.get("on_error") == "continue"
         results, pending = _loop_record(((run.state or {}).get("children") or {}).get(node_id))
         template = config.get("input") or {"item": "{{ item }}"}

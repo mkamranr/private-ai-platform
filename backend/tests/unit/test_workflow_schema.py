@@ -4,7 +4,7 @@ outputs, including templates that can never resolve."""
 from __future__ import annotations
 
 import itertools
-from typing import Any
+from typing import Any, ClassVar
 
 from app.services import workflow_definition as wd
 from app.services.workflows import template_definition
@@ -258,3 +258,125 @@ class TestBackEdges:
         assert wd.validate(definition) == []
         definition["nodes"][1] = node("draft", "transform", output={"t": "{{ previous.nope.x }}"})
         assert any("previous reads" in p.message for p in wd.validate(definition))
+
+
+def field(node_type: str, key: str) -> wd.ConfigField:
+    return next(f for f in wd.NODE_SCHEMAS[node_type].fields if f.key == key)
+
+
+class TestJsonSchema:
+    """E89: a model step's json_schema types its .json, so paths under it are checked."""
+
+    SCHEMA: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "total": {"type": "number"},
+            "lines": {
+                "type": "array",
+                "items": {"type": "object", "properties": {"sku": {"type": "string"}}},
+            },
+            "note": {"type": ["string", "null"]},
+        },
+    }
+
+    def test_schema_type(self) -> None:
+        assert wd.schema_type(self.SCHEMA) == {
+            "total": "number",
+            "lines": [{"sku": "text"}],
+            "note": "text",
+        }
+        assert wd.schema_type({"type": "array"}) == ["any"]
+        assert wd.schema_type("nonsense") == "any"
+        assert wd.schema_type({"type": "object"}) == "any"  # no properties: unknown fields
+
+    def test_paths_under_json(self) -> None:
+        calc = node("calc", "llm", model="m", prompt="p", parse_json=True, json_schema=self.SCHEMA)
+
+        def found(output: dict) -> set:
+            return problems(START, calc, node("use", "transform", output=output), END)
+
+        assert (
+            found({"a": "{{ nodes.calc.json.total }}", "b": "{{ nodes.calc.json.lines.0.sku }}"})
+            == set()
+        )
+        assert any("no field 'totl'" in m for _, m in found({"a": "{{ nodes.calc.json.totl }}"}))
+        assert any(
+            "no field 'price'" in m for _, m in found({"a": "{{ nodes.calc.json.lines.0.price }}"})
+        )
+        # Without a schema the json stays any, and every path is allowed.
+        plain = node("calc", "llm", model="m", prompt="p", parse_json=True)
+        assert (
+            problems(
+                START,
+                plain,
+                node("use", "transform", output={"a": "{{ nodes.calc.json.x.y }}"}),
+                END,
+            )
+            == set()
+        )
+
+
+class TestTypedSettings:
+    """E89: a typed setting filled by a whole template is checked against what it reads."""
+
+    SEARCH = node(
+        "search",
+        "retrieval",
+        knowledge_base_ids=["5f0c6d0e-0000-4000-8000-000000000001"],
+        query="q",
+    )
+
+    def found(self, **config: Any) -> set:
+        ask = node("ask", "llm", model="m", prompt="p", **config)
+        return {m for n, m in problems(START, self.SEARCH, ask, END) if n == "ask"}
+
+    def test_fits_and_misfits(self) -> None:
+        assert self.found(temperature="{{ nodes.search.count }}") == set()
+        assert self.found(temperature="{{ input.t }}") == set()  # only the run knows
+        assert self.found(max_tokens="{{ run.version }}") == set()
+        (message,) = self.found(temperature="{{ nodes.search.passages }}")
+        assert "temperature takes a number, but {{ nodes.search.passages }}" in message
+        (message,) = self.found(parse_json="{{ nodes.search.passages.0 }}")
+        assert "parse_json is true or false" in message  # not templatable: the plain check
+
+    def test_list_settings(self) -> None:
+        spec = field("retrieval", "knowledge_base_ids")
+        by_id = {"search": self.SEARCH}
+        assert wd.setting_fit_problem(spec, "nodes.search.count", by_id) is not None
+        assert "list of text values" in (
+            wd.setting_fit_problem(spec, "nodes.search.passages", by_id) or ""
+        )
+
+    def test_coerce(self) -> None:
+        temperature, tokens = field("llm", "temperature"), field("llm", "max_tokens")
+        assert wd.coerce_setting(temperature, "0.7") == 0.7
+        assert wd.coerce_setting(tokens, "300") == 300 and wd.coerce_setting(tokens, 300.0) == 300
+        assert wd.coerce_setting(field("llm", "parse_json"), "TRUE") is True
+        assert wd.coerce_setting(field("retrieval", "knowledge_base_ids"), "kb") == ["kb"]
+        assert wd.coerce_setting(temperature, None) is None
+        for spec, value, words in (
+            (temperature, "hot", "temperature is a number, not 'hot'"),
+            (temperature, True, "is a number"),
+            (temperature, "3", "temperature is 0 to 2, not 3"),
+            (tokens, "2.5", "max_tokens is a whole number"),
+            (field("llm", "parse_json"), "maybe", "true or false"),
+        ):
+            try:
+                wd.coerce_setting(spec, value)
+            except wd.SettingError as exc:
+                assert words in str(exc), (value, str(exc))
+            else:
+                raise AssertionError(f"{value!r} was accepted")
+
+    def test_render_config(self) -> None:
+        config = {"model": "m", "prompt": "{{ input.q }}", "temperature": "{{ input.t }}"}
+        rendered = wd.render_config("llm", config, {"input": {"q": "hi", "t": "0.2"}})
+        assert rendered["temperature"] == 0.2 and rendered["prompt"] == "hi"
+        try:
+            wd.render_config("llm", config, {"input": {"q": "hi", "t": "warm"}})
+        except wd.SettingError as exc:
+            assert "temperature" in str(exc)
+        else:
+            raise AssertionError("a mis-typed temperature was accepted")
+        # A plain value or a template inside text isn't converted here.
+        assert wd.render_config("llm", {"temperature": 0.5}, {})["temperature"] == 0.5

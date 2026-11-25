@@ -40,13 +40,18 @@ The *Builder* tab is a canvas:
   <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes them a little lower and to the right, and
   <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicates them. Pasted steps get new ids
   (`summarise` becomes `summarise_2`), and their templates that read another pasted step
-  (`{{ nodes.search.context }}`) read its copy. What was copied stays until the page is
-  reloaded, so steps can be pasted into another workflow. A pasted step isn't connected
-  to the rest: connect it yourself.
+  (`{{ nodes.search.context }}`) read its copy. What was copied is kept in the browser,
+  so it can be pasted into another workflow, in another tab, or after a reload. A pasted
+  step isn't connected to the rest: connect it yourself.
 - **Undo and redo** every change since the draft was loaded:
   <kbd>Ctrl</kbd>+<kbd>Z</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> (or
   <kbd>Ctrl</kbd>+<kbd>Y</kbd>), or the arrows above the canvas; up to 100 changes. A
   drag is one change. *Discard changes* still goes back to the saved draft.
+- **A reload loses nothing.** Unsaved changes, with their undo history, are kept in the
+  browser tab, and the workflow that was open opens again with them (*unsaved changes*).
+  They are dropped when saved or discarded, or when the draft was saved meanwhile
+  elsewhere (they began from a draft that is no longer the server's). Closing the tab
+  drops them.
 - **Zoom** with the buttons above the canvas (*Fit* fits its width), <kbd>Ctrl</kbd>+wheel,
   or <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd>, from 40% to 200%.
 - **Pan** by dragging with <kbd>Space</kbd> held or with the middle button (when only
@@ -124,8 +129,14 @@ its forms from them. Validation follows the same schema:
   misspelt `temprature` doesn't silently do nothing.
 - **Types and ranges**: numbers are numbers (`temperature` 0–2, `top_k` 1–50, `seconds` up
   to a week), lists are lists, choices are one of their options. A value that is only a
-  template (`"{{ input.t }}"`) stands in for a typed value where `templated` is true, and is
-  checked when the run renders it.
+  template (`"{{ input.t }}"`) stands in for a typed value where `templated` is true.
+- **A template's type against its setting**: a whole template filling a typed setting is
+  checked against what it reads, so `temperature: "{{ nodes.search.passages }}"` is a
+  problem (*temperature takes a number, but ... is a list of ...*). Text is allowed into
+  a number or yes/no setting, and what only the run knows (the input, a transform's
+  values) passes. When the run renders it, text that plainly means the value is
+  converted (`"0.7"`, `"300"`, `"true"`), and anything else fails the step naming the
+  setting (*temperature is a number, not 'warm'*), before any call is made.
 - **Templates that can never resolve**: one that reads a step that doesn't exist, a step
   that runs after this one, an output that step doesn't have
   (`{{ nodes.search.contxt }}`: a retrieval step has `passages`, `count`, `context`,
@@ -133,6 +144,11 @@ its forms from them. Validation follows the same schema:
   something other than `input`, `nodes`, `previous` or `run`. Any step's `error` can be
   read, and the start step's and a transform's outputs are whatever the input or the
   transform's keys are.
+- **A model's JSON shape.** A model step with `parse_json` can declare `json_schema`, a
+  JSON Schema of the reply (`type`, `properties`, `items`). Paths under its `json` are then
+  checked like any typed output: `{{ nodes.calc.json.totl }}` is a problem when the
+  schema's object has `total`. The schema only types the paths; the reply isn't checked
+  against it.
 - **Deeper paths follow the output's type.** A list is read by index
   (`nodes.search.passages.0.text`; `passages.first` is a problem), an object by its fields
   (a passage has `text`, `document`, `knowledge_base`, `location`, `score`,
@@ -488,14 +504,12 @@ Workflows take part in team scope ([teams.md](teams.md)):
 
 ## Not included
 
-- **Types below "any".** A model's `json`, an HTTP `body`, a tool's `data` and a
-  sub-workflow's `output` are only known when the run has them, so paths into them
-  (`nodes.call.body.items`) aren't checked; nor is whether a value's type fits the
-  setting it fills.
+- **Types below "any".** An HTTP `body`, a tool's `data`, a sub-workflow's `output` and
+  a model's `json` without a `json_schema` are only known when the run has them, so paths
+  into them (`nodes.call.body.items`) aren't checked. A template inside other text isn't
+  typed: it is always text.
 - **Parallel retrieval and tool steps.** They take turns with the run's other database
   work, so only model and HTTP calls truly overlap.
-- **Canvas history across reloads.** Undo history and copied steps live in the page;
-  reloading it clears both.
 - **A loop's state across versions.** A run keeps its own version's definition, so an
   edge back edited while it runs doesn't change it. Items of a foreach running at once
   share one database session, so only their model and HTTP calls overlap (as for parallel

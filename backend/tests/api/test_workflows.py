@@ -427,6 +427,22 @@ class TestExecution:
         assert "small" not in [s["node_id"] for s in high["steps"]]
         assert high["steps"][1]["branch"] == "true"
 
+    async def test_a_templated_setting_is_checked(self, client, tokens, builder, wf) -> None:
+        """E89: a template filling a number setting is converted when it can be ("0.3"),
+        and fails the step, naming the setting, when it can't."""
+        definition = chain(
+            node("start", "start"),
+            node("ask", "llm", model="llama-local", prompt="hi", temperature="{{ input.t }}"),
+            node("end", "end"),
+        )
+        workflow = await published(client, tokens, builder, definition)
+        good = await run(client, tokens, builder, workflow["id"], {"t": "0.3"})
+        assert good["status"] == RunStatus.SUCCEEDED, good
+        assert wf.provider.calls[-1]["temperature"] == 0.3
+        bad = await run(client, tokens, builder, workflow["id"], {"t": "warm"})
+        assert bad["status"] == RunStatus.FAILED
+        assert "temperature is a number, not 'warm'" in bad["error"]
+
     async def test_http_retries_then_succeeds(self, client, tokens, builder, wf) -> None:
         wf.http = Http(
             httpx.ConnectError("refused"),
