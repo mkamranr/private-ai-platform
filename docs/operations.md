@@ -365,7 +365,9 @@ The structure is kept, so a reader still sees that a setting is set and where a 
 
 - Off-host copies go to a directory the host can write to or to S3-compatible storage.
   There is no SFTP or other remote protocol, and copies are pruned with the local backups.
-- No restore of one team or knowledge base: a restore replaces whole parts.
+- A full restore replaces whole parts. One knowledge base, or one team with its setup and
+  history, is restored on its own from the Backup & Restore page (see
+  [backup.md](backup.md)).
 - Bundle import is a copy on the host. There is no streaming upload through the console.
 - One runner per site is the tested shape. Several are tolerated, but the pages show the
   most recently seen runner's inventory.

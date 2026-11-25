@@ -540,7 +540,7 @@ matrix still listed as missing.
 - [x] `scripts/backup.py restore --parts database,files,vectors` (default: every part the backup holds). Files: MinIO stopped, its data directory moved aside to `minio.before-restore-<time>` and replaced from `minio.tar`, whose entries are checked first (no absolute paths, `..`, links or devices). Vectors: each snapshot copied into Qdrant's snapshots directory and recovered with `PUT /collections/{name}/snapshots/recover` (`priority: snapshot`); with the database restored too, collections the backup lacks are deleted. The key check applies to the database part only.
 - [x] Runner: inventory reports `parts` per backup from its manifest; `backup.restore` passes `--parts`, filtered to the known names. API: `RestoreRequest.parts`, checked against the reported parts; params carry `parts` only when not the whole backup. Console: a checkbox per part in the restore dialog; a backup under another key can restore its files and vectors.
 - [x] Tests: `tests/unit/test_release_tooling.py` (`TestRestoreParts`, `TestRunnerRestoreParts`), `tests/api/test_ops.py` (`TestPartialRestore`). Docs: [backup.md](../backup.md#restore), operations.md, api.md.
-- [ ] No restore of one team or knowledge base. The previous MinIO directory is kept, not cleaned up. Not exercised against a live Qdrant in CI; the snapshot recovery path is covered by unit tests with the Docker calls replaced.
+- [ ] ~~No restore of one team or knowledge base~~ (E64, E68). The previous MinIO directory is kept, not cleaned up. Not exercised against a live Qdrant in CI; the snapshot recovery path is covered by unit tests with the Docker calls replaced.
 
 ## E61: Zero-downtime deployment revisions (closes the feature-matrix blue/green gap)
 
@@ -549,7 +549,7 @@ matrix still listed as missing.
 - [x] `deployment_rollouts` and `services/deployment_rollout.py`: every running copy checked up front, then revised in turn with `auto`, each once the previous is healthy at its new revision; a failure stops it. `POST/GET/DELETE /models/{id}/rollout`; audit `DEPLOYMENT_ROLLOUT_STARTED`/`_FINISHED`. Migration `e5a7c9b1d3f4`.
 - [x] Console: strategy choice and *Every copy, one at a time* in the Revisions dialog, rollout progress with Cancel, a *new copy* badge on a copy taking over.
 - [x] Tests: `tests/api/test_zero_downtime_revisions.py` (strategies, handover, failed copy, stuck old container, GPU placement and release, rollouts). Docs: [model-governance.md](../model-governance.md#without-downtime), api.md.
-- [ ] ~~No weighted or gradual traffic shift~~ (E77): the switch happens when the new copy is healthy. Health is the runtime's readiness check, not a canary of real traffic. A rollout runs one copy at a time, never several. External runtimes are not managed, so not revised.
+- [ ] ~~No weighted or gradual traffic shift~~ (E77): the switch happens when the new copy is healthy. ~~Health is the runtime's readiness check, not a canary of real traffic~~ (E77, E82). A rollout revises one copy at a time (a canary can be several, E82). External runtimes are not managed, so not revised.
 
 ## E62: Answer faithfulness and question history (closes the feature-matrix judge and history gap)
 
@@ -559,7 +559,7 @@ matrix still listed as missing.
 - [x] `retrieval_queries` (migration `f6b8d0a2c4e5`) and `services/retrieval_playground.py`: each question saved with settings, passages, answer and verdict; `GET/DELETE /retrieval/history`, `GET/DELETE /retrieval/history/{id}`, `POST /retrieval/history/{id}/replay` (documents gained/lost by lineage, faithfulness before/after). Personal; `knowledge.manage` lists everyone's questions to a base without their passage text, answer or claims. Runtime setting `knowledge.query_history_days` (30; 0 keeps none), pruned hourly by the scheduler.
 - [x] Console: answer and judge boxes, the answer card with its claims, a History tab with Replay (then and now side by side), faithfulness and correctness columns in evaluation runs.
 - [x] Tests: `tests/api/test_answer_quality.py`. Docs: [rag-evaluation.md](../rag-evaluation.md#the-answer-and-how-faithful-it-is), api.md, settings.md.
-- [ ] The judge isn't validated against human ratings. Live agent answers aren't scored. Evaluation runs stay synchronous.
+- [ ] The judge isn't validated against human ratings. ~~Live agent answers aren't scored~~ (E70). Evaluation runs stay synchronous.
 
 ## E63: Bundle signing key rotation and revocation (closes the feature-matrix offline-signing gap)
 
@@ -569,14 +569,14 @@ matrix still listed as missing.
 - [x] Ops runner: the inventory reports every key and each bundle's pending trust updates, judged without saving. New job `trust.change` retires or revokes, refused for the last key. API `POST /ops/trust/keys` (`system.upgrade`, the action typed back), migration `a7c9e1b3d5f6`.
 - [x] Console: keys with their status and origin, *Retire* and *Revoke*, and pending trust updates per bundle. Keys can't be added from the console.
 - [x] Tests: `tests/unit/test_signing_key_rotation.py`, `tests/api/test_ops.py::TestTrustChange`. Docs: [operations.md](../operations.md#changing-the-signing-key), threat model #9.
-- [ ] No offline root key or key expiry. A compromised key is accepted until its revocation reaches a site. A first install still runs the bundle's own checks.
+- [ ] ~~No offline root key or key expiry~~ (E74). A compromised key is accepted until its revocation reaches a site. A first install still runs the bundle's own checks.
 
 ## E64: Restore single knowledge bases (closes the feature-matrix single-restore gap)
 
 - [x] `scripts/backup.py restore --knowledge-base NAME_OR_ID ... | --team NAME_OR_ID`, with `--parts` as before. The dump is loaded into a scratch database (`<db>_scoped_<time>`, always dropped); the bases are looked up there. `database`: their rows (base, documents, chunks, document access, evaluation sets, cases and runs) are exported as CSV and swapped in one psql transaction through staging tables. Columns are matched by name, chunk ids are fresh, and nullable references to rows gone since (users) are cleared. Refused for a team gone since, a name taken since, or a missing name or id. `files`: the bases' `documents/<id>/` objects merged back with MinIO stopped, the current ones moved aside. `vectors`: each base's collection recovered from its snapshot; a collection left unused by the swap is deleted. The API keeps running; no key check.
 - [x] `create` records `catalogue` (knowledge bases and teams) in the manifest. Runner: the inventory reports `knowledge_bases`, `teams` and `catalogued`; `backup.restore` passes `--knowledge-base` / `--team`, ids only. API: `RestoreRequest.knowledge_base_ids` / `team_id`, checked against the catalogue. Console: a *Scope* choice in the restore dialog.
 - [x] Tests: `tests/unit/test_scoped_restore.py`, `tests/api/test_scoped_restore_sql.py` (the generated SQL on a real database), `tests/api/test_ops.py::TestScopedRestore`. Docs: [backup.md](../backup.md#restoring-single-knowledge-bases), api.md.
-- [ ] A team's agents, workflows, keys and quotas are not restored. Question history is not restored. Needs disk for a second copy of the database while it runs. The MinIO merge relies on MinIO's one-directory-per-object layout and is not exercised against a live MinIO in CI.
+- [ ] ~~A team's agents, workflows, keys and quotas are not restored~~ (E68). Question history is not restored: chat conversations belong to people, not the team. Needs disk for a second copy of the database while it runs. The MinIO merge relies on MinIO's one-directory-per-object layout and is not exercised against a live MinIO in CI.
 
 ## E65: Declared capabilities per runtime (closes the feature-matrix adapter-contract gap)
 
@@ -584,7 +584,7 @@ matrix still listed as missing.
 - [x] Gateway: chat (buffered and streamed) and embeddings refuse a request needing a missing capability with a 400 `capability_unsupported`, before admission, naming the requested model, never the runtime. Image parts are forwarded to a vision model instead of flattened. A runtime fallback lacking the capability is skipped. Internal embedding and rerank calls check too. `/v1/models` lists `capabilities`.
 - [x] Admin: `ModelRead.capabilities` and `effective_capabilities`; `PATCH /models/{id}` takes `capabilities` (audited as a model update). Console: capability checkboxes in the model's Edit dialog.
 - [x] Tests: `tests/api/test_model_capabilities.py`. Docs: [models.md](../models.md#capabilities), api.md.
-- [ ] The declarations are defaults, not probed from the runtime; JSON mode and other request options are not part of the contract (the gateway doesn't forward them). ~~Agent runs don't check tools~~ (E66).
+- [ ] ~~The declarations are defaults, not probed from the runtime~~ (E73, E80); JSON mode and other request options are not part of the contract (the gateway doesn't forward them). ~~Agent runs don't check tools~~ (E66).
 
 ## E66: Resume a stream broken mid-answer; agent runs check capabilities (closes the feature-matrix mid-stream failover gap)
 
@@ -592,7 +592,7 @@ matrix still listed as missing.
 - [x] Capability `resume` (`app/core/capabilities.py`): vLLM, SGLang, llama.cpp, Ollama and `mock`; not TGI or `external` unless declared. `RESUME_OPTIONS`: `continue_final_message` and `add_generation_prompt: false` for vLLM and SGLang. Console: the checkbox in the model's Edit dialog. No migration.
 - [x] Agent runs ask `provider_for_model` for chat, plus tools when the agent has any, so the run fails before its first model call naming the capability. Workflow LLM steps and the answer-quality judge need chat.
 - [x] Tests: `tests/api/test_stream_resume.py`, `tests/api/test_agent_capabilities.py`. Docs: [gateway-policy.md](../gateway-policy.md#resuming-a-broken-stream), models.md, settings.md.
-- [ ] Same model only (no resuming on an alias's fallback). The broken copy's own usage is lost; the resumed call counts the text so far as prompt. The continuation may not be the words the broken copy would have written. An agent's tools are checked at run time, not when the agent is saved.
+- [ ] ~~Same model only (no resuming on an alias's fallback)~~ (E87). The broken copy's own usage is lost; the resumed call counts the text so far as prompt. The continuation may not be the words the broken copy would have written. ~~An agent's tools are checked at run time, not when the agent is saved~~ (E73).
 
 ## E67: Speech and tool calls priced by their unit; first-output timings for agents and voice (closes the feature-matrix non-gateway cost and agent/voice TTFT gaps)
 
@@ -600,7 +600,7 @@ matrix still listed as missing.
 - [x] `ChargebackRepository.usage` splits rows by unit (from the endpoint); `tool_calls` aggregates agent tool calls that ran, by the agent's team and the run's user, with the rate chosen per call in SQL. Rows and totals gain `audio_seconds`, `speech_characters`, `speech_cost`, `tool_calls`, `tool_cost`, `unpriced_tool_calls` (CSV columns appended); `total_cost` includes them, so cost budgets do too. Console: *Per unit* in the rate form and rates table, *Speech* and *Tools* columns in the report.
 - [x] `agent:` streams record `ttft_ms` (first visible text, `AgentStreamAccounting.first_output_at`); voice turns record it on the speech row (`GatewayContext.waiting_since` = the end of the person's speech). `timing_columns(direct_only=True)` leaves both out of per-model figures (usage summary, chargeback by model).
 - [x] Tests: `tests/api/test_chargeback_units.py`, `tests/api/test_first_output_timings.py`. Docs: [chargeback.md](../chargeback.md#speech-and-tool-cost), [gateway-policy.md](../gateway-policy.md#timings), speech.md.
-- [ ] Workflow tool steps record no tool call and aren't priced; OCR isn't metered per page. Tool calls have no API key or end user to group by. No currency conversion. A buffered `agent:` call has no first-output time.
+- [ ] ~~Workflow tool steps record no tool call and aren't priced; OCR isn't metered per page~~ (E86). Tool calls have no API key or end user to group by. ~~No currency conversion~~ (E86). A buffered `agent:` call has no first-output time.
 
 ## E68: Restore a team's setup; GPU alerts that don't flap (closes the feature-matrix team restore gap and the E52 flapping limit)
 
@@ -608,7 +608,7 @@ matrix still listed as missing.
 - [x] The team setup needs the backup's encryption key (`_key_refusal`, shared with the whole restore); the bases and files alone don't. API: `RestoreRequest.knowledge_only` (only with `team_id`); a team without knowledge bases is accepted unless `knowledge_only`. Console: *Only one team* scope lists every team in the backup, with an *Only its knowledge bases* box.
 - [x] GPU alerts: `gpu.alert_sustain_minutes` (default 0) raises a temperature or memory alert only once the unbroken run of breaching samples spans that long (`sustained`; a gap over `SAMPLE_MAX_AGE` restarts it; ECC raises at once). `gpu.alert_recovery_margin_celsius` (3) and `_percent` (2) lower the lines while an alert is open (`evaluate(recovering=True)`), so it clears and de-escalates only once clearly under them. `GpuMetricRepository.recent_for_gpus`; runtime settings. No migration.
 - [x] Tests: `tests/api/test_team_restore_sql.py`, `TestTeamSetup` in `tests/unit/test_scoped_restore.py`, `tests/api/test_ops.py`, `TestNoFlapping` in `tests/api/test_gpu_alerts.py`. Docs: [backup.md](../backup.md#restoring-a-team), [gpu.md](../gpu.md#alerts-that-dont-flap), api.md, operations.md, settings.md.
-- [ ] A team restore doesn't bring back run history, approvals, question history, or the models and aliases the team owned; memberships are only added, never removed. GPU thresholds are the same for every GPU (no per-node or per-GPU thresholds); a GPU waiting out the sustain time doesn't escalate early.
+- [ ] ~~A team restore doesn't bring back run history, approvals, or the models and aliases the team owned~~ (E85); question history stays out (it belongs to people); memberships are only added, never removed. ~~GPU thresholds are the same for every GPU~~ (E70, E75); a GPU waiting out the sustain time doesn't escalate early.
 
 ## E69: Workflow canvas, typed node schemas, parallel branches (closes the feature-matrix visual builder gap)
 
@@ -616,7 +616,7 @@ matrix still listed as missing.
 - [x] Engine: a node is decided once its predecessors and the earlier nodes its templates read (`wd.reads`) are resolved; ready nodes run together (`asyncio.gather`). `WorkflowEngine._db` serialises session use: `llm` and `http` handlers lock only around their database work, other types hold it throughout. Waiting nodes don't stop other branches; each delay keeps its own `resume_at` in the run state (the run's is the earliest); an `end` runs only after every other node is resolved, one per run; a failure without an `error` edge fails the run after its batch. Chains and condition branches unchanged. No migration.
 - [x] Console: an SVG canvas (`canvasSvg`, `wireCanvas` in `frontend/admin/js/workflows.js`): drag to move (saved `position`, snapped, overlaps settled), drag from branch and error ports to connect, click to edit or select, Delete to remove, a palette to add, *Auto-arrange*. Forms built from the served schemas (`fieldsFor`); the node form offers the readable values of earlier steps as insertable templates. Saved positions are used when every node has one and none overlap, so pre-canvas drafts (grid columns) are laid out automatically; run and version graphs use them too.
 - [x] Tests: `tests/unit/test_workflow_schema.py`, `tests/api/test_workflow_parallel.py`; the delay test in `test_workflows.py` moves the step's own due time. Checked in Chromium (drag, add, connect, select and remove, keyboard delete, auto-arrange, save). Docs: [workflows.md](../workflows.md#the-canvas), api.md.
-- [ ] Outputs are named, not typed, and deeper template paths aren't checked. Retrieval and tool steps take turns on the database, so only model and HTTP calls overlap. No zoom, multi-select, copy/paste or undo on the canvas. No sub-workflows or loops.
+- [ ] ~~Outputs are named, not typed, and deeper template paths aren't checked~~ (E84). Retrieval and tool steps take turns on the database, so only model and HTTP calls overlap. ~~No zoom, multi-select, copy/paste or undo on the canvas~~ (E79). ~~No sub-workflows or loops~~ (E71).
 
 ## E70: Per-node GPU alert levels; live agent answers scored (closes the feature-matrix per-node threshold and live-answer scoring gaps)
 
@@ -624,7 +624,7 @@ matrix still listed as missing.
 - [x] `agent_answer_scores` (same migration): `PlatformAgentRuntime._queue_scoring` queues a completed run that retrieved passages, sampled at `agents.answer_scoring_percent` with `agents.answer_judge_model` set, with its question, answer and passages. `AnswerScoringService.score_next` (run by `AnswerScoringWorker`, one at a time, `SKIP LOCKED`) judges it with `AnswerQualityService.judge`, charged `agent-judge:<slug>` to the agent's team; passages are cleared once judged; pruned after `agents.answer_score_retention_days`. `GET /agents/{id}/answer-scores` (summary over 30 days and recent verdicts). Console: *Quality* on the Agents page.
 - [x] Fixed: the Nodes page drew its rows with the workflow builder's `nodeRow`, and workflow runs used the ops page's `duration`: `workflows.js` and `operations.js` declared globals with the same names as `admin.js` and each other. The workflow ones are now `wfNodeRow` and `wfDuration`.
 - [x] Tests: `TestNodeLevels` in `tests/api/test_gpu_alerts.py`, `tests/api/test_answer_scoring.py`. Both console views checked in Chromium. Docs: [gpu.md](../gpu.md#a-nodes-own-levels), [agents.md](../agents.md#answer-quality), api.md, settings.md.
-- [ ] Levels are per node, not per GPU. Runs that paused for an approval aren't scored (their passages aren't kept across the pause); a failed judge call isn't retried; there is no alert on falling faithfulness.
+- [ ] ~~Levels are per node, not per GPU~~ (E75). ~~Runs that paused for an approval aren't scored; a failed judge call isn't retried~~ (E83); ~~there is no alert on falling faithfulness~~ (E75).
 
 ## E71: Sub-workflows and loops (closes the feature-matrix workflow-builder gap)
 
@@ -633,7 +633,7 @@ matrix still listed as missing.
 - [x] Service: publish and test runs refuse a sub-workflow that is missing, unpublished or the workflow itself; saving checks the caller can see it and `TeamReferences` (new `workflows`) that the workflow's team may use it, also on a team move. Cancelling a run cancels its unfinished children; cancelling a child continues (fails) its parent's step.
 - [x] Console: both step types in the palette with a workflow picker, canvas summaries, a run's links to its child runs and the child's link back. Checked in Chromium.
 - [x] Tests: `tests/api/test_workflow_children.py` (definition, inline and paused children, failure and error branches, nesting limit, publish checks, team scope, foreach order, limits and paused items, cancellation). Docs: [workflows.md](../workflows.md#sub-workflows-and-loops), api.md.
-- [ ] Items run one at a time; no parallel foreach, no carrying on past a failed item, no edges back.
+- [ ] ~~Items run one at a time; no parallel foreach, no carrying on past a failed item~~ (E72), ~~no edges back~~ (E84).
 
 ## E72: Parallel foreach, carrying on past failed items
 
@@ -641,7 +641,7 @@ matrix still listed as missing.
 - [x] `stop` cancels the items still running (`WorkflowEngine.cancel_tree`, moved from the service) and fails the step at the lowest failed index; `continue` succeeds with `null` in `results` and `failed` / `errors` outputs.
 - [x] The run loop now changes the run and its steps only under the engine's lock: a change made while a sibling run flushed the shared session was marked clean without being written.
 - [x] Console: *At once* and *When an item fails* fields, the canvas summary, links to pending runs. Checked in Chromium. Tests: `TestParallel` in `tests/api/test_workflow_children.py`. Docs: [workflows.md](../workflows.md#sub-workflows-and-loops).
-- [ ] Items running at once share one database session: only their model and HTTP calls overlap. No edges back.
+- [ ] Items running at once share one database session: only their model and HTTP calls overlap. ~~No edges back~~ (E84).
 
 ## E73: Capabilities read from the runtime; agents checked when saved
 
@@ -650,7 +650,7 @@ matrix still listed as missing.
 - [x] `GatewayService.probe_capabilities` through the resolved copy and its credential (`_api_key`, shared with `_provider`); `POST /models/{id}/probe-capabilities` (`model.register`, audited as `MODEL_UPDATED`). A failed probe keeps earlier findings.
 - [x] Agents: a version with tools on a catalogued model (or alias) without TOOLS is refused with a 422 naming `tools`.
 - [x] Console: *Ask the runtime* on the model's *Edit* dialog, with the findings. Checked in Chromium. Tests: `tests/api/test_capability_probe.py`. Docs: [models.md](../models.md#capabilities), api.md.
-- [ ] Not probed automatically when a deployment starts; vision on vLLM, SGLang and TGI, and reranking, aren't probed (no cheap question tells).
+- [ ] ~~Not probed automatically when a deployment starts~~ (E80); vision on vLLM, SGLang and TGI, and reranking, aren't probed (no cheap question tells).
 
 ## E74: Offline root key and key expiry (closes the feature-matrix offline-install gap)
 
@@ -666,14 +666,14 @@ matrix still listed as missing.
 - [x] `gpu.alert_utilization_warning_percent` and `gpu.alert_power_warning_percent` (0: off; also per node and GPU): `evaluate` adds WARNING reasons for utilisation and power as a share of `power_limit_watts`, with the percent recovery margin.
 - [x] `agents.answer_faithfulness_alert_below` / `_answers`: after each scored answer `AnswerScoringService.check_faithfulness` averages the agent's newest scored answers (`recent_faithfulness`) and raises or clears a WARNING alert (`answer_faithfulness:<agent>`, the agent's team).
 - [x] Tests: `tests/api/test_gpu_levels.py`. Docs: [gpu.md](../gpu.md#a-gpus-own-levels), [agents.md](../agents.md#answer-quality), api.md, settings.md.
-- [ ] No PCIe replay alert; the faithfulness alert is checked only when an answer is judged (an agent that stops being used keeps its alert).
+- [ ] ~~No PCIe replay alert; an agent that stops being used keeps its faithfulness alert~~ (E87).
 
 ## E76: More from a backend: its load, and loading and unloading models
 
 - [x] `InferenceBackendAdapter.metrics`, `load_model`, `unload_model` (default: `UnsupportedBackendOperationError`) and `BackendMetrics`. vLLM: `METRICS` from Prometheus `/metrics` (`parse_prometheus`: requests running and waiting, KV-cache share, token counters, per `model_name`). Ollama: `METRICS` (`/api/ps`), `DEPLOY` and `STOP` (`/api/generate` with `keep_alive` -1 or 0; a 404 means the model isn't there).
 - [x] `GET /backends/{id}/metrics` (`backend.view`), `POST /backends/{id}/models/load|unload` (`backend.manage`, audited `BACKEND_MODEL_LOADED` / `BACKEND_MODEL_UNLOADED`).
 - [x] Console: the backend's load above its model list, and *Load* / *Unload* per Ollama model. Checked in Chromium. Tests: `tests/api/test_backend_operations.py`. Docs: [backends.md](../backends.md#load-and-loading-models), api.md.
-- [ ] Load is read when asked: no history, no alert. Models are never pulled onto a backend; vLLM can't change the model it serves.
+- [ ] ~~Load is read when asked: no history, no alert~~ (E81). Models are never pulled onto a backend; vLLM can't change the model it serves.
 
 ## E77: Weighted copies and canary rollouts
 
@@ -681,7 +681,7 @@ matrix still listed as missing.
 - [x] `RolloutService.start(canary=)` (two copies at least). `_canary` sets the first revised copy's weight to `percent` and holds the rollout for `minutes`, then counts its usage records since (5xx share): over `max_error_percent` fails the rollout and sets it to 0, else back to 100 and the rest follow. Cancel during the watch restores 100.
 - [x] `PUT /deployments/{id}/traffic-weight` (`model.deploy`, audited `DEPLOYMENT_TRAFFIC_WEIGHT_CHANGED`); `RolloutRequest.canary_*`; `RolloutRead.canary`; `DeploymentRead.traffic_weight`.
 - [x] Console: *Canary first* fields, the watch in the rollout status, *This copy's share of traffic*, and a badge on the Deployments page. Checked in Chromium. Tests: `tests/api/test_canary_rollouts.py`. Docs: [model-governance.md](../model-governance.md#a-canary-first), api.md.
-- [ ] One canary copy, judged on 5xx share only (not latency or answer quality); weights are per copy, not per revision.
+- [ ] ~~One canary copy, judged on 5xx share only~~ (E82: several copies, and latency); not answer quality. Weights are per copy, not per revision.
 
 ## E78: More first-party connectors
 
@@ -697,7 +697,7 @@ matrix still listed as missing.
 - [x] Undo and redo: `markDirty` records the draft as JSON before each change (`recordHistory`, 100 deep); `resetHistory` on load. One document-level key handler (not in form fields or dialogs).
 - [x] Fixed: a dragged step drifted from the pointer when the canvas grew, because the page's scroll anchoring moved the page under it (`overflow-anchor: none` while the canvas is shown).
 - [x] Checked in Chromium (`e79.js`: zoomed drag, group move, paste with references, duplicate, cut, box select, undo to the start, shortcuts ignored in the JSON box). Docs: [workflows.md](../workflows.md#the-canvas).
-- [ ] No panning by dragging; history and clipboard don't survive a reload.
+- [ ] ~~No panning by dragging~~ (E84); history and clipboard don't survive a reload.
 
 ## E80: Capabilities read when a copy starts
 
@@ -758,6 +758,11 @@ matrix still listed as missing.
 - [x] `GatewayService._stream_to_fallback`: a stream with no copy left goes to the alias's fallback, before any text, or resumed after (the fallback's model needs `resume`). One hop, the lease moved, usage on the fallback's model.
 - [x] `git` connector: not added; [mcp.md](../mcp.md) says why.
 - [x] Tests: `tests/api/test_gpu_alerts.py` (`TestPcieReplays`), `tests/api/test_gpu_levels.py` (stale alerts), `tests/api/test_stream_resume.py` (`TestFallback`). Docs: gpu.md, agents.md, gateway-policy.md, settings.md, mcp.md.
+
+## E94: Plan cleanup
+
+- [x] Open notes closed by later items struck through with the item that closed them (E64–E87), in this plan and the feature matrix.
+- [x] `docs/backup.md` and `docs/operations.md` no longer say a team or a knowledge base can't be restored on its own.
 
 ## Phase acceptance (applies to each)
 
