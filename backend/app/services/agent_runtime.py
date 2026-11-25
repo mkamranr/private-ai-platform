@@ -526,6 +526,8 @@ class PlatformAgentRuntime(AgentRuntime):
         if not run.is_terminal:
             run.state = RunState.CANCELLED
             run.finished_at = dt.datetime.now(dt.UTC)
+            run.checkpoint = {}  # E91: nothing left to resume
+            self._retrieved.pop(str(run.id), None)
         return _result(run)
 
     async def get_result(self, run_id: str) -> RunResult:

@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Restore: exact members, copies to deploy again; paused runs cleaned up
+- A team restore can make the team's members exactly the backup's (`--exact-members`, *Members exactly as in the backup*), removing whoever joined since; by default members are still only added.
+- A restored team's models come back with their copies as stopped records; *Deploy again* (`POST /deployments/{id}/redeploy`) starts a new copy with a stopped or failed one's settings.
+- A paused agent run that is cancelled or whose approval expires drops its checkpoint (conversation and retrieved passages) when it ends.
+- **Upgrade.** One migration (`alembic upgrade head`), which clears the checkpoints of runs that already ended.
+
 ### Workflows: types through settings, and the canvas across reloads
 - A template filling a typed setting is checked against what it reads (`temperature: "{{ nodes.search.passages }}"` is a problem), and at run time `"0.7"` becomes a number while `"warm"` fails the step, naming the setting.
 - A model step can declare the JSON shape of its reply (`json_schema`), so paths under its `json` are checked.

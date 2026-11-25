@@ -226,6 +226,7 @@ Under `/api/v1`, authenticated with the platform JWT.
 | GET | `/deployments/{id}` | `model.view` |
 | POST | `/deployments/{id}/stop` | `model.stop` |
 | POST | `/deployments/{id}/restart` | `model.stop` |
+| POST | `/deployments/{id}/redeploy` | `model.deploy` — a new copy with a stopped or failed copy's runtime, tensor parallelism, context length, memory share and traffic share, placed afresh; 202 like a deploy, 409 for a copy that still runs |
 | DELETE | `/deployments/{id}` | `model.delete` |
 | GET | `/deployments/{id}/logs` | `model.view` |
 | GET | `/model-aliases` | `model.view` |
@@ -775,7 +776,7 @@ rollback, gets 409. See [operations.md](operations.md).
 | GET / POST | `/ops/backups` | `backup.manage`. POST body: `reason` |
 | GET | `/ops/backups/schedule` | `backup.manage`. `enabled`, `interval_hours`, `keep`, `next_due_at`, `overdue`, `runner_online`, `last_job`, `prune_candidates`, `note` |
 | POST | `/ops/backups/{name}/verify` | `backup.manage` |
-| POST | `/ops/backups/{name}/restore` | `backup.restore`. `confirm` (the name), `reason`, optional `parts` (`database`, `files`, `vectors`; default all the backup holds). A part the backup lacks is a 422; restoring the database of a backup under another encryption key is refused. Optional `knowledge_base_ids` (up to 50) or `team_id` restores only those knowledge bases, or the team's, and leaves everything else; checked against the backup's `knowledge_bases` and `teams` when it lists them (`catalogued`), and allowed under another key. With `team_id` and the database part, the team's setup comes back too (members, tools, agents, workflows, API clients and keys, quotas, cost budgets; see [backup.md](backup.md#restoring-a-team)), which needs the backup's key; `knowledge_only: true` restores only its knowledge bases |
+| POST | `/ops/backups/{name}/restore` | `backup.restore`. `confirm` (the name), `reason`, optional `parts` (`database`, `files`, `vectors`; default all the backup holds). A part the backup lacks is a 422; restoring the database of a backup under another encryption key is refused. Optional `knowledge_base_ids` (up to 50) or `team_id` restores only those knowledge bases, or the team's, and leaves everything else; checked against the backup's `knowledge_bases` and `teams` when it lists them (`catalogued`), and allowed under another key. With `team_id` and the database part, the team's setup comes back too (members, tools, agents, workflows, API clients and keys, quotas, cost budgets; see [backup.md](backup.md#restoring-a-team)), which needs the backup's key; `knowledge_only: true` restores only its knowledge bases; `exact_members: true` (with the setup) makes its members exactly the backup's, removing whoever joined since |
 | GET | `/ops/bundles` | `system.upgrade` |
 | POST | `/ops/bundles/{name}/verify` | `system.upgrade` |
 | GET | `/ops/bundles/{name}/preflight` | `system.upgrade`. `ok`, `checks[]` (pass/warn/fail) |

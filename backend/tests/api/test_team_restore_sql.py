@@ -30,7 +30,16 @@ from app.models.agents import (
     ToolExecution,
 )
 from app.models.chargeback import CostBudget
-from app.models.models_registry import ApiClient, ApiKey, Model, ModelAlias, ModelStatus
+from app.models.models_registry import (
+    ApiClient,
+    ApiKey,
+    DeploymentRevision,
+    DeploymentState,
+    Model,
+    ModelAlias,
+    ModelDeployment,
+    ModelStatus,
+)
 from app.models.operations import GatewayQuota
 from app.models.teams import Team, TeamMembership
 from app.models.workflows import (
@@ -148,7 +157,13 @@ async def take_backup(session: AsyncSession, team_id: uuid.UUID) -> dict[str, li
     return common
 
 
-async def apply(session: AsyncSession, team_id: uuid.UUID, common: dict[str, Any]) -> None:
+async def apply(
+    session: AsyncSession,
+    team_id: uuid.UUID,
+    common: dict[str, Any],
+    *,
+    exact_members: bool = False,
+) -> None:
     names = ", ".join(backup._literal(t) for t in backup.TEAM_NAMES)
     fks = [
         (r[0], r[1], r[2], r[3], r[4] == "true")
@@ -158,7 +173,9 @@ async def apply(session: AsyncSession, team_id: uuid.UUID, common: dict[str, Any
         (r[0], r[1].split(","))
         for r in (await session.execute(text(backup.UNIQUES_SQL.format(names=names)))).all()
     ]
-    for statement in backup.team_apply_sql(str(team_id), common, fks, uniques):
+    for statement in backup.team_apply_sql(
+        str(team_id), common, fks, uniques, exact_members=exact_members
+    ):
         await session.execute(text(statement))
     session.expunge_all()
 
@@ -458,3 +475,109 @@ async def test_a_run_whose_user_is_gone_keeps_its_record(session: AsyncSession, 
         .all()
     )
     assert len(events) == 1 and executions[0].approval_state == ApprovalState.APPROVED
+
+
+async def _member(session: AsyncSession, settings, name: str):
+    from tests.conftest import _make_user
+
+    return await _make_user(session, settings, username=f"{name}-{_tag()}", permissions=[])
+
+
+@pytest.mark.parametrize("exact", [False, True])
+async def test_members_added_or_made_exact(session: AsyncSession, superuser, settings, exact: bool):
+    """E91: by default members are only added; ``exact_members`` makes them the backup's,
+    roles included, removing whoever joined since."""
+    made = await make_team(session, superuser)
+    team = made["team"]
+    left = await _member(session, settings, "left")
+    session.add(TeamMembership(team_id=team.id, user_id=left.id, role="owner"))
+    await session.flush()
+    staged = await take_backup(session, team.id)
+
+    # Since the backup: one member left, another was made a plain member, one joined.
+    joined = await _member(session, settings, "joined")
+    await session.execute(
+        delete(TeamMembership).where(
+            TeamMembership.team_id == team.id, TeamMembership.user_id == superuser.id
+        )
+    )
+    await session.execute(
+        update(TeamMembership)
+        .where(TeamMembership.team_id == team.id, TeamMembership.user_id == left.id)
+        .values(role="member")
+    )
+    session.add(TeamMembership(team_id=team.id, user_id=joined.id))
+    await session.flush()
+
+    await apply(session, team.id, staged, exact_members=exact)
+
+    rows = {
+        m.user_id: m.role
+        for m in (
+            await session.execute(select(TeamMembership).where(TeamMembership.team_id == team.id))
+        ).scalars()
+    }
+    assert superuser.id in rows  # back either way
+    if exact:
+        assert set(rows) == {superuser.id, left.id} and rows[left.id] == "owner"
+    else:
+        assert joined.id in rows and rows[left.id] == "member"
+
+
+async def test_a_models_copies_come_back_stopped(session: AsyncSession, superuser):
+    """E91: the team's models' copies return as stopped records with their settings and
+    revisions, and no container, GPUs or address; a copy here now is left alone."""
+    made = await make_team(session, superuser)
+    extra = await add_history(session, made, superuser)
+    model = extra["model"]
+    gone = ModelDeployment(
+        model_id=model.id,
+        state=DeploymentState.RUNNING,
+        runtime="mock",
+        image="ai-platform/mock-vllm:0.2.0",
+        internal_port=8000,
+        internal_url="http://old-host:8000",
+        container_id="abc123",
+        container_name="aip-old",
+        gpu_indices=[0, 1],
+        tensor_parallel_size=2,
+        max_model_len=4096,
+        traffic_weight=30,
+        current_revision=2,
+    )
+    kept = ModelDeployment(
+        model_id=model.id,
+        state=DeploymentState.RUNNING,
+        runtime="mock",
+        image="ai-platform/mock-vllm:0.2.0",
+        internal_port=8000,
+        gpu_indices=[],
+    )
+    session.add_all([gone, kept])
+    await session.flush()
+    session.add(DeploymentRevision(deployment_id=gone.id, revision=2, config={"image": "x"}))
+    await session.flush()
+    staged = await take_backup(session, made["team"].id)
+
+    await session.execute(
+        delete(DeploymentRevision).where(DeploymentRevision.deployment_id == gone.id)
+    )
+    await session.execute(delete(ModelDeployment).where(ModelDeployment.id == gone.id))
+    await session.flush()
+
+    await apply(session, made["team"].id, staged)
+
+    back = await session.get(ModelDeployment, gone.id)
+    assert back is not None and back.state == DeploymentState.STOPPED
+    assert (back.container_id, back.container_name, back.internal_url) == (None, None, None)
+    assert back.gpu_indices == [] and back.stopped_at is not None
+    assert (back.tensor_parallel_size, back.max_model_len, back.traffic_weight) == (2, 4096, 30)
+    assert "deploy it again" in (back.state_detail or "")
+    revisions = (
+        await session.execute(
+            select(DeploymentRevision).where(DeploymentRevision.deployment_id == gone.id)
+        )
+    ).all()
+    assert len(revisions) == 1
+    still = await session.get(ModelDeployment, kept.id)
+    assert still is not None and still.state == DeploymentState.RUNNING

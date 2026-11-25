@@ -1445,6 +1445,31 @@ class DeploymentService:
                 stopped.append(deployment.id)
         return stopped, failed
 
+    async def redeploy(self, deployment_id: uuid.UUID, *, actor: User) -> ModelDeployment:
+        """E91: a new copy of a stopped or failed one's model, with its runtime, tensor
+        parallelism, context length, memory share and traffic share. Placed afresh (the
+        old node or GPUs may be gone or taken); the runtime's current image is used.
+
+        The one click after a team restore, which brings copies back as stopped records.
+        """
+        old = await self.get_deployment(deployment_id)
+        if old.state not in {DeploymentState.STOPPED, DeploymentState.FAILED}:
+            raise ConflictError(
+                f"Only a stopped or failed copy can be deployed again; this one is {old.state}."
+            )
+        deployment = await self.request_deployment(
+            DeploymentRequestSpec(
+                model_id=old.model_id,
+                runtime=old.runtime,
+                tensor_parallel_size=old.tensor_parallel_size,
+                max_model_len=old.max_model_len,
+                gpu_memory_utilization=old.gpu_memory_utilization,
+            ),
+            actor=actor,
+        )
+        deployment.traffic_weight = old.traffic_weight
+        return deployment
+
     async def restart_deployment(self, deployment_id: uuid.UUID, *, actor: User) -> ModelDeployment:
         """Restart in place, keeping the GPU reservation.
 

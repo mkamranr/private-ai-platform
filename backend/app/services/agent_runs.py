@@ -285,6 +285,9 @@ class AgentRunService:
             return run
         run.state = RunState.CANCELLED
         run.finished_at = dt.datetime.now(dt.UTC)
+        # E91: a run cancelled while paused can't resume, so what it kept to resume (the
+        # conversation, retrieved passages included) goes now, not when the run is deleted.
+        run.checkpoint = {}
         pending = await self._executions.pending_for_run(run.id)
         if pending is not None:
             # Not REJECTED: nobody refused it, the run was abandoned. An audit that said

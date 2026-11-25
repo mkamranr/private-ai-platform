@@ -129,6 +129,15 @@ is usually gone by the time anyone looks, so the excerpt is all that remains —
 exactly what an operator needs at that moment. `GET /deployments/{id}/logs` serves live
 logs when the container is up and falls back to the excerpt when it is not.
 
+### Deploying a copy again
+
+*Deploy again* on a stopped or failed copy (`POST /deployments/{id}/redeploy`,
+`model.deploy`) requests a new copy of the same model with its runtime, tensor
+parallelism, context length, GPU memory share and traffic share, placed afresh (its old
+node or GPUs may be gone or taken) with the runtime's current image. It returns 202 like
+a deploy. This is the one step after a [team restore](backup.md#restoring-a-team), which
+brings a model's copies back as stopped records.
+
 ---
 
 ## Endpoint abstraction

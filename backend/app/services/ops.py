@@ -395,6 +395,7 @@ class OpsService:
         knowledge_base_ids: Sequence[uuid.UUID] | None = None,
         team_id: uuid.UUID | None = None,
         knowledge_only: bool = False,
+        exact_members: bool = False,
     ) -> OpsJob:
         """Queue a restore of the whole backup, or (E60) only ``parts`` of it, or (E64)
         only some knowledge bases, or (E68) one team."""
@@ -419,6 +420,7 @@ class OpsService:
                 knowledge_base_ids or [],
                 team_id,
                 knowledge_only=knowledge_only,
+                exact_members=exact_members,
                 actor=actor,
                 reason=reason,
             )
@@ -443,6 +445,7 @@ class OpsService:
         team_id: uuid.UUID | None,
         *,
         knowledge_only: bool = False,
+        exact_members: bool = False,
         actor: User,
         reason: str,
     ) -> OpsJob:
@@ -494,6 +497,8 @@ class OpsService:
             params["team"] = str(team_id)
             if knowledge_only:
                 params["knowledge_only"] = True
+            elif exact_members and team_setup:
+                params["exact_members"] = True  # E91
         else:
             params["knowledge_bases"] = sorted({str(i) for i in knowledge_base_ids})
         return await self._request(JobKind.BACKUP_RESTORE, params, actor=actor, reason=reason)

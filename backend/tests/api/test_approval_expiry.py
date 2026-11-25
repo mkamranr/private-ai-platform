@@ -65,6 +65,8 @@ class TestAgentApprovalExpiry:
         agent_admin: User,  # noqa: F811
     ) -> None:
         run, call = await _waiting_run(session, agent_admin, age_hours=HOURS + 1)
+        run.checkpoint = {"conversation": [], "scoring": {"question": "q", "passages": [{}]}}
+        await session.flush()
 
         result = await _expiry(session).run(ttl_hours=HOURS)
 
@@ -76,6 +78,7 @@ class TestAgentApprovalExpiry:
         assert call.approver_id is None
         assert run.state == RunState.FAILED
         assert run.finished_at is not None
+        assert run.checkpoint == {}  # E91: nothing left to resume, passages included
         assert "expired after 72 hours" in (run.error or "")
 
         events = (

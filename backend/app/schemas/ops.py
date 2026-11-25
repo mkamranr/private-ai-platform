@@ -233,12 +233,16 @@ class RestoreRequest(ConfirmedJobRequest):
 
     E68: with ``team_id`` the team's setup comes back too (members, tools, agents,
     workflows, API clients and keys, quotas, cost budgets), unless ``knowledge_only``.
+
+    E91: ``exact_members`` makes the team's members exactly the backup's (anyone who
+    joined since is removed); without it members are only added.
     """
 
     parts: list[RestorePart] | None = Field(default=None, min_length=1)
     knowledge_base_ids: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=50)
     team_id: uuid.UUID | None = None
     knowledge_only: bool = False
+    exact_members: bool = False
 
     @model_validator(mode="after")
     def _one_scope(self) -> RestoreRequest:
@@ -246,6 +250,8 @@ class RestoreRequest(ConfirmedJobRequest):
             raise ValueError("Choose knowledge bases or a team, not both.")
         if self.knowledge_only and self.team_id is None:
             raise ValueError("knowledge_only goes with team_id.")
+        if self.exact_members and (self.team_id is None or self.knowledge_only):
+            raise ValueError("exact_members goes with team_id, without knowledge_only.")
         return self
 
 

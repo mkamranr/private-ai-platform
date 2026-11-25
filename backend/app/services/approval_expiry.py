@@ -110,7 +110,8 @@ class ApprovalExpiry:
             moved = await self._session.execute(
                 update(AgentRun)
                 .where(AgentRun.id == call.run_id, AgentRun.state == RunState.WAITING_FOR_APPROVAL)
-                .values(state=RunState.FAILED, error=error, finished_at=now)
+                # E91: the checkpoint (conversation, passages) only served a resume.
+                .values(state=RunState.FAILED, error=error, finished_at=now, checkpoint={})
                 .returning(AgentRun.id)
             )
             run_failed = moved.scalar_one_or_none() is not None

@@ -369,6 +369,18 @@ class TestTeamSetup:
         assert backup.module.restore(path, True, parts=["files"], team="legal") == 0
         assert not backup.scripts
 
+    def test_the_runner_passes_exact_members(self):
+        """E91: members exactly as in the backup; knowledge_only (no setup) wins."""
+        runner = load("ops_runner")
+        assert runner.restore_scope({"team": TEAM, "exact_members": True}) == [
+            "--team",
+            TEAM,
+            "--exact-members",
+        ]
+        assert runner.restore_scope(
+            {"team": TEAM, "exact_members": True, "knowledge_only": True}
+        ) == ["--team", TEAM, "--knowledge-only"]
+
     def test_the_runner_passes_knowledge_only(self):
         runner = load("ops_runner")
         assert runner.restore_scope({"team": TEAM}) == ["--team", TEAM]

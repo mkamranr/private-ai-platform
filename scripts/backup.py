@@ -5,7 +5,7 @@
     python3 scripts/backup.py verify  PATH
     python3 scripts/backup.py restore PATH [--yes] [--parts database,files,vectors]
                                      [--knowledge-base NAME_OR_ID ... | --team NAME_OR_ID
-                                      [--knowledge-only]]
+                                      [--knowledge-only | --exact-members]]
     python3 scripts/backup.py list    [--output DIR]
 
 ``--knowledge-base`` and ``--team`` (E64) restore only those knowledge bases (or every
@@ -445,7 +445,7 @@ def _key_refusal(manifest: dict, env: dict) -> str | None:
 
 
 def restore(path: Path, assume_yes: bool, parts=None, *, knowledge_bases=None, team=None,
-            knowledge_only: bool = False) -> int:
+            knowledge_only: bool = False, exact_members: bool = False) -> int:
     if verify(path) != 0:
         print("\nRefusing to restore a backup that does not verify.", file=sys.stderr)
         return 1
@@ -476,6 +476,7 @@ def restore(path: Path, assume_yes: bool, parts=None, *, knowledge_bases=None, t
         return restore_scoped(
             path, manifest, env, chosen, assume_yes,
             knowledge_bases=list(knowledge_bases or []), team=team, team_setup=team_setup,
+            exact_members=exact_members and team_setup,
         )
 
     # The key protects only what is inside the database dump. Files and vectors are not
@@ -931,6 +932,14 @@ TEAM_TABLES = (
     ("model_files", "model_id IN (SELECT id FROM public.models WHERE team_id = {team})",
      "upsert"),
     ("model_aliases", "team_id = {team}", "upsert"),
+    # E91: the copies the team's models had, as stopped records (no container, no GPUs),
+    # so each can be deployed again in one click with the settings it ran with. Only
+    # missing ones are added: a copy here now is left as it is.
+    ("model_deployments",
+     "model_id IN (SELECT id FROM public.models WHERE team_id = {team})", "merge"),
+    ("deployment_revisions",
+     "deployment_id IN (SELECT d.id FROM public.model_deployments d JOIN public.models m "
+     "ON m.id = d.model_id WHERE m.team_id = {team})", "merge"),
     ("tools", "team_id = {team}", "upsert"),
     ("agents", "team_id = {team}", "upsert"),
     ("agent_versions", "agent_id IN (SELECT id FROM public.agents WHERE team_id = {team})",
@@ -971,6 +980,8 @@ TEAM_LABELS = {
     "workflow_versions": "workflow versions", "api_clients": "API clients",
     "api_keys": "API keys", "gateway_quotas": "quotas", "cost_budgets": "cost budgets",
     "models": "models", "model_files": "model file records", "model_aliases": "model aliases",
+    "model_deployments": "model copies (back as stopped)",
+    "deployment_revisions": "model copy revisions",
     "agent_runs": "agent runs", "agent_run_events": "agent run events",
     "tool_executions": "tool calls and approvals", "agent_answer_scores": "answer scores",
     "workflow_runs": "workflow runs", "workflow_steps": "workflow steps",
@@ -1002,8 +1013,12 @@ def team_stage_sql(columns: dict) -> list:
     ]
 
 
-def team_apply_sql(team: str, columns: dict, foreign_keys, uniques) -> list:
+def team_apply_sql(team: str, columns: dict, foreign_keys, uniques, *,
+                   exact_members: bool = False) -> list:
     """Put a team's setup back from the staged rows, in one transaction.
+
+    ``exact_members`` (E91): the team's members become exactly the backup's, with their
+    roles then: anyone who joined since is removed. Otherwise members are only added.
 
     ``foreign_keys`` is (table, column, referenced table, referenced column, nullable)
     and ``uniques`` (table, [columns]) for the live tables. A reference to a row gone
@@ -1050,6 +1065,25 @@ def team_apply_sql(team: str, columns: dict, foreign_keys, uniques) -> list:
             "UPDATE stage_api_keys s SET revoked_at = now() WHERE s.revoked_at IS NULL AND "
             "NOT EXISTS (SELECT 1 FROM public.api_keys l WHERE l.id = s.id)"
         )
+    if "model_deployments" in staged:
+        # E91: a copy comes back as a stopped record: its container, GPUs and address
+        # belonged to the platform the backup was taken on.
+        names = set(columns["model_deployments"])
+        sets = [
+            f"{column} = {value}"
+            for column, value in (
+                ("state", "'STOPPED'"),
+                ("state_detail", "'Restored from a backup: deploy it again.'"),
+                ("container_id", "NULL"),
+                ("container_name", "NULL"),
+                ("internal_url", "NULL"),
+                ("reservation_id", "NULL"),
+                ("gpu_indices", "'[]'::jsonb"),
+                ("stopped_at", "coalesce(stopped_at, now())"),
+            )
+            if column in names
+        ]
+        out.append(f"UPDATE stage_model_deployments SET {', '.join(sets)}")
     for table, unique in uniques:
         if table not in staged or _team_mode(table) != "upsert":
             continue
@@ -1073,6 +1107,19 @@ def team_apply_sql(team: str, columns: dict, foreign_keys, uniques) -> list:
             out.append(f"{insert} ON CONFLICT (id) DO UPDATE SET {updates}")
         elif mode == "merge":
             out.append(f"{insert} ON CONFLICT DO NOTHING")
+            if table == "team_memberships" and exact_members:
+                team_id = _team_values(team)["team"]
+                if "role" in names:
+                    out.append(
+                        "UPDATE public.team_memberships l SET role = s.role FROM "
+                        "stage_team_memberships s WHERE l.team_id = s.team_id AND "
+                        "l.user_id = s.user_id AND l.role IS DISTINCT FROM s.role"
+                    )
+                out.append(
+                    f"DELETE FROM public.team_memberships l WHERE l.team_id = {team_id} AND "
+                    "NOT EXISTS (SELECT 1 FROM stage_team_memberships s "
+                    "WHERE s.team_id = l.team_id AND s.user_id = l.user_id)"
+                )
         else:
             _, parent_column, parent = mode
             out.append(
@@ -1096,7 +1143,8 @@ def team_copy_out(team: str, columns: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def team_apply_script(team: str, columns: dict, foreign_keys, uniques) -> str:
+def team_apply_script(team: str, columns: dict, foreign_keys, uniques, *,
+                      exact_members: bool = False) -> str:
     lines = [f"{s};" for s in team_stage_sql(columns)]
     for table in TEAM_NAMES:
         if table in columns:
@@ -1105,7 +1153,10 @@ def team_apply_script(team: str, columns: dict, foreign_keys, uniques) -> str:
                 f"\\copy stage_{table} ({cols}) FROM '{TEAM_STAGING}/{table}.csv' "
                 "WITH (FORMAT csv)"
             )
-    lines += [f"{s};" for s in team_apply_sql(team, columns, foreign_keys, uniques)]
+    lines += [
+        f"{s};"
+        for s in team_apply_sql(team, columns, foreign_keys, uniques, exact_members=exact_members)
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -1142,7 +1193,8 @@ def _team_summary(user: str, scratch: str, team_id: str) -> dict:
 
 
 def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bool,
-                   *, knowledge_bases, team, team_setup: bool = False) -> int:
+                   *, knowledge_bases, team, team_setup: bool = False,
+                   exact_members: bool = False) -> int:
     """Restore only some knowledge bases, leaving every other row, file and vector alone.
 
     1. The backup's dump goes into a scratch database beside the live one, which is how
@@ -1216,6 +1268,9 @@ def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bo
                     print(f"  - {summary[table]} {TEAM_LABELS[table]}")
             print("  Anything the team created since is kept. API keys revoked or deleted "
                   "since stay unusable.")
+            if exact_members:
+                print("  Members become exactly the backup's: anyone who joined since is "
+                      "removed, and roles go back to what they were.")
         print("Every other knowledge base, and the rest of the platform, is left as it is.")
         if not assume_yes and input("Type the word 'replace' to continue: ").strip() != "replace":
             print("Cancelled.")
@@ -1224,7 +1279,8 @@ def restore_scoped(path: Path, manifest: dict, env: dict, chosen, assume_yes: bo
         database_done = False
         if "database" in chosen:
             problem = _apply_scoped_rows(
-                user, database, scratch, ids, team=team_row["id"] if team_row else None
+                user, database, scratch, ids, team=team_row["id"] if team_row else None,
+                exact_members=exact_members,
             )
             if problem:
                 print(f"\nREFUSED: {problem}", file=sys.stderr)
@@ -1282,7 +1338,7 @@ def _load_scratch(path: Path, user: str, scratch: str) -> bool:
 
 
 def _apply_scoped_rows(user: str, database: str, scratch: str, ids,
-                       team: str | None = None) -> str | None:
+                       team: str | None = None, exact_members: bool = False) -> str | None:
     """Copy the bases' rows (and, with ``team``, the team's setup, E68) out of the scratch
     database and swap them in, in one transaction. Returns why it was refused or failed,
     or None."""
@@ -1312,7 +1368,7 @@ def _apply_scoped_rows(user: str, database: str, scratch: str, ids,
         # First, so a base's team is back before the bases are checked for it.
         script += team_apply_script(
             team, team_columns, _foreign_keys(user, database, TEAM_NAMES),
-            _uniques(user, database, TEAM_NAMES),
+            _uniques(user, database, TEAM_NAMES), exact_members=exact_members,
         )
     if ids:
         live_tables = set(_columns(user, database))
@@ -1478,6 +1534,11 @@ def main() -> int:
         "--knowledge-only", action="store_true",
         help="With --team: only its knowledge bases, as before E68.",
     )
+    restore_parser.add_argument(
+        "--exact-members", action="store_true",
+        help="With --team: its members become exactly the backup's (anyone who joined "
+             "since is removed); otherwise members are only added.",
+    )
 
     list_parser = sub.add_parser("list", help="List backups.")
     list_parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -1494,9 +1555,12 @@ def main() -> int:
             parser.error(str(exc))
         if options.knowledge_only and not options.team:
             parser.error("--knowledge-only goes with --team")
+        if options.exact_members and (not options.team or options.knowledge_only):
+            parser.error("--exact-members goes with --team, without --knowledge-only")
         return restore(options.path, options.yes, parts,
                        knowledge_bases=options.knowledge_base, team=options.team,
-                       knowledge_only=options.knowledge_only)
+                       knowledge_only=options.knowledge_only,
+                       exact_members=options.exact_members)
     return list_backups(options.output)
 
 

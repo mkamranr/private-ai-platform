@@ -308,6 +308,7 @@ async def restore_backup(
         knowledge_base_ids=body.knowledge_base_ids,
         team_id=body.team_id,
         knowledge_only=body.knowledge_only,
+        exact_members=body.exact_members,
     )
     await service.commit()
     return _read(job)

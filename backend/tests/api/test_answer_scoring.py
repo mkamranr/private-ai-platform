@@ -349,6 +349,15 @@ class TestRetries:
 
 
 class TestPausedRuns:
+    async def test_cancelling_a_paused_run_drops_its_checkpoint(self, settings) -> None:
+        """E91: a run cancelled while paused can't resume; its passages go with it."""
+        runs = Runs()
+        runtime = PlatformAgentRuntime(with_scoring(settings), runs, None, None, None, None, None)
+        runs.run.is_terminal = False
+        runs.run.checkpoint = {"conversation": [], "scoring": {"question": "q", "passages": [{}]}}
+        await runtime.cancel(str(runs.run.id))
+        assert runs.run.state == "CANCELLED" and runs.run.checkpoint == {}
+
     async def test_a_paused_run_keeps_what_the_judge_needs(self, settings) -> None:
         scoring = with_scoring(settings)
         runs = Runs()

@@ -397,6 +397,10 @@ async function renderBackups() {
                 <input class="form-check-input" type="checkbox" id="rp-team-kb-only">
                 <label class="form-check-label" for="rp-team-kb-only">Only its knowledge bases, not its
                   members, tools, agents, workflows, API clients and quotas</label></div>
+              <div class="form-check mb-0 small">
+                <input class="form-check-input" type="checkbox" id="rp-team-exact">
+                <label class="form-check-label" for="rp-team-exact">Members exactly as in the backup:
+                  remove anyone who joined since (otherwise members are only added)</label></div>
             </div></dd>` : '';
       const wholeWarning = `${icon('i-alerts')} <b>The ticked parts are replaced</b> with the backup's. Restoring the
           database loses everything changed since ${esc(stampText(backup.name))}, including users, keys and
@@ -436,6 +440,7 @@ async function renderBackups() {
           } else if (scope === 'team') {
             body.team_id = document.getElementById('rp-team').value;
             if (document.getElementById('rp-team-kb-only').checked) body.knowledge_only = true;
+            else if (document.getElementById('rp-team-exact').checked) body.exact_members = true;
           }
           return api(`/ops/backups/${encodeURIComponent(backup.name)}/restore`,
             { method: 'POST', body: JSON.stringify(body) });
@@ -447,6 +452,9 @@ async function renderBackups() {
         const update = () => {
           const value = scopeSelect.value;
           const teamSetup = value === 'team' && !kbOnly.checked;
+          const exact = document.getElementById('rp-team-exact');
+          exact.disabled = kbOnly.checked;
+          if (kbOnly.checked) exact.checked = false;
           document.getElementById('rp-bases').classList.toggle('d-none', value !== 'bases');
           document.getElementById('rp-team-box').classList.toggle('d-none', value !== 'team');
           document.getElementById('ops-confirm-warning').innerHTML = value === 'all'
