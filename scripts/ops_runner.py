@@ -171,7 +171,10 @@ def restore_scope(params: dict) -> list[str]:
         if not UUID.match(team):
             return []
         # E68: a team restore brings back its setup too, unless asked not to.
-        return ["--team", team, *(["--knowledge-only"] if params.get("knowledge_only") else [])]
+        if params.get("knowledge_only"):
+            return ["--team", team, "--knowledge-only"]
+        # E91: members exactly as in the backup, rather than only added.
+        return ["--team", team, *(["--exact-members"] if params.get("exact_members") else [])]
     out: list[str] = []
     for value in params.get("knowledge_bases") or []:
         if UUID.match(str(value)):
@@ -719,6 +722,7 @@ def execute(spec: dict, inventory: Inventory, reporter: Reporter, python: str) -
             reporter.result["scope"] = {
                 "team": params.get("team"), "knowledge_bases": params.get("knowledge_bases"),
                 "knowledge_only": bool(params.get("knowledge_only")),
+                "exact_members": bool(params.get("exact_members")),
             }
         return ("SUCCEEDED", None) if ok else ("FAILED", "backup.py restore reported errors.")
 

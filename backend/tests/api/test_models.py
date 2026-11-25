@@ -243,6 +243,33 @@ class TestDeployment:
         assert "internal_url" not in response.json()
         assert "fake-runtime" not in response.text
 
+    async def test_a_stopped_copy_deploys_again(
+        self,
+        client: AsyncClient,
+        tokens,
+        model_admin: User,
+        serving_deployment: ModelDeployment,
+        session: AsyncSession,
+    ) -> None:
+        """E91: one click for a new copy with a stopped one's settings (after a team
+        restore, its copies are stopped records). Not for a copy that still runs."""
+        url = f"/api/v1/deployments/{serving_deployment.id}/redeploy"
+        response = await client.post(url, headers=auth_header(tokens, model_admin))
+        assert response.status_code == 409
+        serving_deployment.state = DeploymentState.STOPPED
+        serving_deployment.max_model_len = 4096
+        serving_deployment.traffic_weight = 25
+        await session.flush()
+
+        response = await client.post(url, headers=auth_header(tokens, model_admin))
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["deployment_id"] != str(serving_deployment.id)
+        assert body["poll_url"] == f"/api/v1/deployments/{body['deployment_id']}"
+        fresh = await session.get(ModelDeployment, uuid.UUID(body["deployment_id"]))
+        assert fresh is not None and fresh.model_id == serving_deployment.model_id
+        assert (fresh.runtime, fresh.max_model_len, fresh.traffic_weight) == ("mock", 4096, 25)
+
     async def test_model_with_active_deployment_cannot_be_deleted(
         self, client: AsyncClient, tokens, model_admin: User, serving_deployment: ModelDeployment
     ) -> None:

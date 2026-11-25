@@ -608,7 +608,7 @@ matrix still listed as missing.
 - [x] The team setup needs the backup's encryption key (`_key_refusal`, shared with the whole restore); the bases and files alone don't. API: `RestoreRequest.knowledge_only` (only with `team_id`); a team without knowledge bases is accepted unless `knowledge_only`. Console: *Only one team* scope lists every team in the backup, with an *Only its knowledge bases* box.
 - [x] GPU alerts: `gpu.alert_sustain_minutes` (default 0) raises a temperature or memory alert only once the unbroken run of breaching samples spans that long (`sustained`; a gap over `SAMPLE_MAX_AGE` restarts it; ECC raises at once). `gpu.alert_recovery_margin_celsius` (3) and `_percent` (2) lower the lines while an alert is open (`evaluate(recovering=True)`), so it clears and de-escalates only once clearly under them. `GpuMetricRepository.recent_for_gpus`; runtime settings. No migration.
 - [x] Tests: `tests/api/test_team_restore_sql.py`, `TestTeamSetup` in `tests/unit/test_scoped_restore.py`, `tests/api/test_ops.py`, `TestNoFlapping` in `tests/api/test_gpu_alerts.py`. Docs: [backup.md](../backup.md#restoring-a-team), [gpu.md](../gpu.md#alerts-that-dont-flap), api.md, operations.md, settings.md.
-- [ ] ~~A team restore doesn't bring back run history, approvals, or the models and aliases the team owned~~ (E85); question history stays out (it belongs to people); memberships are only added, never removed. ~~GPU thresholds are the same for every GPU~~ (E70, E75); a GPU waiting out the sustain time doesn't escalate early.
+- [ ] ~~A team restore doesn't bring back run history, approvals, or the models and aliases the team owned~~ (E85); question history stays out (it belongs to people); ~~memberships are only added, never removed~~ (E91: `--exact-members`). ~~GPU thresholds are the same for every GPU~~ (E70, E75); a GPU waiting out the sustain time doesn't escalate early.
 
 ## E69: Workflow canvas, typed node schemas, parallel branches (closes the feature-matrix visual builder gap)
 
@@ -726,7 +726,7 @@ matrix still listed as missing.
 - [x] `agent_answer_scores.attempts` and `next_attempt_at` (migration `d8a0c2e4f6b7`). A judge call that raises anything but `JudgeError` puts the answer back to `PENDING` with `retry_delay` (`answer_judge_retry_minutes` doubling, plus up to 25% at random) while `attempts <= answer_judge_retries`; `claim_pending` skips one not yet due. Both settings are runtime-editable; the service reads them through `RUNTIME.latest`.
 - [x] A run that suspends for an approval stores `{question, passages}` (already in the scorer's shape) in `checkpoint["scoring"]`; `_resume` restores it (`_restore_scoring`), so `_queue_scoring` samples it on completion.
 - [x] Tests: `tests/api/test_answer_scoring.py::TestRetries`, `::TestPausedRuns`. Docs: [agents.md](../agents.md#answer-quality), settings.md.
-- [ ] A run cancelled while paused keeps its checkpoint, passages included, until its run is deleted.
+- [ ] ~~A run cancelled while paused keeps its checkpoint, passages included, until its run is deleted~~ (E91).
 
 ## E84: Workflow builder: typed outputs, deeper paths, edges back, panning
 
@@ -741,7 +741,7 @@ matrix still listed as missing.
 - [x] `TEAM_TABLES` adds `models`, `model_files` and `model_aliases` (upserted, after the memberships) and the history: `agent_runs`, `agent_run_events`, `tool_executions`, `agent_answer_scores`, `workflow_runs`, `workflow_steps`, `workflow_approvals` (`merge`: only missing rows added, so a run that moved on keeps its state).
 - [x] A nullable reference to a row gone since is cleared in every mode (a run's deleted user keeps the run); `TEAM_DROP_DANGLING` (`model_aliases`) drops a row whose required reference is gone instead of refusing, and those go first.
 - [x] Tests: `tests/api/test_team_restore_sql.py` (history kept and not rewound, models, aliases, a gone user). Docs: [backup.md](../backup.md#restoring-a-team).
-- [ ] Model weights and deployments aren't in the database backup: a restored model needs deploying again. Memberships are still only added.
+- [ ] Model weights aren't in the database backup; ~~a restored model needs deploying again~~ (E91: its copies come back stopped, *Deploy again*). ~~Memberships are still only added~~ (E91).
 
 ## E86: Chargeback gaps: workflow tool steps, OCR per page, another currency
 
@@ -794,6 +794,14 @@ matrix still listed as missing.
 - [x] Console: the unsaved draft and its undo history per workflow, and the open workflow, in sessionStorage (restored only against the same server draft; dropped on save, discard, delete); copied steps in localStorage, shared across tabs.
 - [x] Tests: `tests/unit/test_workflow_schema.py` (`TestJsonSchema`, `TestTypedSettings`), `tests/api/test_workflows.py::TestExecution::test_a_templated_setting_is_checked`. Docs: workflows.md.
 - [ ] HTTP bodies, tool data and sub-workflow outputs stay `any`; the reply isn't validated against `json_schema`.
+
+## E91: Restore and paused-run cleanup
+
+- [x] `--exact-members` (`exact_members` in `RestoreRequest` and the runner's params; only with the team's setup): after the merge, roles set back from the staged rows and members not in the backup deleted. Console: *Members exactly as in the backup*.
+- [x] `TEAM_TABLES` adds `model_deployments` and `deployment_revisions` (`merge`); staged copies become `STOPPED` with no container, name, address, reservation or GPUs. `DeploymentService.redeploy` / `POST /deployments/{id}/redeploy` (`model.deploy`; 409 unless stopped or failed): a new copy with the old one's runtime, tensor parallelism, context length, memory share and traffic share. Console: *Deploy again*.
+- [x] A paused agent run cancelled (`AgentRunService.cancel`, `PlatformAgentRuntime.cancel`) or whose approval expires clears `checkpoint`; migration `a2d4f6b8c0e1` clears it on runs that already ended.
+- [x] Tests: `tests/api/test_team_restore_sql.py` (members, copies), `tests/api/test_models.py::TestDeployment::test_a_stopped_copy_deploys_again`, `tests/api/test_ops.py`, `tests/unit/test_scoped_restore.py`, `tests/api/test_answer_scoring.py`, `tests/api/test_approval_expiry.py`. Docs: backup.md, models.md, agents.md, api.md.
+- [ ] A redeployed copy uses the runtime's current image, not the one it last ran; its GPUs are chosen afresh.
 
 ## Phase acceptance (applies to each)
 

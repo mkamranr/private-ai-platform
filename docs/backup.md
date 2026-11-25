@@ -144,6 +144,7 @@ runs (with their steps and approvals).
 
 ```
 python3 scripts/backup.py restore backups/20261110T020000Z --team legal
+python3 scripts/backup.py restore backups/20261110T020000Z --team legal --exact-members
 python3 scripts/backup.py restore backups/20261110T020000Z --team legal --knowledge-only
 ```
 
@@ -164,12 +165,20 @@ the knowledge bases (the team's rows go first, so a base finds its team):
   one that is here is left as it is, so a run that finished since stays finished. Runs
   made since are kept. Question history (chat conversations) belongs to people, not
   teams, and is not part of a team restore.
-* **Models come back as catalogue entries.** A model the team owned returns with its file
-  list and settings but no running copy: deploy it again once its weights are on the
-  model store (they aren't in the database backup). Its aliases come back with it; an
-  alias of another team's (or a shared) model deleted since is left out.
-* **Members are only added.** Anyone in the team at the time of the backup is a member
-  again; someone who joined since stays.
+* **Models come back as catalogue entries, their copies as stopped records.** A model
+  the team owned returns with its file list and settings, and each copy it had returns
+  *stopped*, with its runtime, tensor parallelism, context length, memory share, traffic
+  share and revisions but no container, GPUs or address (those belonged to the platform
+  the backup was taken on). Once the weights are on the model store (they aren't in the
+  database backup), *Deploy again* on a copy in *Deployments* starts a new one with its
+  settings, placed afresh (`POST /deployments/{id}/redeploy`). A copy that is here now is
+  left as it is. Its aliases come back with it; an alias of another team's (or a shared)
+  model deleted since is left out.
+* **Members are only added**, unless asked otherwise. Anyone in the team at the time of
+  the backup is a member again; someone who joined since stays. With `--exact-members`
+  (*Members exactly as in the backup* in the console, `exact_members` in the API) the
+  members become exactly the backup's: whoever joined since is removed, and roles go back
+  to what they were. It needs the team's setup (not with `--knowledge-only`).
 * **API keys never come back usable by accident.** A key revoked since stays revoked, and
   a key deleted since comes back revoked. Reissue one deliberately if it is wanted.
 * **Things that no longer exist:** a grant of a tool or skill deleted since is dropped, a
@@ -296,5 +305,5 @@ OPS__BACKUP_COPY_S3_CA_FILE=/etc/ssl/certs/backup-store-ca.pem   # a private CA
 * Scheduling runs through the ops runner. Without the runner, use cron with `make backup`.
 * No incremental backups; every run is full.
 * A team restore doesn't bring back question history (chat conversations belong to
-  people, not the team) or model weights and deployments: a restored model needs
-  deploying again. Memberships are only added, never removed.
+  people, not the team) or model weights; a restored model's copies come back stopped, to
+  be deployed again (one click each).

@@ -155,7 +155,7 @@ runs the whole platform and its tests.
 |---|---|
 | **Dashboard** | Fleet, models, traffic, alerts, knowledge, agents and workflows on one page, from the last hour to 90 days. Unmeasured figures show as unavailable, never as zero. |
 | **Alerts and notifications** | In-app alerts sent to chat webhooks, ticketing systems or email, with retries and signed payloads. |
-| **Backup and restore** | Scheduled, verified backups from the browser; restore everything, one knowledge base, or a whole team with its setup, models and run history. |
+| **Backup and restore** | Scheduled, verified backups from the browser; restore everything, one knowledge base, or a whole team with its setup, members, models (copies ready to deploy again in one click) and run history. |
 | **Offline upgrades** | Signed bundles with preflight checks, automatic backup and rollback; signing keys that rotate and expire under an offline root key. |
 | **Chargeback** | Dated cost rates for tokens, GPU hours, speech, OCR pages and tool calls; reports by team, key, user or model, in any currency you set a rate for; monthly budgets and CSV export. |
 | **Observability** | Metrics, logs and traces that link up, from an error to its log line, its trace and the agent run behind it. |

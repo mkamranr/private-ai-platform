@@ -615,6 +615,30 @@ class TestScopedRestore:
         spec = (await claim(client, runner_headers)).json()
         assert spec["params"] == {"backup": BACKUP, "team": self.TEAM}
 
+    async def test_exact_members_reach_the_runner(self, client, operator, tokens, runner_headers):
+        """E91: the team's members exactly as in the backup; only with its setup."""
+        await beat(client, runner_headers, backups=self._backups())
+        r = await self._restore(
+            client, tokens, operator, BACKUP, team_id=self.TEAM, exact_members=True
+        )
+        assert r.status_code == 202, r.text
+        spec = (await claim(client, runner_headers)).json()
+        assert spec["params"] == {"backup": BACKUP, "team": self.TEAM, "exact_members": True}
+        r = await self._restore(
+            client,
+            tokens,
+            operator,
+            BACKUP,
+            team_id=self.TEAM,
+            exact_members=True,
+            knowledge_only=True,
+        )
+        assert r.status_code == 422
+        r = await self._restore(
+            client, tokens, operator, BACKUP, knowledge_base_ids=[self.KB_A], exact_members=True
+        )
+        assert r.status_code == 422
+
     async def test_a_team_setup_needs_the_backups_key(
         self, client, operator, tokens, runner_headers
     ):

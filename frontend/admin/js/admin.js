@@ -2113,9 +2113,13 @@ function deploymentRow(deployment) {
               data-dep-model="${esc(deployment.model_id)}"
               ${deployment.node_id ? '' : 'disabled title="An external runtime has no configuration here"'}
               >Revisions</button>
-      <button class="btn btn-sm btn-outline-secondary me-1"
+      ${['STOPPED', 'FAILED'].includes(deployment.state) && can('model.deploy')
+        ? `<button class="btn btn-sm btn-outline-primary me-1" data-dep-action="redeploy"
+              data-dep="${esc(deployment.id)}"
+              title="A new copy with this one's runtime and settings">Deploy again</button>`
+        : `<button class="btn btn-sm btn-outline-secondary me-1"
               data-dep-action="restart" data-dep="${esc(deployment.id)}"
-              ${stoppable ? '' : 'disabled'}>Restart</button>
+              ${stoppable ? '' : 'disabled'}>Restart</button>`}
       <button class="btn btn-sm btn-outline-warning me-1"
               data-dep-action="stop" data-dep="${esc(deployment.id)}"
               ${stoppable ? '' : 'disabled'}>Stop</button>
@@ -2129,7 +2133,8 @@ function wireDeploymentActions() {
     button.onclick = () => guard(button, async () => {
       const { depAction, dep } = button.dataset;
       const result = await api(`/deployments/${dep}/${depAction}`, { method: 'POST' });
-      alert(`Deployment is now ${result.state}.`, 'success');
+      alert(depAction === 'redeploy' ? `A new copy is ${result.state}. ${result.message || ''}`
+        : `Deployment is now ${result.state}.`, 'success');
       await renderDeployments();
     });
   });

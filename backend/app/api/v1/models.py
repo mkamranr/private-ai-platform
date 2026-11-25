@@ -26,7 +26,7 @@ from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.audit import AuditAction
 from app.models.auth import User
-from app.models.models_registry import ApiClient, UsageRecord
+from app.models.models_registry import ApiClient, ModelDeployment, UsageRecord
 from app.models.models_registry import Model as ModelRow
 from app.schemas.common import MessageResponse, Page
 from app.schemas.models_registry import (
@@ -385,6 +385,33 @@ async def deploy_model(
         ),
         actor=actor,
     )
+    return await _accepted(service, deployment, response)
+
+
+@router.post(
+    "/deployments/{deployment_id}/redeploy",
+    response_model=DeploymentAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Deploy a stopped copy again (asynchronous)",
+)
+async def redeploy(
+    service: DeploymentServiceDep,
+    actor: Annotated[User, require_permission(Perm.MODEL_DEPLOY)],
+    guard: ScopeGuardDep,
+    response: Response,
+    deployment_id: uuid.UUID = Path(...),
+) -> DeploymentAcceptedResponse:
+    """E91: a new copy with a stopped or failed copy's settings (runtime, tensor
+    parallelism, context length, memory share, traffic share), placed afresh. 409 for a
+    copy that is still running. Polled like a new deployment."""
+    await guard.deployment(deployment_id)
+    deployment = await service.redeploy(deployment_id, actor=actor)
+    return await _accepted(service, deployment, response)
+
+
+async def _accepted(
+    service: DeploymentServiceDep, deployment: ModelDeployment, response: Response
+) -> DeploymentAcceptedResponse:
     poll_url = f"/api/v1/deployments/{deployment.id}"
     # Location is what an HTTP-aware client follows without being told.
     response.headers["Location"] = poll_url

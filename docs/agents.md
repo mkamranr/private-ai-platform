@@ -366,8 +366,9 @@ they were given: the same judge as the retrieval playground
 - **Which answers.** A run that completed with passages retrieved, sampled at that rate
   when it finishes. A run that paused for an approval counts too: its question and
   passages are kept in its checkpoint (which already holds them as the conversation's
-  context) until it resumes and completes. Answers with no passages, and failed runs,
-  are not judged.
+  context) until it resumes and completes. A paused run that is cancelled, or whose
+  approval expires, can't resume, so its checkpoint (conversation and passages) is
+  cleared as it ends. Answers with no passages, and failed runs, are not judged.
 - **Off the answer's path.** The answer is queued with its question and passages, and a
   worker judges queued answers one at a time, so judging never slows an answer down.
 - **A judge that is down is tried again.** A call that fails (the model is down, over
