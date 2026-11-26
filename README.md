@@ -147,7 +147,7 @@ runs the whole platform and its tests.
 | **Sign-in** | Local accounts, OIDC single sign-on and LDAP / Active Directory; two-factor with an authenticator app or passkey; passwordless passkey sign-in. |
 | **Hardening** | Lockout, throttling, refresh-token rotation with theft detection, *sign out everywhere*, and a shared outbound URL policy against SSRF. |
 | **Roles and teams** | Role-based permissions and team-owned models, keys, agents, tools, workflows and knowledge bases, with one visibility rule enforced everywhere. |
-| **Audit trail** | Who did what, when and from where, exportable and filterable by correlation ID. |
+| **Audit trail** | Who did what, when and from where, filterable by correlation ID, exported as a streamed file or pushed to a SIEM (JSON Lines or Splunk HEC) as it is written. |
 
 ### Operations
 

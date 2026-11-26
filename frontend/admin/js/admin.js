@@ -6297,13 +6297,9 @@ async function exportAudit(format) {
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+  // E100: streamed with no cap; the count is fixed when the export starts.
   const rows = response.headers.get('X-Export-Rows');
-  if (response.headers.get('X-Export-Truncated') === 'true') {
-    alert(`Downloaded ${name} with the newest ${rows} records only: more matched. ` +
-          'Narrow the filters (a later "Since" date) to export the rest.', 'warning');
-  } else {
-    alert(`Downloaded ${name} (${rows} records). The export is recorded in the audit log.`, 'success');
-  }
+  alert(`Downloaded ${name} (${rows} records). The export is recorded in the audit log.`, 'success');
 }
 for (const [id, format] of [['aud-export-csv', 'csv'], ['aud-export-jsonl', 'jsonl']]) {
   const button = document.getElementById(id);

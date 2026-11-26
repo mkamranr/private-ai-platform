@@ -488,7 +488,7 @@ matrix still listed as missing.
 - [x] `POST /audit/export?format=csv|jsonl` with the same filters (`audit.view`): `services/audit_export.py`, newest first, capped at 100,000 rows (`X-Export-Rows`, `X-Export-Truncated`). Audited `AUDIT_EXPORTED` with format, rows, truncation and filters, committed before the file is sent. CSV formula guard moved to `core/csv_safe.py` (`safe_cell`) and shared with chargeback.
 - [x] Audit Log page: *Request ID* filter, a clickable request ID under each source address, *Export CSV* and *Export JSONL* using the page's filters. No migration.
 - [x] Tests: `tests/api/test_audit_api.py` (the first tests of the audit API). Docs: [security.md](../security.md#audit), api.md (stale `/audit-logs` path fixed).
-- [ ] Built in memory, not streamed; the cap stands in for paging. No scheduled or push export to a SIEM. No `until` field on the page (the API has it).
+- [ ] ~~Built in memory, not streamed; the cap stands in for paging. No scheduled or push export to a SIEM~~ (E100). No `until` field on the page (the API has it).
 
 ## E55: Stop every agent at once (closes the feature-matrix kill-switch gap)
 
@@ -849,6 +849,13 @@ matrix still listed as missing.
 - [x] `POST /notifications/pagerduty/{channel_id}` (public, `X-PagerDuty-Signature` v1 HMAC over the body with the channel's `inbound_secret`): `incident.acknowledged` with key `aip:<fingerprint>` acknowledges the ACTIVE alert (`AlertService.acknowledge_elsewhere`, audited under the PagerDuty user's name).
 - [x] Console: the Opsgenie format, the PagerDuty webhook secret and address, the summary schedule. Tests: `tests/api/test_notification_extras.py`. Doc: notifications.md.
 - [ ] Opsgenie acknowledgements don't come back; PagerDuty resolutions are ignored; no VictorOps format; summaries aren't in the delivery history.
+
+## E100: Audit export streamed, and pushed to a SIEM
+
+- [x] `POST /audit/export` streams (`StreamingResponse`, keyset pages of 1,000 via `AuditRepository.export_page`); no cap; `until` fixed at the start so `X-Export-Rows` is exact; `X-Export-Truncated` is gone.
+- [x] `AUDIT_PUSH__*` settings and `audit_push_state` (migration `f7c9d1e3a5b6`): `AuditPusher` (`app/services/audit_push.py`), run by the scheduler every `interval_seconds`, sends rows after the cursor and older than a minute, oldest first, as JSON Lines or Splunk HEC; the cursor moves only on 2xx; three failures raise an `audit_push` alert, cleared on success. `GET /audit/push` for its state.
+- [x] Tests: `tests/api/test_audit_api.py::test_streamed_a_page_at_a_time`, `tests/api/test_audit_push.py`. Doc: security.md, api.md.
+- [ ] One collector; settings from the environment only (no console form); no syslog transport; the console still downloads the whole file before saving it.
 
 ## Phase acceptance (applies to each)
 

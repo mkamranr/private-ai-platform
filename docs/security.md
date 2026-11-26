@@ -129,12 +129,35 @@ Log page, click a request ID (under the source address) or paste one into *Reque
 see everything that one request did.
 
 **Export.** *Export CSV* and *Export JSONL* on the Audit Log page download every record
-the current filters match, newest first, up to 100,000. More than that and the console
-says the file holds only the newest records; narrow the dates for the rest. CSV cells that
+the current filters match, newest first. The file is streamed from the database a
+thousand rows at a time, so there is no cap; records written after the export started
+are left out, so the count it announces (`X-Export-Rows`) is what it holds. CSV cells that
 would start a spreadsheet formula (`=`, `+`, `-`, `@`) get a leading apostrophe, because
 usernames tried at sign-in, user agents and messages are text anyone can choose. JSON
 Lines keeps `metadata` as an object, for a log pipeline or SIEM. Each export is itself
 recorded as `AUDIT_EXPORTED`, with its filters and row count. Both need `audit.view`.
+
+**Push to a SIEM.** Set `AUDIT_PUSH__URL` and the scheduler sends new audit records to
+it as they are written, every `AUDIT_PUSH__INTERVAL_SECONDS` (60 by default), oldest
+first, in batches of `AUDIT_PUSH__BATCH_SIZE` (500):
+
+| Setting | |
+|---|---|
+| `AUDIT_PUSH__FORMAT` | `jsonl` (JSON Lines, the export's records) or `splunk_hec` (Splunk HTTP Event Collector events: `time`, `source`, `sourcetype`, and the record as `event`) |
+| `AUDIT_PUSH__AUTHORIZATION` | the whole header, e.g. `Splunk <token>` or `Bearer <token>` |
+| `AUDIT_PUSH__SOURCETYPE` | Splunk only, `aip:audit` by default |
+| `AUDIT_PUSH__VERIFY_TLS`, `AUDIT_PUSH__TIMEOUT_SECONDS` | `true`, 15 |
+
+- It starts from when it was turned on; earlier records are exported from the console.
+- The position (time and id of the last record accepted) is kept in the database, so a
+  restart carries on, and while the SIEM refuses nothing moves; it catches up afterwards,
+  20 batches per run. A record is sent once it is a minute old, so a long transaction's
+  rows aren't skipped.
+- Three failed pushes in a row raise a WARNING alert (source `audit_push`), which
+  notification channels can route; the next push that gets through clears it.
+- `GET /audit/push` (`audit.view`) shows whether it is set up, the collector's host, the
+  last record sent, totals and the last error. The URL goes through the outbound URL
+  policy, like webhooks.
 
 ---
 

@@ -903,6 +903,28 @@ class ChargebackSettings(BaseModel):
         return value
 
 
+class AuditPushSettings(BaseModel):
+    """E100: the audit log pushed to a SIEM as it is written (``AUDIT_PUSH__*``).
+
+    Off until ``url`` is set. New rows are sent in batches every ``interval_seconds``,
+    oldest first, from where the last push stopped; history before the push was turned on
+    is exported from the console instead.
+    """
+
+    url: str | None = None
+    #: ``jsonl``: JSON Lines, one audit record per line. ``splunk_hec``: Splunk's HTTP
+    #: Event Collector (``/services/collector/event``), one event per record.
+    format: Literal["jsonl", "splunk_hec"] = "jsonl"
+    #: The whole Authorization header, e.g. ``Splunk <token>`` or ``Bearer <token>``.
+    authorization: SecretStr | None = None
+    interval_seconds: int = Field(default=60, ge=10, le=86400)
+    batch_size: int = Field(default=500, ge=1, le=5000)
+    verify_tls: bool = True
+    timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    #: Splunk only: the events' ``sourcetype``.
+    sourcetype: str = Field(default="aip:audit", max_length=128)
+
+
 class TracingSettings(BaseModel):
     """Distributed tracing to Tempo over OTLP (M19, Phase 7).
 
@@ -1068,6 +1090,7 @@ class Settings(BaseSettings):
     ops: OpsSettings = Field(default_factory=OpsSettings)
     chargeback: ChargebackSettings = Field(default_factory=ChargebackSettings)
     notifications: NotificationsSettings = Field(default_factory=NotificationsSettings)
+    audit_push: AuditPushSettings = Field(default_factory=AuditPushSettings)
 
     @classmethod
     def settings_customise_sources(
