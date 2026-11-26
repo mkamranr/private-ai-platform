@@ -6,7 +6,8 @@
  */
 const notifyState = { data: null };
 
-const NOTIFY_FORMAT_LABEL = { generic: 'JSON', chat: 'Chat text', pagerduty: 'PagerDuty' };
+const NOTIFY_FORMAT_LABEL = { generic: 'JSON', chat: 'Chat text', pagerduty: 'PagerDuty', opsgenie: 'Opsgenie' };
+const OPSGENIE_ALERTS_URL = 'https://api.opsgenie.com/v2/alerts';
 /* E50: PagerDuty's public Events API v2 address, offered when the format is chosen. */
 const PAGERDUTY_EVENTS_URL = 'https://events.pagerduty.com/v2/enqueue';
 const DELIVERY_PILL = {
@@ -128,12 +129,20 @@ async function renderNotifySection(body) {
 }
 
 /* E50: a PagerDuty channel takes a routing key instead of a signing secret or header. */
+/* E99: Opsgenie takes its API key as the Authorization header and no signing secret. */
 function notifyFormatFields() {
-  const pd = document.getElementById('notify-format').value === 'pagerduty';
+  const format = document.getElementById('notify-format').value;
+  const pd = format === 'pagerduty';
+  const og = format === 'opsgenie';
   document.getElementById('notify-pd-row').classList.toggle('d-none', !pd);
   document.getElementById('notify-signing-row').classList.toggle('d-none', pd);
+  document.getElementById('notify-signing').closest('.col-sm-6').classList.toggle('d-none', og);
+  document.getElementById('notify-auth').placeholder = og ? 'GenieKey …' : '';
   const url = document.getElementById('notify-url');
-  if (pd && !url.value && !document.getElementById('notify-id').value) url.value = PAGERDUTY_EVENTS_URL;
+  if (!url.value && !document.getElementById('notify-id').value) {
+    if (pd) url.value = PAGERDUTY_EVENTS_URL;
+    if (og) url.value = OPSGENIE_ALERTS_URL;
+  }
 }
 
 function notifyKindFields(kind) {
@@ -194,6 +203,17 @@ function openNotifyModal(channel = null) {
   }
   document.getElementById('notify-routing-key').placeholder = channel?.has_routing_key
     ? 'Set. Leave blank to keep it.' : '';
+  // E99: a PagerDuty webhook subscription pointed back here acknowledges alerts.
+  document.getElementById('notify-inbound').placeholder = channel?.has_inbound_secret
+    ? 'Set. Leave blank to keep it.' : '';
+  document.getElementById('notify-inbound-clear-row').classList.toggle('d-none', !channel?.has_inbound_secret);
+  document.getElementById('notify-inbound-help').innerHTML = channel
+    ? `To have incidents acknowledged in PagerDuty acknowledge the alert here, add a webhook subscription (v3)
+       on the service sending <em>incident.acknowledged</em> to
+       <code>${esc(location.origin)}/api/v1/notifications/pagerduty/${esc(channel.id)}</code> and paste its signing secret.`
+    : 'Save the channel first; its webhook address is shown here afterwards.';
+  document.getElementById('notify-summary').value = channel?.summary_every || '';
+  document.getElementById('notify-summary-at').value = channel?.summary_at || '08:00';
   notifyKindFields(kind.value);
   notifyFormatFields();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('notify-modal')).show();
@@ -217,6 +237,9 @@ onModalSubmit('notify-form', 'notify-error', async () => {
     quiet_end: value('notify-quiet-end') || (id ? '' : null),
     quiet_timezone: value('notify-quiet-zone') || 'UTC',
     team_id: value('notify-team') || null,
+    // E99: none turns the summary off.
+    summary_every: value('notify-summary') || null,
+    summary_at: value('notify-summary') === 'daily' ? value('notify-summary-at') || null : null,
   };
   if (!id) body.kind = kind;
   if (kind === 'webhook') {
@@ -224,6 +247,8 @@ onModalSubmit('notify-form', 'notify-error', async () => {
     body.verify_tls = document.getElementById('notify-verify-tls').checked;
     if (value('notify-url')) body.url = value('notify-url');
     if (value('notify-routing-key')) body.routing_key = value('notify-routing-key');
+    if (document.getElementById('notify-inbound-clear').checked) body.inbound_secret = '';
+    else if (value('notify-inbound')) body.inbound_secret = value('notify-inbound');
     for (const [name, field, clear] of [['signing_secret', 'notify-signing', 'notify-signing-clear'],
       ['authorization', 'notify-auth', 'notify-auth-clear']]) {
       if (document.getElementById(clear).checked) body[name] = '';

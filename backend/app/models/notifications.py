@@ -56,6 +56,16 @@ class PayloadFormat(enum.StrEnum):
     #: E50: PagerDuty's Events API v2. Raised and escalated alerts trigger an incident,
     #: resolved ones resolve it; the alert's fingerprint is the dedup key.
     PAGERDUTY = "pagerduty"
+    #: E99: Opsgenie's Alert API v2. Raised and escalated alerts create one (the alias
+    #: is the fingerprint, so a repeat is deduplicated), resolved ones close it.
+    OPSGENIE = "opsgenie"
+
+
+class SummaryEvery(enum.StrEnum):
+    """E99: how often a channel gets a summary of what its alerts did."""
+
+    HOURLY = "hourly"
+    DAILY = "daily"
 
 
 class DeliveryEvent(enum.StrEnum):
@@ -85,8 +95,12 @@ class NotificationChannel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="notification_channel_min_severity",
         ),
         CheckConstraint(
-            "payload_format IN ('generic','chat','pagerduty')",
+            "payload_format IN ('generic','chat','pagerduty','opsgenie')",
             name="notification_channel_payload_format",
+        ),
+        CheckConstraint(
+            "summary_every IS NULL OR summary_every IN ('hourly','daily')",
+            name="notification_channel_summary_every",
         ),
         CheckConstraint(
             "timeout_seconds > 0 AND timeout_seconds <= 60",
@@ -161,6 +175,23 @@ class NotificationChannel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     #: E50: the PagerDuty integration's routing key, Fernet-encrypted. Write-only.
     routing_key_encrypted: Mapped[str | None] = mapped_column(Text)
+    #: E99: the signing secret of a PagerDuty webhook subscription pointed back at this
+    #: channel, Fernet-encrypted. Set, an incident acknowledged in PagerDuty acknowledges
+    #: the alert here.
+    inbound_secret_encrypted: Mapped[str | None] = mapped_column(Text)
+
+    # -- scheduled summary (E99) ------------------------------------------------
+    #: ``hourly``, ``daily`` or NULL: a message listing what was raised and resolved since
+    #: the last one, and what is still open. Chat webhooks and email only.
+    summary_every: Mapped[str | None] = mapped_column(String(8))
+    #: For a daily summary, its time as HH:MM in ``quiet_timezone``.
+    summary_at: Mapped[str | None] = mapped_column(String(5))
+    #: When the last summary went out (or the schedule started); the next covers from here.
+    summary_sent_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def has_inbound_secret(self) -> bool:
+        return bool(self.inbound_secret_encrypted)
 
     @property
     def has_routing_key(self) -> bool:

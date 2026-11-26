@@ -32,6 +32,7 @@ from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -50,6 +51,10 @@ USER_AGENT = "private-ai-platform-notifier"
 #: E47: the event of a digest message. Never stored as a delivery's event: each delivery
 #: in a digest keeps its own (raised, escalated, resolved).
 DIGEST_EVENT = "digest"
+#: E99: the event of a scheduled summary (hourly or daily).
+SUMMARY_EVENT = "summary"
+#: Events whose message lists other messages.
+LIST_EVENTS = (DIGEST_EVENT, SUMMARY_EVENT)
 #: Lines listed in one digest; the rest are counted.
 DIGEST_MAX_LINES = 30
 _EVENT_LABEL: dict[str, str] = {
@@ -98,6 +103,8 @@ class Message:
             return f"[TEST] {self.title}"
         if self.event == DIGEST_EVENT:
             return f"[DIGEST] {self.title}"
+        if self.event == SUMMARY_EVENT:
+            return f"[SUMMARY] {self.title}"
         return f"[{self.severity}] {self.title}"
 
 
@@ -163,6 +170,39 @@ def digest_message(
     )
 
 
+def summary_message(
+    items: list[Message],
+    *,
+    channel_name: str,
+    every: str,
+    since: dt.datetime,
+    still_open: int,
+    delivery_id: str,
+    console_url: str | None,
+) -> Message:
+    """E99: what a channel's alerts did since its last summary. ``items`` are the alerts
+    raised and resolved in that time, each with its event."""
+    raised = sum(1 for i in items if i.event != DeliveryEvent.RESOLVED)
+    resolved = len(items) - raised
+    label = "Hourly" if every == "hourly" else "Daily"
+    rank = {"INFO": 0, "WARNING": 1, "CRITICAL": 2}
+    worst = max((i.severity for i in items), key=lambda s: rank.get(s, 0), default="INFO")
+    return Message(
+        event=SUMMARY_EVENT,
+        severity=worst,
+        title=(
+            f"{label} summary for {channel_name}: {raised} raised, {resolved} resolved, "
+            f"{still_open} still open"
+        ),
+        message=f"Since {_when(since)}.",
+        source="notifications",
+        delivery_id=delivery_id,
+        raised_at=dt.datetime.now(dt.UTC),
+        console_url=console_url,
+        items=tuple(items),
+    )
+
+
 def _digest_line(item: Message) -> str:
     event = _EVENT_LABEL.get(item.event, item.event).lower()
     at = item.resolved_at if item.event == DeliveryEvent.RESOLVED else item.raised_at
@@ -205,8 +245,11 @@ def generic_payload(msg: Message) -> dict[str, Any]:
 
 def plain_text(msg: Message) -> str:
     """The human-readable body, shared by chat webhooks and email."""
-    if msg.event == DIGEST_EVENT:
-        lines = [msg.heading, *(_digest_line(i) for i in msg.items[:DIGEST_MAX_LINES])]
+    if msg.event in LIST_EVENTS:
+        lines = [msg.heading]
+        if msg.message:
+            lines.append(msg.message)
+        lines.extend(_digest_line(i) for i in msg.items[:DIGEST_MAX_LINES])
         if len(msg.items) > DIGEST_MAX_LINES:
             lines.append(f"... and {len(msg.items) - DIGEST_MAX_LINES} more on the Alerts page.")
         if msg.link:
@@ -396,6 +439,44 @@ def pagerduty_payload(
     return event
 
 
+_OG_PRIORITY = {"CRITICAL": "P1", "WARNING": "P3", "INFO": "P5"}
+
+
+def opsgenie_alias(msg: Message) -> str:
+    return f"aip:{msg.fingerprint}" if msg.fingerprint else f"aip:{msg.delivery_id}"
+
+
+def opsgenie_payload(msg: Message) -> dict[str, Any]:
+    """E99: an Opsgenie Alert API v2 alert. The alias is the alert's fingerprint, so a
+    repeat or an escalation updates the same Opsgenie alert rather than opening another."""
+    details = {
+        "alert_id": msg.alert_id,
+        "occurrences": msg.occurrences,
+        "resource_id": msg.resource_id,
+        "raised_at": _iso(msg.raised_at),
+        "console_url": msg.link,
+    }
+    return {
+        "message": _short(msg.title, 130) or "Alert",
+        "alias": opsgenie_alias(msg)[:512],
+        "description": plain_text(msg)[:15000],
+        "priority": _OG_PRIORITY.get(msg.severity, "P3"),
+        "source": PAGERDUTY_SOURCE,
+        "entity": msg.resource_type or msg.source,
+        "tags": [msg.source],
+        "details": {k: str(v) for k, v in details.items() if v is not None},
+    }
+
+
+def opsgenie_close(msg: Message, url: str) -> tuple[str, dict[str, Any]]:
+    """The address and body that close the Opsgenie alert for ``msg``."""
+    alias = quote(opsgenie_alias(msg)[:512], safe="")
+    return (
+        f"{url.rstrip('/')}/{alias}/close?identifierType=alias",
+        {"source": PAGERDUTY_SOURCE, "note": "Resolved on the platform."},
+    )
+
+
 def chat_payload(msg: Message) -> dict[str, Any]:
     return {"text": plain_text(msg)}
 
@@ -453,6 +534,21 @@ class WebhookSender:
                     )
                 return first
             payload: dict[str, Any] = pagerduty_payload(msg, routing_key)
+        elif payload_format == PayloadFormat.OPSGENIE:
+            if not authorization:
+                return SendResult(
+                    False, "This Opsgenie channel has no API key (Authorization: GenieKey ...)."
+                )
+            post = (verify_tls, timeout_seconds)
+            if msg.event == DeliveryEvent.RESOLVED:
+                close_url, close = opsgenie_close(msg, url)
+                return await self._post(close, msg, close_url, None, authorization, *post)
+            first = await self._post(opsgenie_payload(msg), msg, url, None, authorization, *post)
+            if first.ok and msg.event == DeliveryEvent.TEST:
+                # Like PagerDuty: a test opens an alert and closes it straight away.
+                close_url, close = opsgenie_close(msg, url)
+                await self._post(close, msg, close_url, None, authorization, *post)
+            return first
         elif payload_format == PayloadFormat.CHAT:
             payload = chat_payload(msg)
         else:

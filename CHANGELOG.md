@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Notifications: summaries, Opsgenie, acknowledged from PagerDuty
+- A channel can get an hourly or daily summary: what was raised and resolved since the last one, and what is still open. Email and chat channels.
+- Opsgenie as a webhook format: alerts create an Opsgenie alert and resolutions close it, deduplicated by alias.
+- An incident acknowledged in PagerDuty acknowledges its alert here, through a signed webhook (`POST /notifications/pagerduty/{channel_id}`).
+
 ### Dashboard: a year of traffic, and the range you chose last
 - The dashboard looks back up to a year (*Last 180 days*, *Last year*). Past 90 days its traffic figures come from daily rollups the scheduler writes every hour, plus the records since the last one.
 - The dashboard opens with the range each person chose last, on any browser (`dashboard_window_hours` in `PUT /users/me/preferences`).

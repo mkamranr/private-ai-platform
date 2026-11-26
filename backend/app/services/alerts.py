@@ -18,6 +18,8 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from sqlalchemy import select
+
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.audit import AuditAction
@@ -141,6 +143,31 @@ class AlertService:
             resource_type="alert",
             resource_id=str(alert.id),
             metadata={"fingerprint": alert.fingerprint, "severity": alert.severity},
+        )
+        return alert
+
+    async def acknowledge_elsewhere(self, fingerprint: str, *, who: str, via: str) -> Alert | None:
+        """E99: someone acknowledged this alert in another system (a PagerDuty incident).
+        Only an ACTIVE alert changes; audited under ``who``, with no platform account."""
+        alert = (
+            await self._alerts.session.execute(
+                select(Alert)
+                .where(Alert.fingerprint == fingerprint, Alert.state == AlertState.ACTIVE)
+                .order_by(Alert.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if alert is None:
+            return None
+        alert.state = AlertState.ACKNOWLEDGED
+        alert.acknowledged_at = dt.datetime.now(dt.UTC)
+        await self._alerts.flush()
+        await self._audit.record(
+            AuditAction.ALERT_ACKNOWLEDGED,
+            username=who,
+            resource_type="alert",
+            resource_id=str(alert.id),
+            metadata={"fingerprint": alert.fingerprint, "severity": alert.severity, "via": via},
         )
         return alert
 

@@ -238,6 +238,62 @@ directly, without a relay:
   an AI service. A site with no outbound access can point the URL at an internal
   PagerDuty-compatible receiver.
 
+### Acknowledged in PagerDuty
+
+An incident acknowledged in PagerDuty can acknowledge its alert on the platform too:
+
+1. Save the PagerDuty channel. Its form then shows the channel's webhook address,
+   `<console>/api/v1/notifications/pagerduty/<channel id>`.
+2. In PagerDuty, add a **webhook subscription** (v3) on the service, sending
+   `incident.acknowledged` to that address, and copy its signing secret.
+3. Paste the secret into the channel as **Webhook signing secret** and save.
+
+Each call is checked against the secret (`X-PagerDuty-Signature`, an HMAC-SHA256 of the
+body; while PagerDuty rotates the secret, any of the signatures it sends may match). A bad
+signature is 401; a channel without a secret answers 404. For an incident this platform
+opened (its key is `aip:<fingerprint>`), the alert, if still `ACTIVE`, becomes
+`ACKNOWLEDGED`, audited as `ALERT_ACKNOWLEDGED` under the PagerDuty user's name, for
+example `Ann Oncall (PagerDuty)`, with no platform account. Other events, and incidents
+the platform didn't open, are answered 200 and ignored, so PagerDuty doesn't retry them.
+The address must be reachable from PagerDuty, usually through a reverse proxy that
+exposes only this path.
+
+## Opsgenie
+
+A webhook channel with the format **Opsgenie (Alert API v2)** creates and closes Opsgenie
+alerts directly:
+
+1. In Opsgenie, add an **API** integration to the team, and copy its key.
+2. Add a webhook channel, choose *Opsgenie (Alert API v2)*. The URL is filled in with
+   `https://api.opsgenie.com/v2/alerts` (use `api.eu.opsgenie.com` for the EU instance).
+   Set the **Authorization header** to `GenieKey <the key>`. A channel without one, or
+   with a signing secret, is refused.
+3. *Send test* creates an alert and closes it straight away.
+
+| Alert event | Opsgenie call |
+|---|---|
+| raised, escalated | `POST /v2/alerts`: message (the title, up to 130 characters), alias `aip:<fingerprint>`, priority `P1` (critical), `P3` (warning) or `P5` (info), the alert source as tag, the resource type as entity, the full text as description |
+| resolved | `POST /v2/alerts/aip:<fingerprint>/close?identifierType=alias` |
+
+Opsgenie deduplicates by alias, so a repeat or an escalation updates the open Opsgenie
+alert. Like PagerDuty, an Opsgenie channel never gets a quiet-hours digest.
+
+## Summaries
+
+A channel can also get a **summary**, every hour or every day at a set time (in the
+channel's quiet-hours time zone, 08:00 unless changed). It lists the alerts raised at the
+channel's severity or above and those resolved since the last summary, with how many are
+still open, as one message. Nothing is sent when there is nothing to say. Summaries come
+on top of the usual messages; to get only summaries, raise the channel's minimum
+severity, or set quiet hours.
+
+- Email channels and chat webhooks only: they are for people. A JSON, PagerDuty or
+  Opsgenie channel refuses a summary.
+- The first summary covers from when the schedule was set. A summary that fails is
+  recorded on the channel (and counts towards its failing alert), not retried; the next
+  one covers from the failed one's time.
+- Summaries aren't deliveries, so they don't appear in the delivery history.
+
 ## Email
 
 Email goes through the site's mail server, configured in `.env`. The password is a secret
@@ -341,6 +397,7 @@ Under `/api/v1/notifications`. Every route needs `notification.manage`.
 | `PATCH /channels/{id}` | Omitted fields are unchanged. An empty string removes `signing_secret` or `authorization`. `team_id: null` makes it a platform channel. The kind can't change |
 | `DELETE /channels/{id}` | 204. The channel's delivery history is removed with it |
 | `POST /channels/{id}/test` | sends now; `{ok, detail, code}`. A failure is still a 200 |
+| `POST /pagerduty/{id}` | **public**: a PagerDuty webhook (v3) for the channel, checked against its `inbound_secret`; `{result: "acknowledged"}` or `"ignored"`. 401 for a bad signature, and for a channel that isn't PagerDuty or has no secret (so a caller can't tell which channels exist) |
 | `GET /deliveries` | `?channel_id=&status=&limit=&offset=` |
 | `GET /email-preview` | `?kind=raised`, `resolved`, `digest`, `approval` or `test`: `{kind, subject, text, html}`, branded as currently set; nothing is sent |
 
@@ -356,11 +413,13 @@ Audit actions:
 - **Digests outside quiet hours.** What quiet hours held goes out as one
   digest. Otherwise each event is its own message, so during an incident with many
   alerts a chat channel receives one message per alert. A minimum severity or a source
-  filter keeps busy channels quiet. There is no daily or hourly summary.
+  filter keeps busy channels quiet; a summary adds an hourly or daily overview.
 - **Team owners managing their own channels.** Team channels are set up by holders
   of `notification.manage`. An API key's budget alerts are not routed to the key's team.
-- **Other paging services' native APIs** (Opsgenie, VictorOps). PagerDuty is built in.
-  For the others, use a JSON webhook to an internal relay.
+- **Other paging services' native APIs** (VictorOps). PagerDuty and Opsgenie are built
+  in. For the others, use a JSON webhook to an internal relay. Opsgenie's
+  acknowledgements don't come back; PagerDuty's resolutions don't resolve the alert (the
+  platform resolves it when the condition clears).
 - **SMS.**
 - **Prometheus rules.** These go through Grafana and are not routed through channels. See
   [observability.md](observability.md#alerts).

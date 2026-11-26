@@ -432,7 +432,7 @@ dashboard real signals.
 - [x] Migration `e7a9c1d3f5b6`: `notification_deliveries.held_at` (first held by quiet hours) and `digest_id`.
 - [x] Dispatcher: once a channel's window has ended, two or more held deliveries due for a chat webhook or an email channel go out as one message (`digest_message`, event `digest`, the highest severity; one line per delivery, oldest first, 30 listed and the rest counted). Every delivery in it gets the outcome, an attempt and the `digest_id`; a failed digest is retried as a whole. A generic JSON webhook, and a single held delivery, are sent one by one as before. `DispatchResult.digests`, logged by the scheduler.
 - [x] `DeliveryRead.held_at`, `digest_id`. Tests: `TestDigest` and the long-digest test in `tests/api/test_quiet_hours.py`. Doc: [notifications.md](../notifications.md).
-- [ ] No scheduled (hourly or daily) summary; no digest for generic JSON webhooks; a raised-and-resolved alert is two lines, not one.
+- [ ] ~~No scheduled (hourly or daily) summary~~ (E99); no digest for generic JSON webhooks; a raised-and-resolved alert is two lines, not one.
 
 ## E48: HTML notification emails (closes the E13 HTML item)
 
@@ -455,7 +455,7 @@ dashboard real signals.
 - [x] Webhook format `pagerduty` (migration `f9b1d3e5a7c8`: `notification_channels.routing_key_encrypted`, and the format check widened; downgrade turns PagerDuty channels into generic webhooks). `pagerduty_payload`: raised and escalated alerts `trigger`, resolved ones `resolve`, with dedup key `aip:<fingerprint>`, PagerDuty severities, summary, source, group, class, component, custom details and the console link.
 - [x] Routing key: write-only, Fernet-encrypted, 32 letters and digits, never audited (`has_routing_key` only); required for the format; a signing secret is refused on it. A test send triggers then resolves. Never digested (E47); quiet hours still hold.
 - [x] Console: *PagerDuty (Events API v2)* format, a routing key field in place of the signing secret and header, PagerDuty's URL filled in. Tests: `tests/api/test_pagerduty.py`. Doc: [notifications.md](../notifications.md#pagerduty).
-- [ ] No PagerDuty acknowledgement back to the platform (one-way); no Opsgenie or VictorOps format.
+- [ ] ~~No PagerDuty acknowledgement back to the platform (one-way); no Opsgenie~~ (E99) or VictorOps format.
 
 ## E51: MCP servers use the shared outbound-URL policy (closes the E1 MCP item)
 
@@ -840,6 +840,15 @@ matrix still listed as missing.
 - [x] `users.dashboard_window_hours`, set with `PUT /users/me/preferences` (not audited) and returned by `/auth/me`; the console opens with it and saves each change. *Last 180 days* and *Last year*.
 - [x] Tests: `tests/api/test_dashboard_range.py` (`TestRollups`, `TestRememberedRange`). Doc: settings.md.
 - [ ] No default range per team; `/monitoring/overview` stays at 90 days; usage records are still never pruned.
+
+## E99: Notification summaries, Opsgenie, PagerDuty acknowledgements
+
+- [x] Migration `e6b8c0d2f4a5`: `notification_channels.summary_every` (`hourly`, `daily`), `summary_at`, `summary_sent_at`, `inbound_secret_encrypted`; `payload_format` adds `opsgenie`.
+- [x] Summaries: `NotificationDispatcher._send_summaries`, due at `summary_boundary` (top of the hour, or `summary_at` in the channel's time zone); raised (at its severity) and resolved since the last, and still open; nothing to say, nothing sent. Email and chat channels only.
+- [x] Opsgenie: `opsgenie_payload` (alias `aip:<fingerprint>`, priority P1/P3/P5) and `opsgenie_close`; needs `Authorization: GenieKey …`, no signing secret; a test creates and closes.
+- [x] `POST /notifications/pagerduty/{channel_id}` (public, `X-PagerDuty-Signature` v1 HMAC over the body with the channel's `inbound_secret`): `incident.acknowledged` with key `aip:<fingerprint>` acknowledges the ACTIVE alert (`AlertService.acknowledge_elsewhere`, audited under the PagerDuty user's name).
+- [x] Console: the Opsgenie format, the PagerDuty webhook secret and address, the summary schedule. Tests: `tests/api/test_notification_extras.py`. Doc: notifications.md.
+- [ ] Opsgenie acknowledgements don't come back; PagerDuty resolutions are ignored; no VictorOps format; summaries aren't in the delivery history.
 
 ## Phase acceptance (applies to each)
 

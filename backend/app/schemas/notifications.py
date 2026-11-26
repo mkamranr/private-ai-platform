@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ChannelKindName = Literal["webhook", "email"]
 SeverityName = Literal["INFO", "WARNING", "CRITICAL"]
-PayloadFormatName = Literal["generic", "chat", "pagerduty"]
+PayloadFormatName = Literal["generic", "chat", "pagerduty", "opsgenie"]
+SummaryEveryName = Literal["hourly", "daily"]
 
 
 class ChannelCreate(BaseModel):
@@ -34,6 +35,11 @@ class ChannelCreate(BaseModel):
     timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     #: E50: the PagerDuty integration key, for ``payload_format`` ``pagerduty``. Write-only.
     routing_key: str | None = Field(default=None, max_length=64, description="Write-only.")
+    inbound_secret: str | None = Field(
+        default=None, max_length=256, description="PagerDuty webhook signing secret. Write-only."
+    )
+    summary_every: SummaryEveryName | None = None
+    summary_at: str | None = Field(default=None, max_length=5, description="HH:MM, daily")
     # email
     recipients: list[str] = Field(default_factory=list, max_length=50)
     # quiet hours (E42): only CRITICAL alerts are sent between these times
@@ -65,6 +71,10 @@ class ChannelUpdate(BaseModel):
     verify_tls: bool | None = None
     timeout_seconds: float | None = Field(default=None, gt=0, le=60)
     routing_key: str | None = Field(default=None, max_length=64)
+    inbound_secret: str | None = Field(default=None, max_length=256)
+    #: Sent as null, the summary is turned off.
+    summary_every: SummaryEveryName | None = None
+    summary_at: str | None = Field(default=None, max_length=5)
     recipients: list[str] | None = Field(default=None, max_length=50)
     #: E42. An empty string for both start and end removes quiet hours.
     quiet_start: str | None = Field(default=None, max_length=5)
@@ -92,6 +102,10 @@ class ChannelRead(BaseModel):
     has_signing_secret: bool
     has_authorization: bool
     has_routing_key: bool = False
+    has_inbound_secret: bool = False
+    summary_every: SummaryEveryName | None = None
+    summary_at: str | None = None
+    summary_sent_at: dt.datetime | None = None
     verify_tls: bool
     timeout_seconds: float
     recipients: list[str]
