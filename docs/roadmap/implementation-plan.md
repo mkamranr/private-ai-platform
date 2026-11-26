@@ -353,7 +353,7 @@ dashboard real signals.
 - [x] `GET /dashboard` and `GET /monitoring/overview` take `window_hours` up to 2160 (90 days).
 - [x] Past 7 days the traffic series has a point per UTC day: `UsageRepository.hourly_series(unit="day")` buckets with `date_trunc(unit, recorded_at, 'UTC')`, and `fill_hourly_gaps(unit="day")` fills the days. `gateway.bucket` says `hour` or `day`; the point key stays `hour` (the bucket's start), so existing callers keep working.
 - [x] Console: *Last 30 days* and *Last 90 days*; daily bars are labelled by date. Tests: `tests/unit/test_dashboard_series.py`, `tests/api/test_dashboard_range.py`. Doc: [settings.md](../settings.md#dashboard).
-- [ ] No range past 90 days and no remembered range per user or team. No rollup table: a long range reads every usage record in it.
+- [ ] ~~No range past 90 days and no remembered range per user or team. No rollup table: a long range reads every usage record in it~~ (E98; per person, not per team).
 
 ## E38: Reranking calls accounted (closes the E21 rerank item)
 
@@ -832,6 +832,14 @@ matrix still listed as missing.
 - [x] Console: the backend's latest pulls under *Pull a model*, with a bar, polled every 2 s while one is active; the model list is shown again when it ends.
 - [x] Tests: `tests/api/test_backend_operations.py::TestPull`. Docs: backends.md, api.md.
 - [ ] One pull at a time per worker; a pull can't be cancelled from the platform.
+
+## E98: Dashboard rollups and a remembered range
+
+- [x] `usage_daily_rollups` (migration `d5a7b9c1e3f4`): a UTC day per team and model (requests, errors, fallbacks, tokens, summed latency). `roll_up_usage` in `app/services/dashboard.py`, run hourly by the scheduler (`usage_rollup`): from the last day rolled up (or the oldest record) to yesterday, a month per transaction, each day deleted and written again.
+- [x] `GET /dashboard` takes `window_hours` up to 8760. Past 90 days the gateway section reads rollups up to `rolled_up_through` and the records after it; timing percentiles cover the last 90 days (`timings_window_hours`).
+- [x] `users.dashboard_window_hours`, set with `PUT /users/me/preferences` (not audited) and returned by `/auth/me`; the console opens with it and saves each change. *Last 180 days* and *Last year*.
+- [x] Tests: `tests/api/test_dashboard_range.py` (`TestRollups`, `TestRememberedRange`). Doc: settings.md.
+- [ ] No default range per team; `/monitoring/overview` stays at 90 days; usage records are still never pruned.
 
 ## Phase acceptance (applies to each)
 

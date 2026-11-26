@@ -10,6 +10,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -630,6 +631,31 @@ class UsageRecord(Base):
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+
+class UsageDailyRollup(Base):
+    """One UTC day of gateway usage per team and model (E98).
+
+    Written by the scheduler for closed days only, by deleting the day's rows and
+    inserting them again from ``usage_records``, so a run can repeat without counting
+    twice. The dashboard reads it for ranges past 90 days, where summing every record
+    would be slow; latency is kept as a sum so averages can be weighted afterwards.
+    Percentiles can't be rolled up, so they aren't here.
+    """
+
+    __tablename__ = "usage_daily_rollups"
+    __table_args__ = (Index("ix_usage_daily_rollups_day", "day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    day: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    team_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False)
+    errors: Mapped[int] = mapped_column(Integer, nullable=False)
+    fallbacks: Mapped[int] = mapped_column(Integer, nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    latency_ms_sum: Mapped[float] = mapped_column(Float, nullable=False)
 
 
 class RolloutState(enum.StrEnum):

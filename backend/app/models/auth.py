@@ -152,6 +152,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Boolean, default=True, server_default=text("true"), nullable=False
     )
 
+    #: E98: the dashboard range this person last chose, in hours. NULL: the default.
+    dashboard_window_hours: Mapped[int | None] = mapped_column(Integer)
+
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles,
         back_populates="users",

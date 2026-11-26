@@ -35,7 +35,12 @@ from app.core.scope import Scope
 from app.models.agents import RunState
 from app.models.auth import User
 from app.models.infrastructure import NodeStatus
-from app.models.models_registry import DeploymentState, ModelStatus, UsageRecord
+from app.models.models_registry import (
+    DeploymentState,
+    ModelStatus,
+    UsageDailyRollup,
+    UsageRecord,
+)
 from app.models.operations import AlertSeverity, AlertState, BackendStatus
 from app.models.workflows import RunStatus
 from app.repositories.audit import AuditRepository
@@ -60,8 +65,16 @@ _health_cache: tuple[float, dict[str, Any]] | None = None
 #: enough that the hourly series fits on a screen.
 DEFAULT_WINDOW_HOURS = 24
 
-#: The longest range the dashboard offers (E37): 90 days.
-MAX_WINDOW_HOURS = 90 * 24
+#: The longest range the dashboard offers (E37: 90 days; E98: a year).
+MAX_WINDOW_HOURS = 365 * 24
+
+#: Up to 90 days the gateway section sums usage records. Past that (E98) whole days come
+#: from the daily rollups and only the days not rolled up yet from the records; timing
+#: percentiles, which can't be rolled up, cover the last 90 days.
+RAW_UP_TO_HOURS = 90 * 24
+
+#: Days rolled up per transaction, so a first run over a long history commits as it goes.
+ROLLUP_CHUNK_DAYS = 31
 
 #: Up to a week the chart has a bar per hour (168 at most). Past that it has a bar per
 #: day: 90 days of hours would be 2,160 bars, too thin to read and slow to draw.
@@ -216,6 +229,8 @@ class DashboardService:
         }
 
     async def _gateway(self, since: dt.datetime, window_hours: int, scope: Scope) -> dict[str, Any]:
+        if window_hours > RAW_UP_TO_HOURS:
+            return await self._gateway_from_rollups(since, window_hours, scope)
         # E18: the traffic of keys in the viewer's teams, as GET /usage counts it.
         where = scope.clause(UsageRecord.team_id)
         by_model = await self._usage.summary(since=since, where=where)
@@ -245,6 +260,55 @@ class DashboardService:
             "series": series,
             "bucket": bucket,
             "source": "gateway usage records",
+        }
+
+    async def _gateway_from_rollups(
+        self, since: dt.datetime, window_hours: int, scope: Scope
+    ) -> dict[str, Any]:
+        """E98: a range past 90 days. Days up to the last one rolled up are read from
+        ``usage_daily_rollups``; the rest (today, and any day the job hasn't reached) from
+        the records, so a late job leaves no gap. Bars are always a day."""
+        now = dt.datetime.now(dt.UTC)
+        first = since.astimezone(dt.UTC).date()
+        rolled_through = await self._usage.last_rolled_day()
+        raw_since = since
+        rolled: list[dict[str, Any]] = []
+        rolled_series: list[dict[str, Any]] = []
+        if rolled_through is not None and rolled_through >= first:
+            team = scope.clause(UsageDailyRollup.team_id)
+            rolled = await self._usage.rollup_summary(first=first, where=team)
+            rolled_series = await self._usage.rollup_series(first=first, where=team)
+            raw_since = dt.datetime.combine(
+                rolled_through + dt.timedelta(days=1), dt.time(), tzinfo=dt.UTC
+            )
+        where = scope.clause(UsageRecord.team_id)
+        by_model = merge_model_rows(rolled, await self._usage.summary(since=raw_since, where=where))
+        requests = sum(row["requests"] for row in by_model)
+        errors = sum(row["errors"] for row in by_model)
+        timed_since = now - dt.timedelta(hours=RAW_UP_TO_HOURS)
+        series = fill_hourly_gaps(
+            rolled_series
+            + await self._usage.hourly_series(since=raw_since, where=where, unit="day"),
+            since=since,
+            until=now,
+            unit="day",
+        )
+        return {
+            "requests": requests,
+            "errors": errors,
+            "error_rate_percent": round(errors * 100 / requests, 2) if requests else None,
+            "requests_per_minute": round(requests / (window_hours * 60), 2),
+            "fallbacks": sum(row["fallbacks"] for row in by_model),
+            "prompt_tokens": sum(row["prompt_tokens"] for row in by_model),
+            "completion_tokens": sum(row["completion_tokens"] for row in by_model),
+            "avg_latency_ms": _weighted_latency(by_model),
+            **await self._usage.timing_totals(since=timed_since, where=where),
+            "timings_window_hours": RAW_UP_TO_HOURS,
+            "rolled_up_through": rolled_through,
+            "top_models": by_model[:5],
+            "series": series,
+            "bucket": "day",
+            "source": "daily rollups and gateway usage records",
         }
 
     async def _dependencies(self) -> dict[str, Any]:
@@ -412,6 +476,59 @@ def fill_hourly_gaps(
         )
         bucket += step
     return filled
+
+
+def merge_model_rows(*parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-model usage rows from several sources added together (E98: rollups and the
+    records after them), latency weighted by requests; busiest first."""
+    merged: dict[str, dict[str, Any]] = {}
+    for rows in parts:
+        for row in rows:
+            into = merged.setdefault(
+                row["model"],
+                {
+                    "model": row["model"],
+                    "requests": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "errors": 0,
+                    "fallbacks": 0,
+                    "latency": 0.0,
+                },
+            )
+            n = int(row["requests"])
+            into["requests"] += n
+            into["latency"] += float(row["avg_latency_ms"]) * n
+            for key in ("prompt_tokens", "completion_tokens", "errors", "fallbacks"):
+                into[key] += int(row.get(key) or 0)
+    result = []
+    for row in merged.values():
+        latency = row.pop("latency")
+        row["avg_latency_ms"] = round(latency / row["requests"], 2) if row["requests"] else 0.0
+        result.append(row)
+    return sorted(result, key=lambda r: r["requests"], reverse=True)
+
+
+async def roll_up_usage(
+    usage: UsageRepository,
+    commit: Callable[[], Awaitable[None]],
+    *,
+    today: dt.date | None = None,
+) -> int:
+    """E98: bring ``usage_daily_rollups`` up to yesterday (UTC). Starts again from the
+    last day rolled up, so records written just after midnight are counted; the first run
+    starts at the oldest record, a month per transaction. Returns the days rolled up."""
+    today = today or dt.datetime.now(dt.UTC).date()
+    yesterday = today - dt.timedelta(days=1)
+    start = await usage.last_rolled_day() or await usage.first_usage_day()
+    days = 0
+    while start is not None and start <= yesterday:
+        end = min(start + dt.timedelta(days=ROLLUP_CHUNK_DAYS - 1), yesterday)
+        await usage.roll_up_days(start, end)
+        await commit()
+        days += (end - start).days + 1
+        start = end + dt.timedelta(days=1)
+    return days
 
 
 def _weighted_latency(rows: list[dict[str, Any]]) -> float:

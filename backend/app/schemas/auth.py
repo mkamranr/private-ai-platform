@@ -223,6 +223,8 @@ class UserRead(ORMModel):
     mfa_enabled: bool = False
     #: E45: whether they get reminder emails about approvals they can decide.
     approval_reminder_emails: bool = True
+    #: E98: the dashboard range they last chose, in hours; None for the default.
+    dashboard_window_hours: int | None = None
     # Never a password hash. Serialising one would leak it into every log,
     # response cache and browser history that touches this endpoint.
 
@@ -266,6 +268,8 @@ class UserPreferencesUpdate(BaseModel):
     """Someone's own preferences (E45). Fields left out are unchanged."""
 
     approval_reminder_emails: bool | None = None
+    #: E98: the dashboard range to open with, in hours (up to a year).
+    dashboard_window_hours: int | None = Field(default=None, ge=1, le=8760)
 
 
 class PasswordChangeRequest(BaseModel):

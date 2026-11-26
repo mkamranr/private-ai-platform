@@ -1,4 +1,5 @@
-"""The dashboard looks back up to 90 days (expansion E37).
+"""The dashboard looks back up to 90 days (expansion E37), and a year from daily
+rollups (E98), opening with the range each person chose last.
 
 Up to 7 days the traffic chart has a bar per hour; past that, a bar per UTC day, bucketed
 by the database. The test database is shared, so these tests look at the shape of the
@@ -10,10 +11,13 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models_registry import UsageRecord
+from app.models.audit import AuditLog
+from app.models.models_registry import UsageDailyRollup, UsageRecord
 from app.repositories.models_registry import UsageRepository
+from app.services.dashboard import roll_up_usage
 from tests.conftest import auth_header
 
 URL = "/api/v1/dashboard"
@@ -40,8 +44,8 @@ class TestRange:
         assert gateway["bucket"] == "hour"
         assert len(gateway["series"]) in {168, 169}
 
-    async def test_past_ninety_days_is_refused(self, client, tokens, superuser) -> None:
-        assert (await _dashboard(client, tokens, superuser, 2161)).status_code == 422
+    async def test_past_a_year_is_refused(self, client, tokens, superuser) -> None:
+        assert (await _dashboard(client, tokens, superuser, 8761)).status_code == 422
         monitoring = await client.get(
             "/api/v1/monitoring/overview",
             params={"window_hours": 2160},
@@ -77,3 +81,103 @@ class TestDailySeries:
         assert series[0]["hour"].astimezone(dt.UTC) == forty_days_ago.replace(
             hour=0, minute=0, second=0, microsecond=0
         )
+
+
+def _record(model: str, at: dt.datetime, **extra) -> UsageRecord:
+    values = {
+        "endpoint": "chat.completions",
+        "requested_model": model,
+        "model": model,
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "latency_ms": 100.0,
+        "recorded_at": at,
+    }
+    return UsageRecord(**{**values, **extra})
+
+
+class TestRollups:
+    """E98: closed UTC days rolled up per team and model, read past 90 days."""
+
+    async def test_closed_days_are_rolled_up_once(self, session: AsyncSession) -> None:
+        model = f"rollup-{uuid.uuid4().hex[:8]}"
+        now = dt.datetime.now(dt.UTC)
+        old = (now - dt.timedelta(days=200)).replace(hour=12)
+        session.add(_record(model, old))
+        session.add(
+            _record(model, old + dt.timedelta(minutes=5), status_code=500, latency_ms=300.0)
+        )
+        session.add(_record(model, now))  # today: not a closed day
+        await session.flush()
+        repo = UsageRepository(session)
+        mine = UsageDailyRollup.model == model
+
+        assert await roll_up_usage(repo, session.flush, today=now.date()) >= 200
+        expected = [
+            {
+                "model": model,
+                "requests": 2,
+                "prompt_tokens": 4,
+                "completion_tokens": 6,
+                "avg_latency_ms": 200.0,
+                "errors": 1,
+                "fallbacks": 0,
+            }
+        ]
+        assert await repo.rollup_summary(first=old.date(), where=mine) == expected
+        await roll_up_usage(repo, session.flush, today=now.date())  # again: not twice
+        assert await repo.rollup_summary(first=old.date(), where=mine) == expected
+        assert await repo.rollup_summary(first=now.date(), where=mine) == []
+        series = await repo.rollup_series(first=old.date(), where=mine)
+        assert [(p["hour"].date(), p["requests"], p["tokens"]) for p in series] == [
+            (old.date(), 2, 10)
+        ]
+
+    async def test_a_year_reads_rollups_and_the_days_after(
+        self, client, tokens, superuser, session: AsyncSession
+    ) -> None:
+        model = f"rollup-{uuid.uuid4().hex[:8]}"
+        now = dt.datetime.now(dt.UTC)
+        old = (now - dt.timedelta(days=200)).replace(hour=12)
+        session.add(_record(model, old))
+        session.add(_record(model, old + dt.timedelta(minutes=1)))
+        await session.flush()
+        await roll_up_usage(UsageRepository(session), session.flush, today=now.date())
+        session.add(_record(model, now))  # after the rollup: read from the records
+        await session.flush()
+
+        response = await _dashboard(client, tokens, superuser, 8760)
+        assert response.status_code == 200, response.text
+        gateway = response.json()["gateway"]
+        assert gateway["bucket"] == "day" and len(gateway["series"]) in {365, 366}
+        assert gateway["timings_window_hours"] == 2160
+        assert gateway["rolled_up_through"] is not None
+        bars = {
+            dt.datetime.fromisoformat(p["hour"]).date(): p["requests"] for p in gateway["series"]
+        }
+        assert bars[old.date()] >= 2 and bars[now.date()] >= 1
+        assert gateway["requests"] >= 3
+
+
+class TestRememberedRange:
+    async def test_the_range_is_kept_and_not_audited(
+        self, client, tokens, superuser, session: AsyncSession
+    ) -> None:
+        headers = auth_header(tokens, superuser)
+        url = "/api/v1/users/me/preferences"
+        response = await client.put(url, json={"dashboard_window_hours": 720}, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()["dashboard_window_hours"] == 720
+        me = await client.get("/api/v1/auth/me", headers=headers)
+        assert me.json()["dashboard_window_hours"] == 720
+        too_long = await client.put(url, json={"dashboard_window_hours": 9000}, headers=headers)
+        assert too_long.status_code == 422
+        audited = (
+            await session.execute(
+                select(AuditLog.id).where(
+                    AuditLog.resource_id == str(superuser.id),
+                    AuditLog.action == "USER_UPDATED",
+                )
+            )
+        ).all()
+        assert audited == []

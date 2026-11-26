@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import and_, case, delete, func, or_, select
+from sqlalchemy import Date, and_, case, cast, delete, func, insert, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.models.models_registry import (
@@ -23,6 +23,7 @@ from app.models.models_registry import (
     ModelDeployment,
     ModelFile,
     RolloutState,
+    UsageDailyRollup,
     UsageRecord,
 )
 from app.repositories.base import BaseRepository
@@ -567,6 +568,120 @@ class UsageRepository(BaseRepository[UsageRecord]):
             stmt = stmt.where(where)
         return [
             {"hour": row.hour, "requests": row.requests, "tokens": int(row.tokens or 0)}
+            for row in (await self.session.execute(stmt)).all()
+        ]
+
+    # -- daily rollups (E98) ----------------------------------------------------
+    async def first_usage_day(self) -> dt.date | None:
+        first = (await self.session.execute(select(func.min(UsageRecord.recorded_at)))).scalar()
+        return None if first is None else first.astimezone(dt.UTC).date()
+
+    async def last_rolled_day(self) -> dt.date | None:
+        return (await self.session.execute(select(func.max(UsageDailyRollup.day)))).scalar()
+
+    async def roll_up_days(self, first: dt.date, last: dt.date) -> int:
+        """Rewrite the rollups for UTC days ``first`` to ``last``, inclusive, from the
+        records. Returns how many rows were written."""
+        start = dt.datetime.combine(first, dt.time(), tzinfo=dt.UTC)
+        end = dt.datetime.combine(last + dt.timedelta(days=1), dt.time(), tzinfo=dt.UTC)
+        await self.session.execute(
+            delete(UsageDailyRollup).where(
+                UsageDailyRollup.day >= first, UsageDailyRollup.day <= last
+            )
+        )
+        day = cast(func.date_trunc("day", UsageRecord.recorded_at, "UTC"), Date)
+        source = (
+            select(
+                day,
+                UsageRecord.team_id,
+                UsageRecord.model,
+                func.count(),
+                func.count().filter(UsageRecord.status_code >= 400),
+                func.count().filter(UsageRecord.fallback_from.isnot(None)),
+                func.coalesce(func.sum(UsageRecord.prompt_tokens), 0),
+                func.coalesce(func.sum(UsageRecord.completion_tokens), 0),
+                func.coalesce(func.sum(UsageRecord.latency_ms), 0.0),
+            )
+            .where(UsageRecord.recorded_at >= start, UsageRecord.recorded_at < end)
+            .group_by(day, UsageRecord.team_id, UsageRecord.model)
+        )
+        result = await self.session.execute(
+            insert(UsageDailyRollup).from_select(
+                [
+                    "day",
+                    "team_id",
+                    "model",
+                    "requests",
+                    "errors",
+                    "fallbacks",
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "latency_ms_sum",
+                ],
+                source,
+            )
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def rollup_summary(self, *, first: dt.date, where: Any = None) -> list[dict]:
+        """Like ``summary`` per model, from the rollups for days from ``first``. No
+        percentiles: they can't be added up."""
+        stmt = (
+            select(
+                UsageDailyRollup.model,
+                func.sum(UsageDailyRollup.requests).label("requests"),
+                func.sum(UsageDailyRollup.prompt_tokens).label("prompt_tokens"),
+                func.sum(UsageDailyRollup.completion_tokens).label("completion_tokens"),
+                func.sum(UsageDailyRollup.latency_ms_sum).label("latency_ms_sum"),
+                func.sum(UsageDailyRollup.errors).label("errors"),
+                func.sum(UsageDailyRollup.fallbacks).label("fallbacks"),
+            )
+            .where(UsageDailyRollup.day >= first)
+            .group_by(UsageDailyRollup.model)
+        )
+        if where is not None:
+            stmt = stmt.where(where)
+        rows = []
+        for row in (await self.session.execute(stmt)).all():
+            requests = int(row.requests or 0)
+            rows.append(
+                {
+                    "model": row.model,
+                    "requests": requests,
+                    "prompt_tokens": int(row.prompt_tokens or 0),
+                    "completion_tokens": int(row.completion_tokens or 0),
+                    "avg_latency_ms": round(float(row.latency_ms_sum or 0) / requests, 2)
+                    if requests
+                    else 0.0,
+                    "errors": int(row.errors or 0),
+                    "fallbacks": int(row.fallbacks or 0),
+                }
+            )
+        return rows
+
+    async def rollup_series(self, *, first: dt.date, where: Any = None) -> list[dict]:
+        """Requests and tokens per UTC day from the rollups, shaped like
+        ``hourly_series(unit="day")``."""
+        stmt = (
+            select(
+                UsageDailyRollup.day,
+                func.sum(UsageDailyRollup.requests).label("requests"),
+                func.sum(UsageDailyRollup.prompt_tokens + UsageDailyRollup.completion_tokens).label(
+                    "tokens"
+                ),
+            )
+            .where(UsageDailyRollup.day >= first)
+            .group_by(UsageDailyRollup.day)
+            .order_by(UsageDailyRollup.day)
+        )
+        if where is not None:
+            stmt = stmt.where(where)
+        return [
+            {
+                "hour": dt.datetime.combine(row.day, dt.time(), tzinfo=dt.UTC),
+                "requests": int(row.requests or 0),
+                "tokens": int(row.tokens or 0),
+            }
             for row in (await self.session.execute(stmt)).all()
         ]
 

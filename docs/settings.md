@@ -94,7 +94,7 @@ The effective settings are cached per process for up to 10 seconds.
 
 ## Dashboard
 
-`GET /dashboard?window_hours=1..2160` (up to 90 days) returns everything in one response, and each
+`GET /dashboard?window_hours=1..8760` (up to a year) returns everything in one response, and each
 section needs its own permission. The sections include:
 
 | Section | Permission | What it shows |
@@ -126,16 +126,28 @@ when they ran.
 hour. Past that it has a point per UTC day, bucketed by the database, so 90 days is 91
 bars rather than 2,160. `gateway.bucket` says which (`"hour"` or `"day"`), and each
 point's `hour` is the start of its bucket. The totals, the error rate and requests per
-minute cover the whole range either way. `GET /monitoring/overview` takes the same range.
-A long range reads every usage record in it, so on a busy platform a 90-day view is
-slower than a 24-hour one.
+minute cover the whole range either way. `GET /monitoring/overview` takes ranges up to 90
+days.
+
+**Past 90 days** the gateway figures come from daily rollups (`usage_daily_rollups`): one
+row per UTC day, team and model, written by the scheduler every hour for days that have
+ended. Days up to the last one rolled up are read from there (`gateway.rolled_up_through`)
+and the rest, today and any day the job hasn't reached, from the usage records, so a late
+job leaves no gap. The first run rolls up the whole history, a month per transaction; each
+run starts again at the last day rolled up, so calls recorded just after midnight are
+counted. Timing percentiles can't be added up, so past 90 days they cover the last 90
+(`gateway.timings_window_hours`), and the console says so. Up to 90 days nothing
+changes: the records are summed directly.
 
 **Team scope.** Knowledge, agent and workflow counts include only the resources the
 caller's team scope covers, which is the same rule their list pages follow.
 
 **Refresh controls.** The page has:
 
-- a time range: last hour, 6 hours, 24 hours, 7, 30 or 90 days;
+- a time range: last hour, 6 hours, 24 hours, 7, 30, 90 or 180 days, or a year. The one
+  chosen is saved to the person's account (`PUT /users/me/preferences`
+  `{dashboard_window_hours}`, not audited) and the dashboard opens with it next time, on
+  any browser;
 - a Refresh button;
 - an Auto-refresh switch. Turning it off pauses the 5-second poll on this page.
 
@@ -143,6 +155,7 @@ caller's team scope covers, which is the same rule their list pages follow.
 
 - Runtime-editable settings beyond the list above. Each one needs its consumer moved to
   read per request first, and the table above documents that contract.
-- Per-team or per-user preferences. These are platform settings only.
-- A dashboard range beyond 90 days, or a remembered range per user or team. The range
-  resets to 24 hours on each visit.
+- Per-team or per-user preferences, apart from the dashboard range. These are platform
+  settings only.
+- A default range per team; a range past a year. Usage records are never pruned, so the
+  rollups only make long ranges faster.
