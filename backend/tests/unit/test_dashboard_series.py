@@ -142,3 +142,55 @@ class TestDailyBuckets:
         )
         # 01:00 at UTC+4 on the 3rd is 21:00 UTC on the 2nd.
         assert [p["requests"] for p in filled] == [0, 2, 0]
+
+
+class TestMergeModelRows:
+    """E98: rollups and the records after them added per model."""
+
+    def test_latency_is_weighted_by_requests(self) -> None:
+        from app.services.dashboard import merge_model_rows
+
+        rolled = [
+            {
+                "model": "a",
+                "requests": 3,
+                "prompt_tokens": 30,
+                "completion_tokens": 3,
+                "avg_latency_ms": 100.0,
+                "errors": 1,
+                "fallbacks": 0,
+            }
+        ]
+        recent = [
+            {
+                "model": "a",
+                "requests": 1,
+                "prompt_tokens": 10,
+                "completion_tokens": 1,
+                "avg_latency_ms": 500.0,
+                "errors": 0,
+                "fallbacks": 2,
+                "ttft_p50_ms": 9.0,
+            },
+            {
+                "model": "b",
+                "requests": 9,
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "avg_latency_ms": 10.0,
+                "errors": 0,
+                "fallbacks": 0,
+            },
+        ]
+        merged = merge_model_rows(rolled, recent)
+        assert [r["model"] for r in merged] == ["b", "a"]
+        assert merged[1] == {
+            "model": "a",
+            "requests": 4,
+            "prompt_tokens": 40,
+            "completion_tokens": 4,
+            "errors": 1,
+            "fallbacks": 2,
+            "avg_latency_ms": 200.0,
+        }
+        assert merge_model_rows([], []) == []

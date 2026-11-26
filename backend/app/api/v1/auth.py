@@ -419,6 +419,7 @@ async def me(user: CurrentUserDep) -> CurrentUserRead:
                     "auth_provider",
                     "mfa_enabled",
                     "approval_reminder_emails",
+                    "dashboard_window_hours",
                 )
             },
             "roles": user.roles,

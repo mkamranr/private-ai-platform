@@ -207,9 +207,11 @@ function dashKpis(data) {
     const tps = g.output_tps_p50 == null ? '' : ` · ${fmtRate(g.output_tps_p50)} tok/s`;
     cards.push({
       label: 'First token (p50)', value: timed ? fmtMs(g.ttft_p50_ms) : '—',
-      note: timed
+      // E98: past 90 days the percentiles cover the last 90 days only.
+      note: (timed
         ? `p95 ${fmtMs(g.ttft_p95_ms)}${tps} · ${fmtInt(g.timed_streams)} streams`
-        : 'no streamed calls in this window',
+        : 'no streamed calls in this window')
+        + (g.timings_window_hours ? ` (last ${Math.round(g.timings_window_hours / 24)} days)` : ''),
       tone: 'blue', iconId: 'i-gauge',
     });
   }
@@ -329,11 +331,19 @@ function runsCard(agents, workflows) {
 }
 
 let dashAuto = true;
+let dashRangeRestored = false;
 
 async function renderDashboard({ force = false } = {}) {
   // Auto-refresh off: the poll leaves the page as it is; Refresh and the range still work.
   if (!force && !dashAuto && document.getElementById('dashboard-body').children.length) return;
-  const hours = Number(document.getElementById('dash-window').value) || 24;
+  const select = document.getElementById('dash-window');
+  // E98: open with the range this person chose last time, on any browser.
+  if (!dashRangeRestored) {
+    dashRangeRestored = true;
+    const saved = String(currentUser?.dashboard_window_hours || '');
+    if (saved && [...select.options].some((o) => o.value === saved)) select.value = saved;
+  }
+  const hours = Number(select.value) || 24;
   const data = await api(`/dashboard?window_hours=${hours}`);
 
   const cards = dashKpis(data);
@@ -5624,6 +5634,7 @@ function stopPolling() {
 function showLogin() {
   stopPolling();
   currentUser = null;
+  dashRangeRestored = false;
   document.body.classList.remove('app-active');
   document.getElementById('login-view').classList.remove('d-none');
   document.getElementById('app-view').classList.add('d-none');
@@ -5727,7 +5738,14 @@ document.getElementById('register-form').onsubmit = async (event) => {
 };
 
 document.getElementById('managed-only').onchange = renderContainers;
-document.getElementById('dash-window').onchange = () => refresh({ force: true });
+document.getElementById('dash-window').onchange = (event) => {
+  refresh({ force: true });
+  // E98: remembered for next time; a failure to save leaves the page as it is.
+  const hours = Number(event.target.value);
+  if (currentUser) currentUser.dashboard_window_hours = hours;
+  api('/users/me/preferences', { method: 'PUT', body: JSON.stringify({ dashboard_window_hours: hours }) })
+    .catch(() => {});
+};
 document.getElementById('dash-refresh').onclick = () => refresh({ force: true });
 document.getElementById('dash-auto').onchange = (event) => {
   dashAuto = event.target.checked;

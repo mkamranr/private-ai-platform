@@ -59,7 +59,7 @@ from app.repositories.infrastructure import (
     NodeRepository,
 )
 from app.repositories.knowledge import RetrievalQueryRepository
-from app.repositories.models_registry import ApiKeyRepository
+from app.repositories.models_registry import ApiKeyRepository, UsageRepository
 from app.repositories.notifications import (
     NotificationChannelRepository,
     NotificationDeliveryRepository,
@@ -184,6 +184,18 @@ class InfrastructureWorker:
                 # A worker that dies takes all monitoring with it, so the sweep logs
                 # and returns rather than propagating into the scheduler.
                 log.exception("node_sync_failed")
+
+    async def roll_up_usage(self) -> None:
+        """E98: daily usage rollups for the dashboard's long ranges. Never raises."""
+        try:
+            from app.services.dashboard import roll_up_usage
+
+            async with self._session_factory() as session:
+                days = await roll_up_usage(UsageRepository(session), session.commit)
+            if days:
+                log.info("usage_rolled_up", days=days)
+        except Exception:
+            log.exception("usage_rollup_failed")
 
     async def prune_revoked_tokens(self) -> None:
         """Forget revoked tokens that have expired anyway (E14). Never raises."""
@@ -566,6 +578,17 @@ class InfrastructureWorker:
             coalesce=True,
             max_instances=1,
             misfire_grace_time=3600,
+        )
+
+        self._scheduler.add_job(
+            self.roll_up_usage,
+            IntervalTrigger(hours=1),
+            id="usage_rollup",
+            name="Roll up closed days of gateway usage for the dashboard",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
+            next_run_time=dt.datetime.now(dt.UTC) + dt.timedelta(minutes=1),
         )
 
         self._scheduler.start()

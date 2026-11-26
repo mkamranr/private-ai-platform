@@ -544,7 +544,7 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 | POST | `/users/{id}/unlock` | `user.manage` — lifts a lockout early, clears its alert |
 | POST | `/users/{id}/sessions/revoke` | `user.manage` — signs the user out everywhere |
 | POST | `/users/{id}/mfa/reset` | `user.manage` — removes MFA (lost phone) and signs the user out |
-| PUT | `/users/me/preferences` | **none**: your own preferences. Today only `approval_reminder_emails` (the approval reminder emails sent to approvers, on by default). Fields left out are unchanged |
+| PUT | `/users/me/preferences` | **none**: your own preferences: `approval_reminder_emails` (the approval reminder emails sent to approvers, on by default) and `dashboard_window_hours` (1–8760, the dashboard range to open with; not audited). Fields left out are unchanged |
 | POST | `/users/me/password` | **none** — anyone may change their own, and requires the current one. Signs out every session |
 
 ### API keys

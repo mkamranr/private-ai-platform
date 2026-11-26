@@ -76,6 +76,7 @@ from app.models.models_registry import (
     ModelStatus,
     ModelType,
     RolloutState,
+    UsageDailyRollup,
     UsageRecord,
 )
 from app.models.notifications import (
@@ -218,6 +219,7 @@ __all__ = [
     "TeamRole",
     "Tool",
     "ToolExecution",
+    "UsageDailyRollup",
     "UsageRecord",
     "User",
     "VoiceEvent",

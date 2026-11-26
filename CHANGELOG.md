@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Dashboard: a year of traffic, and the range you chose last
+- The dashboard looks back up to a year (*Last 180 days*, *Last year*). Past 90 days its traffic figures come from daily rollups the scheduler writes every hour, plus the records since the last one.
+- The dashboard opens with the range each person chose last, on any browser (`dashboard_window_hours` in `PUT /users/me/preferences`).
+- **Upgrade.** One migration (`alembic upgrade head`). The first rollup runs a minute after start and covers the whole history.
+
 ### Model pulls in the background, with progress
 - *Pull a model* on an Ollama backend is queued and run by the worker: it carries on if the browser is closed, shows its stage and a progress bar in *Models*, and is taken up again after a restart.
 - `POST /backends/{id}/models/pull` returns 202 with the pull; `GET /backends/{id}/pulls` lists the latest.

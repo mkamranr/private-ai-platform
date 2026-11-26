@@ -83,6 +83,10 @@ class GatewaySummary(BaseModel):
     #: The size of each `series` point (E37): "hour" up to 7 days, "day" beyond. Each
     #: point's `hour` is the start of its bucket, in UTC.
     bucket: Literal["hour", "day"] = "hour"
+    #: Past 90 days (E98): the timing percentiles cover only the last this many hours,
+    #: and days up to `rolled_up_through` come from the daily rollups.
+    timings_window_hours: int | None = None
+    rolled_up_through: dt.date | None = None
 
 
 class DependencyItem(BaseModel):

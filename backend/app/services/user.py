@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from typing import Any
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
@@ -167,11 +168,13 @@ class UserService:
         )
         return user
 
-    async def update_own_preferences(self, user: User, changes: dict[str, bool]) -> User:
-        """Someone's own preferences (E45). Audited only when something changes."""
+    async def update_own_preferences(self, user: User, changes: dict[str, Any]) -> User:
+        """Someone's own preferences (E45). Audited only when something changes; the
+        dashboard range (E98) is a view setting, saved but not audited."""
         changed = {k: v for k, v in changes.items() if getattr(user, k) != v}
         for key, value in changed.items():
             setattr(user, key, value)
+        changed.pop("dashboard_window_hours", None)
         if changed:
             await self._audit.record(
                 AuditAction.USER_UPDATED,
