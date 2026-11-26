@@ -90,7 +90,7 @@ exclude = ["alembic/versions/"]
 
 [[tool.mypy.overrides]]
 # Third-party packages without bundled type information.
-module = ["qdrant_client.*", "minio.*", "apscheduler.*", "asyncpg.*", "ldap3.*"]
+module = ["qdrant_client.*", "minio.*", "apscheduler.*", "asyncpg.*", "ldap3.*", "pymysql.*", "pytds.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

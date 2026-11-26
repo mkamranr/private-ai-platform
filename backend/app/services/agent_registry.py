@@ -55,11 +55,13 @@ from app.schemas.agents import AgentVersionRead
 from app.services import connector_manifest
 from app.services.audit import AuditService
 from app.services.connectors import (
+    DSN_FORMS,
     ConnectorLimits,
     ImportPlan,
     check_openapi_base,
     check_template,
     compile_template,
+    dsn_engine,
     dsn_host,
     host_allowed,
     parse_openapi,
@@ -316,17 +318,25 @@ class ToolRegistryService:
                     details={"field": "endpoint"},
                 )
             endpoint = check_openapi_base(endpoint, limits, "endpoint")
+            oauth = (config or {}).get("oauth")
+            if oauth:  # E101: the token URL is called too
+                if not isinstance(oauth, dict) or not oauth.get("token_url"):
+                    raise ValidationError(
+                        "config.oauth needs a token_url.", details={"field": "config"}
+                    )
+                check_openapi_base(str(oauth["token_url"]), limits, "oauth.token_url")
         elif tool_type == ToolType.DATABASE:
             sql = str((config or {}).get("sql") or "")
-            if not (parameters_schema or {}).get("properties"):
-                parameters_schema = schema_for(compile_template(sql).names)
-            check_template(sql, parameters_schema)
             if not credentials:
                 raise ValidationError(
-                    "A DATABASE tool needs its connection string as the credential: "
-                    "postgresql://user:password@host:5432/database, with a read-only role.",
+                    f"A DATABASE tool needs its connection string as the credential: {DSN_FORMS}, "
+                    "with a login that can only read.",
                     details={"field": "credentials"},
                 )
+            engine = dsn_engine(credentials)
+            if not (parameters_schema or {}).get("properties"):
+                parameters_schema = schema_for(compile_template(sql, engine).names)
+            check_template(sql, parameters_schema, engine)
             host = dsn_host(credentials)
             if not limits.database_allowed_hosts or not host_allowed(
                 host, limits.database_allowed_hosts
@@ -351,6 +361,9 @@ class ToolRegistryService:
         auth_scheme: str | None,
         timeout_seconds: int,
         actor: User,
+        oauth: bool = False,
+        oauth_token_url: str | None = None,
+        oauth_scope: str | None = None,
     ) -> tuple[ImportPlan, list[Tool], list[str]]:
         """One tool per operation of an OpenAPI 3 spec (E57).
 
@@ -361,6 +374,23 @@ class ToolRegistryService:
         plan = parse_openapi(spec, prefix=prefix, base_url=base_url)
         limits = ConnectorLimits.from_settings(self._settings)
         plan.base_url = check_openapi_base(plan.base_url, limits, "base_url")
+        oauth_config: dict[str, str] | None = None
+        if oauth:  # E101: the client-credentials grant, client id and secret as the credential
+            token_url = oauth_token_url or plan.oauth_token_url
+            if not token_url:
+                raise ValidationError(
+                    "Give oauth_token_url: the spec has no OAuth 2 client-credentials scheme.",
+                    details={"field": "oauth_token_url"},
+                )
+            if not credentials or ":" not in credentials:
+                raise ValidationError(
+                    "With OAuth the credential is client_id:client_secret.",
+                    details={"field": "credentials"},
+                )
+            oauth_config = {
+                "token_url": check_openapi_base(token_url, limits, "oauth_token_url"),
+                **({"scope": oauth_scope} if oauth_scope else {}),
+            }
         encrypted = self._cipher.encrypt(credentials) if credentials else None
         created: list[Tool] = []
         skipped = list(plan.skipped)
@@ -373,6 +403,8 @@ class ToolRegistryService:
                 config["auth_header"] = auth_header
             if auth_scheme is not None:
                 config["auth_scheme"] = auth_scheme
+            if oauth_config:
+                config["oauth"] = oauth_config
             tool = Tool(
                 name=op.name,
                 display_name=op.display_name,
@@ -402,6 +434,7 @@ class ToolRegistryService:
                 "created": [t.name for t in created],
                 "skipped": skipped,
                 "required_permission": required_permission,
+                "oauth_token_url": (oauth_config or {}).get("token_url"),
             },
         )
         return plan, created, skipped

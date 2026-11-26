@@ -2846,9 +2846,10 @@
               <label class="form-label small text-secondary" for="sql-dsn">Connection string</label>
               <input class="form-control mono" id="sql-dsn" type="password" required
                      placeholder="postgresql://reader:password@db.internal:5432/crm">
-              <div class="form-text small">PostgreSQL. Stored encrypted. Its host must be on
-                <code>AGENTS__DATABASE_ALLOWED_HOSTS</code>. Use a role that can only read what
-                this query needs.</div>
+              <div class="form-text small">PostgreSQL (<code>postgresql://</code>), MySQL or MariaDB
+                (<code>mysql://</code>) or SQL Server (<code>mssql://</code>). Stored encrypted. Its host
+                must be on <code>AGENTS__DATABASE_ALLOWED_HOSTS</code>. Use a login that can only read
+                what this query needs: on SQL Server it is the main guard.</div>
             </div>
             <div class="col-md-4">
               <label class="form-label small text-secondary" for="sql-rows">Row limit</label>
@@ -2900,7 +2901,7 @@
               <div class="form-text small">Its host must be on <code>AGENTS__OPENAPI_ALLOWED_HOSTS</code>.</div>
             </div>
             <div class="col-12">
-              <label class="form-label small text-secondary" for="oa-file">OpenAPI 3 document</label>
+              <label class="form-label small text-secondary" for="oa-file">OpenAPI 3 or 2 (Swagger) document</label>
               <input class="form-control form-control-sm mb-2" id="oa-file" type="file"
                      accept=".json,.yaml,.yml">
               <textarea class="form-control mono small" id="oa-spec" rows="6"
@@ -2909,7 +2910,17 @@
             <div class="col-md-6">
               <label class="form-label small text-secondary" for="oa-cred">API key or token</label>
               <input class="form-control" id="oa-cred" type="password">
-              <div class="form-text small">Sent as <code>Authorization: Bearer …</code>. Stored encrypted.</div>
+              <div class="form-text small" id="oa-cred-help">Sent as <code>Authorization: Bearer …</code>. Stored encrypted.</div>
+              <div class="form-check mt-1">
+                <input class="form-check-input" type="checkbox" id="oa-oauth">
+                <label class="form-check-label small" for="oa-oauth">OAuth 2 client credentials</label>
+              </div>
+            </div>
+            <div class="col-md-6 d-none" id="oa-oauth-row">
+              <label class="form-label small text-secondary" for="oa-token-url">Token URL</label>
+              <input class="form-control mono" id="oa-token-url" placeholder="From the spec if it has one">
+              <label class="form-label small text-secondary mt-2" for="oa-scope">Scope <span class="text-secondary">(optional)</span></label>
+              <input class="form-control mono" id="oa-scope">
             </div>
             <div class="col-md-6">
               <label class="form-label small text-secondary" for="oa-perm">Required permission</label>

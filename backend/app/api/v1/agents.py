@@ -147,6 +147,9 @@ async def import_openapi(
         auth_scheme=payload.auth_scheme,
         timeout_seconds=payload.timeout_seconds,
         actor=actor,
+        oauth=payload.oauth,
+        oauth_token_url=payload.oauth_token_url,
+        oauth_scope=payload.oauth_scope,
     )
     for tool in created:
         await guard.place(tool, payload.team_id)

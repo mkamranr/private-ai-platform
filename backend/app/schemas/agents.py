@@ -73,7 +73,8 @@ class ToolRead(ORMModel):
 
 
 class OpenApiImportRequest(BaseModel):
-    """Import an OpenAPI 3 document: one tool per operation, disabled at HIGH risk (E57)."""
+    """Import an OpenAPI 3 (or, E101, OpenAPI 2) document: one tool per operation,
+    disabled at HIGH risk (E57)."""
 
     spec: str | dict[str, Any] = Field(
         description="The document, as JSON/YAML text or a JSON object. Not a URL: the "
@@ -103,6 +104,16 @@ class OpenApiImportRequest(BaseModel):
     )
     timeout_seconds: int = Field(default=30, ge=1, le=300)
     team_id: uuid.UUID | None = None
+    #: E101: authenticate with the OAuth 2 client-credentials grant; ``credentials`` is
+    #: then ``client_id:client_secret``.
+    oauth: bool = False
+    oauth_token_url: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Defaults to the spec's client-credentials tokenUrl. Its host must be on "
+        "AGENTS__OPENAPI_ALLOWED_HOSTS.",
+    )
+    oauth_scope: str | None = Field(default=None, max_length=512)
 
 
 class ToolUpdateRequest(BaseModel):

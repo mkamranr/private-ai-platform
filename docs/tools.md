@@ -72,13 +72,34 @@ again on every call.
 * The connection string is the tool's credential: encrypted, never returned, never shown.
   **Use a role that can only read what the query needs.** The read-only transaction stops
   writes, not reads of a table the role should not see.
-* PostgreSQL only. *Test* connects and prepares the statement without running it.
+* *Test* connects and prepares the statement without running it (PostgreSQL), or connects
+  and runs `SELECT 1` (MySQL, SQL Server).
+
+**MySQL, MariaDB and SQL Server.** A `mysql://user:password@host:3306/database` (or
+`mariadb://`) or `mssql://user:password@host:1433/database` connection string works the
+same way, through pure-Python drivers (PyMySQL, python-tds) run off the event loop.
+Placeholders are bound as driver parameters. The differences:
+
+| | PostgreSQL | MySQL / MariaDB | SQL Server |
+|---|---|---|---|
+| Read-only | `READ ONLY` transaction | `START TRANSACTION READ ONLY`, rolled back | a transaction that is always rolled back; **no read-only mode** |
+| Timeout | `statement_timeout` | `MAX_EXECUTION_TIME` (MySQL) and the socket read timeout | the driver's query timeout |
+| Writing words in the template | refused by PostgreSQL | refused on save and per call | refused on save and per call |
+| TLS | per the connection string | `?ssl=true` (verified against the system CA store) | not encrypted by the driver: use a trusted network |
+
+On MySQL and SQL Server a template is also refused when it contains a writing keyword
+outside quotes and comments: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `INTO` (so no `SELECT
+… INTO`), `EXEC`, `CALL`, DDL, `LOAD_FILE`, `OPENROWSET`, `xp_` and `sp_` procedures, `SET`
+and a few more (`FOR UPDATE` included). That list is a second line: on SQL Server the
+**login** is the guard, so give it read access (`db_datareader`, or `SELECT` on the views
+the tool needs) and nothing else. Values arrive as the JSON types the model sent, without
+PostgreSQL's conversion to the parameter's type.
 
 ### OpenAPI operations (`OPENAPI`)
 
-*Tools & MCP → Import OpenAPI*, or `POST /tools/openapi/import` with an OpenAPI 3 document
-(JSON or YAML text, or an object; the platform never fetches a spec). Each operation becomes
-one tool, `<prefix>.<operationId>`:
+*Tools & MCP → Import OpenAPI*, or `POST /tools/openapi/import` with an OpenAPI 3 or
+OpenAPI 2 (Swagger) document (JSON or YAML text, or an object; the platform never fetches a
+spec). Each operation becomes one tool, `<prefix>.<operationId>`:
 
 * Every tool arrives **disabled at HIGH risk**, like a discovered MCP tool. Nothing an
   import adds is callable until someone has read it and enabled it. Names that already
@@ -90,12 +111,24 @@ one tool, `<prefix>.<operationId>`:
   and must be on `AGENTS__OPENAPI_ALLOWED_HOSTS`.
 * The optional credential is sent as `Authorization: Bearer …` (`auth_header`,
   `auth_scheme` to change it). An `Authorization` parameter in the spec is ignored.
+* **OAuth 2.** With `oauth: true` (*OAuth 2 client credentials* in the console) the
+  credential is `client_id:client_secret`. Before a call the platform gets a token from
+  the token URL (`oauth_token_url`, or the spec's client-credentials `tokenUrl`, OpenAPI 3
+  or 2) with the client-credentials grant (client id and secret as HTTP Basic, `scope` if
+  given), keeps it until 30 seconds before it expires, and sends it as `Bearer`. The token
+  URL must be on `AGENTS__OPENAPI_ALLOWED_HOSTS` too; it is kept in the tool's
+  `config.oauth`. A token endpoint that refuses fails the call with its reason
+  (`invalid_client`). Tokens live in each worker's memory, not in the database.
+* **OpenAPI 2.** `host`, `basePath` and the first of `schemes` give the base URL; a
+  parameter's `type` becomes its schema; an `in: body` parameter becomes `body`;
+  `formData` operations are skipped like other non-JSON bodies.
 * Path values are URL-encoded, slashes included, so a value cannot climb the path.
   Redirects are not followed. At most 1 MB of a response is read.
 * Imports are audited as `OPENAPI_IMPORTED`.
 
-Not built: other databases, OpenAPI 2 (Swagger), OAuth flows for an API, and fetching a spec
-from a URL.
+Not built: databases other than PostgreSQL, MySQL/MariaDB and SQL Server; OAuth flows
+other than client credentials (no user sign-in on behalf of an agent); fetching a spec from
+a URL; multipart bodies.
 
 **The authorisation pipeline — including the intersection rule that makes agents safe
 — is documented in [agents.md](agents.md#the-tool-pipeline).** Read that before adding
