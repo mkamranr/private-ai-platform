@@ -21,6 +21,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -744,6 +745,68 @@ class McpRegistryService:
         return DiscoveryResult(
             server.name, len(offered), created, updated, detail=" ".join(details) or None
         )
+
+    async def update_server(
+        self, server_id: uuid.UUID, changes: dict[str, Any], *, actor: User
+    ) -> McpServer:
+        """E102: change a server's endpoint, transport, description or token in place, so
+        its tools keep their ids, grants, risk levels and enabled state (deleting and
+        registering it again would lose all of those). The tools discovered from it follow
+        a new endpoint. A changed connection resets the status to UNKNOWN until it is
+        checked again. Audited with what changed, never the token."""
+        server = await self.get_server(server_id)
+
+        def snapshot() -> dict[str, Any]:
+            return {
+                "endpoint": server.endpoint,
+                "transport": server.transport,
+                "description": server.description,
+                "has_credentials": server.has_credentials,
+            }
+
+        before = snapshot()
+        transport = str(changes.get("transport") or server.transport).upper()
+        if transport not in ("HTTP", "SSE", "STDIO"):
+            raise ValidationError(
+                "The transport is HTTP, SSE or STDIO.", details={"field": "transport"}
+            )
+        endpoint = str(changes.get("endpoint") or server.endpoint)
+        endpoint = checked_mcp_endpoint(endpoint, transport)
+        token_changed = False
+        if changes.get("credentials") is not None:
+            token = str(changes["credentials"]).strip()
+            server.credentials_encrypted = self._cipher.encrypt(token) if token else None
+            token_changed = True
+        if "description" in changes:
+            server.description = changes["description"]
+        moved = endpoint != server.endpoint
+        server.endpoint, server.transport = endpoint, transport
+        if moved:
+            for tool in await self._tools.list_for_server(server.id):
+                tool.endpoint = endpoint
+        if moved or before["transport"] != transport or token_changed:
+            server.status = "UNKNOWN"
+            server.status_detail = "Changed: run Check to test the new connection."
+        await self._servers.flush()
+        after = snapshot()
+        changed = sorted(k for k in after if after[k] != before[k])
+        if token_changed and "has_credentials" not in changed:
+            changed.append("credentials")
+        if changed:
+            await self._audit.record(
+                AuditAction.MCP_SERVER_UPDATED,
+                user_id=actor.id,
+                username=actor.username,
+                resource_type="mcp_server",
+                resource_id=str(server.id),
+                metadata={
+                    "name": server.name,
+                    "changed": changed,
+                    "before": before,
+                    "after": after,
+                },
+            )
+        return server
 
     async def delete_server(self, server_id: uuid.UUID) -> None:
         """Deletes the server and, by cascade, the tools discovered from it.

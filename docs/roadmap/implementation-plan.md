@@ -865,6 +865,12 @@ matrix still listed as missing.
 - [x] Console: SQL engines in the connection-string help; OpenAPI 2 and *OAuth 2 client credentials* on *Import OpenAPI*. Tests: `tests/unit/test_connectors.py` (`TestOtherEngines`, `TestSwagger`, `TestOAuth`). Doc: tools.md, api.md.
 - [ ] No live MySQL or SQL Server in the test suite (the drivers are faked); SQL Server has no read-only transaction and no TLS through python-tds; OAuth is client credentials only.
 
+## E102: Change an MCP server in place
+
+- [x] `PUT /mcp/servers/{id}` (`mcp.manage`, `McpServerUpdateRequest`): endpoint, transport, description and bearer token; `""` removes the token. The name is fixed (it prefixes tool names). `McpRegistryService.update_server` checks the endpoint with `checked_mcp_endpoint`, copies a new endpoint onto the server's tools, resets the status to `UNKNOWN` when the connection changes, and audits `MCP_SERVER_UPDATED` with `changed`, `before` and `after` (no secrets). `McpServerRead.has_credentials`.
+- [x] Console: *Edit* on each server opens the register form filled in, name locked, with *Remove the token*. Tests: `tests/api/test_mcp_edit.py`. Doc: mcp.md, api.md.
+- [ ] Renaming a server (and its tools) is not offered.
+
 ## Phase acceptance (applies to each)
 
 Existing gates still pass, the new phase's tests pass, and migrations upgrade and

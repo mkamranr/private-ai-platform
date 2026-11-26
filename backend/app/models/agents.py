@@ -154,6 +154,11 @@ class McpServer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     tools: Mapped[list[Tool]] = relationship(back_populates="server", cascade="all, delete-orphan")
 
+    @property
+    def has_credentials(self) -> bool:
+        """E102: whether a bearer token is set (it is never returned)."""
+        return bool(self.credentials_encrypted)
+
 
 # ---------------------------------------------------------------------------
 # Skills (M11)
