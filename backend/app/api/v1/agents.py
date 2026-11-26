@@ -45,6 +45,7 @@ from app.schemas.agents import (
     DiscoveryResponse,
     McpServerCreateRequest,
     McpServerRead,
+    McpServerUpdateRequest,
     OpenApiImportRequest,
     OpenApiImportResponse,
     PendingApprovalRead,
@@ -330,6 +331,26 @@ async def discover_mcp_tools(
     registering a server would silently widen what every agent on the platform can do.
     """
     return DiscoveryResponse(**asdict(await service.discover(server_id, actor=actor)))
+
+
+@router.put(
+    "/mcp/servers/{server_id}", response_model=McpServerRead, summary="Change an MCP server"
+)
+async def update_mcp_server(
+    payload: McpServerUpdateRequest,
+    service: McpRegistryDep,
+    tools: ToolRegistryDep,
+    actor: Annotated[User, require_permission(Perm.MCP_MANAGE)],
+    server_id: uuid.UUID = Path(...),
+) -> McpServerRead:
+    """E102: endpoint, transport, description or token, in place. Its tools keep their
+    grants and settings and follow a new endpoint; the name can't change."""
+    server = await service.update_server(
+        server_id, payload.model_dump(exclude_unset=True), actor=actor
+    )
+    detail = McpServerRead.model_validate(server)
+    detail.tool_count = sum(1 for t in await tools.list_tools() if t.mcp_server_id == server.id)
+    return detail
 
 
 @router.delete(

@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Change an MCP server in place
+- *Edit* on an MCP server (or `PUT /mcp/servers/{id}`) changes its endpoint, transport, description or token without deleting it, so its tools keep their grants, risk levels and enabled state and follow the new endpoint.
+- **Upgrade.** Nothing to do.
+
 ### Connectors: MySQL, SQL Server, OpenAPI 2 and OAuth
 - SQL tools can query MySQL/MariaDB (`mysql://`) and SQL Server (`mssql://`) as well as PostgreSQL, read-only and rolled back, with writing keywords refused in the template.
 - *Import OpenAPI* takes OpenAPI 2 (Swagger) documents, and imported tools can authenticate with the OAuth 2 client-credentials grant.

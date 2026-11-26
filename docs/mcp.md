@@ -222,7 +222,21 @@ a command, not an address, and is not checked.
 
 The address is checked again on every call (health check, discovery, tool call). A server
 registered before this check existed and pointing somewhere refused shows `UNREACHABLE`,
-with the reason, until its endpoint is fixed: delete it and register it again.
+with the reason, until its endpoint is fixed with *Edit*.
+
+### Changing a server
+
+*Tools & MCP → Edit* on a server, or `PUT /mcp/servers/{id}` (`mcp.manage`) with any of
+`endpoint`, `transport`, `description` and `credentials`. Omitted fields stay as they are;
+`credentials: ""` removes the bearer token, and the token is never returned (the server
+shows `has_credentials`). The **name can't change**: it prefixes the names of the server's
+tools, and grants refer to those.
+
+Its tools keep their ids, grants, risk levels and enabled state, and a new endpoint is
+copied onto them. A changed endpoint, transport or token sets the status back to
+`UNKNOWN` until *Check* runs. The new endpoint passes the same policy as at registration.
+The change is audited as `MCP_SERVER_UPDATED` with what changed and the values before and
+after (never the token itself).
 
 ---
 

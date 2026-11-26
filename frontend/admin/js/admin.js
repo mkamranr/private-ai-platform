@@ -576,6 +576,8 @@ function chatHost() {
 /* Agents (M10-M14)                                                           */
 /* -------------------------------------------------------------------------- */
 let toolCache = [];
+/** E102: the MCP servers last listed, for *Edit*. */
+let mcpCache = [];
 let skillCache = [];
 
 const RUN_STATE_CLASS = {
@@ -913,6 +915,7 @@ function skillRow(skill) {
 async function renderTools() {
   const [servers, tools] = await Promise.all([api('/mcp/servers'), api('/tools')]);
   toolCache = tools;
+  mcpCache = servers;
 
   document.getElementById('mcp-body').innerHTML = servers.length ? `
     <div class="table-responsive">
@@ -964,6 +967,7 @@ function mcpRow(server) {
     <td class="text-end text-nowrap">
       <button class="btn btn-sm btn-outline-secondary me-1" data-mcp-check="${esc(server.id)}">Check</button>
       <button class="btn btn-sm btn-outline-primary me-1" data-mcp-discover="${esc(server.id)}">Discover</button>
+      <button class="btn btn-sm btn-outline-secondary me-1" data-mcp-edit="${esc(server.id)}">Edit</button>
       <button class="btn btn-sm btn-outline-danger" data-mcp-delete="${esc(server.id)}"
               data-mcp-name="${esc(server.name)}">Delete</button>
     </td>
@@ -1042,6 +1046,11 @@ function wireToolActions() {
         `${result.updated} refreshed. ${result.detail || ''}`, 'success');
       await renderTools();
     });
+  });
+
+  // E102: change a server in place; its tools keep their grants and settings.
+  document.querySelectorAll('[data-mcp-edit]').forEach((button) => {
+    button.onclick = () => openMcpEdit(mcpCache.find((s) => s.id === button.dataset.mcpEdit));
   });
 
   document.querySelectorAll('[data-mcp-delete]').forEach((button) => {
@@ -5824,7 +5833,50 @@ onModalSubmit('skill-form', 'skill-error', async (form) => {
   await renderSkills();
 });
 
+/** E102: the register form, filled in for one server and saved with PUT. */
+function mcpFormMode(server) {
+  document.getElementById('mcp-id').value = server?.id || '';
+  document.getElementById('mcp-title').textContent = server ? `Change MCP server: ${server.name}` : 'Register MCP server';
+  document.getElementById('mcp-submit').textContent = server ? 'Save' : 'Register';
+  const name = document.getElementById('mcp-name');
+  name.value = server?.name || '';
+  name.disabled = Boolean(server);
+  document.getElementById('mcp-endpoint').value = server?.endpoint || '';
+  document.getElementById('mcp-desc').value = server?.description || '';
+  document.getElementById('mcp-cred').value = '';
+  document.getElementById('mcp-cred').placeholder = server?.has_credentials ? 'Set. Leave blank to keep it.' : '';
+  document.getElementById('mcp-cred-clear').checked = false;
+  document.getElementById('mcp-cred-clear-row').classList.toggle('d-none', !server?.has_credentials);
+  document.getElementById('mcp-note').innerHTML = server
+    ? 'Its tools keep their grants, risk levels and enabled state, and follow a new endpoint. Run <strong>Check</strong> after changing the connection.'
+    : 'Registering does not grant anything. Discovered tools arrive <strong>disabled</strong> at <strong>HIGH</strong> risk until you review them.';
+  document.getElementById('mcp-error').classList.add('d-none');
+}
+
+function openMcpEdit(server) {
+  if (!server) return;
+  mcpFormMode(server);
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('mcp-modal')).show();
+}
+
+// Opened from *Register server*: back to a blank registration.
+document.getElementById('mcp-modal').addEventListener('show.bs.modal', (event) => {
+  if (event.relatedTarget) mcpFormMode(null);
+});
+
 onModalSubmit('mcp-form', 'mcp-error', async (form) => {
+  const id = document.getElementById('mcp-id').value;
+  if (id) {
+    const body = { endpoint: field('mcp-endpoint'), description: field('mcp-desc') || null };
+    if (document.getElementById('mcp-cred-clear').checked) body.credentials = '';
+    else if (field('mcp-cred')) body.credentials = field('mcp-cred');
+    const saved = await api(`/mcp/servers/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) });
+    closeModal('mcp-modal');
+    mcpFormMode(null);
+    alert(`Saved ${saved.name}.` + (saved.status === 'UNKNOWN' ? ' Run Check to test the new connection.' : ''), 'success');
+    await renderTools();
+    return;
+  }
   const server = await api('/mcp/servers', {
     method: 'POST',
     body: JSON.stringify({

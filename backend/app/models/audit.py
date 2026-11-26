@@ -169,6 +169,8 @@ class AuditAction(enum.StrEnum):
     # someone will eventually ask what it remembered and who cleared it.
     MEMORY_DELETED = "MEMORY_DELETED"
     MCP_SERVER_REGISTERED = "MCP_SERVER_REGISTERED"
+    #: E102: its endpoint, transport, description or token changed.
+    MCP_SERVER_UPDATED = "MCP_SERVER_UPDATED"
     MCP_TOOLS_DISCOVERED = "MCP_TOOLS_DISCOVERED"
     MCP_REGISTERED = "MCP_REGISTERED"
     # Infrastructure (Phase 1)

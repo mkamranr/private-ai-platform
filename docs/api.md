@@ -377,7 +377,7 @@ The response echoes the **alias**, never the underlying model.
 | POST | `/tools/{id}/test` | `tool.manage` |
 | POST | `/tools/openapi/import` | `tool.manage`. `{spec, prefix, base_url?, credentials?, required_permission, team_id?, oauth?, oauth_token_url?, oauth_scope?}` (OpenAPI 3 or 2; with `oauth` the credential is `client_id:client_secret`); **201** with `{title, base_url, created, skipped}`. Tools arrive disabled at HIGH risk. See [tools.md](tools.md#connectors-sql-and-openapi) |
 | GET | `/mcp/servers` | `mcp.view` |
-| POST / PUT / DELETE | `/mcp/servers[/{id}]` | `mcp.manage` |
+| POST / PUT / DELETE | `/mcp/servers[/{id}]` | `mcp.manage`. PUT: `{endpoint?, transport?, description?, credentials?}` in place (`credentials: ""` removes the token; the name is fixed); its tools follow a new endpoint and the status returns to `UNKNOWN` |
 | POST | `/mcp/servers/{id}/discover` | `mcp.manage` |
 | POST | `/mcp/servers/{id}/health` | `mcp.view` |
 | GET | `/runs/pending-approvals` | `tool.approve` |

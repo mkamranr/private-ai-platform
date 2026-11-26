@@ -154,6 +154,16 @@ class McpServerCreateRequest(BaseModel):
     credentials: str | None = None
 
 
+class McpServerUpdateRequest(BaseModel):
+    """E102: change a server in place. Omitted fields are unchanged; ``credentials: ""``
+    removes the token. The name is fixed: it prefixes the server's tool names."""
+
+    endpoint: str | None = Field(default=None, min_length=1, max_length=512)
+    description: str | None = None
+    transport: str | None = Field(default=None, description="HTTP|SSE|STDIO")
+    credentials: str | None = None
+
+
 class McpServerRead(ORMModel):
     id: uuid.UUID
     name: str
@@ -167,6 +177,7 @@ class McpServerRead(ORMModel):
     last_discovered_at: dt.datetime | None = None
     created_at: dt.datetime
     tool_count: int = 0
+    has_credentials: bool = False
 
 
 class DiscoveryResponse(BaseModel):
