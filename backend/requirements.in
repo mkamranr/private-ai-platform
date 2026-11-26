@@ -19,6 +19,9 @@ PyYAML==6.0.3
 # --- Persistence (M01) ---
 SQLAlchemy[asyncio]==2.0.51
 asyncpg==0.31.0
+# E101: MySQL/MariaDB and SQL Server for DATABASE tools (pure Python)
+PyMySQL==1.2.4
+python-tds==1.17.1
 alembic==1.19.0
 
 # --- Platform data services (M01) ---

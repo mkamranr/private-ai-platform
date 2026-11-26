@@ -516,7 +516,7 @@ matrix still listed as missing.
 - [x] Fixed: `ToolPipeline.execute_approved` projected the tool without its encrypted credential, so agent REST and MCP calls went out unauthenticated. `executable_definition` is now the one projection used by the pipeline, the spec builder, *Test* and the workflow tool step.
 - [x] REST tools: outbound-URL policy on save and per call, redirects not followed.
 - [x] Console: *Add SQL tool*, *Import OpenAPI*, *Delete* on non-MCP tools. Tests: `tests/unit/test_connectors.py`, `tests/api/test_connector_tools.py`. Docs: [tools.md](../tools.md#connectors-sql-and-openapi), security.md, api.md, `.env.example`.
-- [ ] PostgreSQL only. No OpenAPI 2, OAuth flows, spec fetching from a URL or multipart bodies. The workflow tool step still runs executors directly (no `tool_executions` row). Full JSON Schema validation of arguments needs a dependency not in the bundle.
+- [ ] ~~PostgreSQL only. No OpenAPI 2, OAuth flows~~ (E101; client credentials only), spec fetching from a URL or multipart bodies. The workflow tool step still runs executors directly (no `tool_executions` row). Full JSON Schema validation of arguments needs a dependency not in the bundle.
 
 ## E58: Spread gateway calls across a model's copies (closes the feature-matrix replica gap)
 
@@ -856,6 +856,14 @@ matrix still listed as missing.
 - [x] `AUDIT_PUSH__*` settings and `audit_push_state` (migration `f7c9d1e3a5b6`): `AuditPusher` (`app/services/audit_push.py`), run by the scheduler every `interval_seconds`, sends rows after the cursor and older than a minute, oldest first, as JSON Lines or Splunk HEC; the cursor moves only on 2xx; three failures raise an `audit_push` alert, cleared on success. `GET /audit/push` for its state.
 - [x] Tests: `tests/api/test_audit_api.py::test_streamed_a_page_at_a_time`, `tests/api/test_audit_push.py`. Doc: security.md, api.md.
 - [ ] One collector; settings from the environment only (no console form); no syslog transport; the console still downloads the whole file before saving it.
+
+## E101: Connectors: MySQL, SQL Server, OpenAPI 2 and OAuth
+
+- [x] `dsn_engine`/`DsnParts`: `postgresql://`, `mysql://`/`mariadb://`, `mssql://`/`sqlserver://`. `compile_template(template, engine)`: `%(name)s` with other `%` doubled for MySQL and SQL Server, backticks and [brackets] as quotes, MySQL `#` comments and backslash escapes. `check_template(..., engine)` refuses writing keywords outside quotes and comments on those engines.
+- [x] `DatabaseToolExecutor`: PyMySQL (`START TRANSACTION READ ONLY`, `MAX_EXECUTION_TIME`, rolled back) and python-tds (always rolled back) in `asyncio.to_thread`; *Test* runs `SELECT 1`. Both pure Python, pinned with hashes in `requirements.txt`.
+- [x] `parse_openapi` reads OpenAPI 2 through `_from_swagger`; `ImportPlan.oauth_token_url` from either version's client-credentials scheme. `OpenApiToolExecutor` with `config.oauth`: client-credentials token (Basic auth, scope), cached per token URL, client and scope until 30 s before expiry; token URL allow-listed on save, import and call. Import takes `oauth`, `oauth_token_url`, `oauth_scope`.
+- [x] Console: SQL engines in the connection-string help; OpenAPI 2 and *OAuth 2 client credentials* on *Import OpenAPI*. Tests: `tests/unit/test_connectors.py` (`TestOtherEngines`, `TestSwagger`, `TestOAuth`). Doc: tools.md, api.md.
+- [ ] No live MySQL or SQL Server in the test suite (the drivers are faked); SQL Server has no read-only transaction and no TLS through python-tds; OAuth is client credentials only.
 
 ## Phase acceptance (applies to each)
 

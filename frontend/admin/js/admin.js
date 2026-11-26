@@ -5871,6 +5871,15 @@ document.getElementById('oa-file').onchange = async (event) => {
   if (file) document.getElementById('oa-spec').value = await file.text();
 };
 
+// E101: with OAuth the credential is client_id:client_secret, exchanged for a token.
+document.getElementById('oa-oauth').onchange = (event) => {
+  const oauth = event.target.checked;
+  document.getElementById('oa-oauth-row').classList.toggle('d-none', !oauth);
+  document.getElementById('oa-cred-help').innerHTML = oauth
+    ? '<code>client_id:client_secret</code>, exchanged at the token URL for a token sent as <code>Bearer</code>. Stored encrypted.'
+    : 'Sent as <code>Authorization: Bearer …</code>. Stored encrypted.';
+};
+
 onModalSubmit('openapi-form', 'openapi-error', async (form) => {
   const spec = document.getElementById('oa-spec').value.trim();
   if (!spec) throw new Error('Choose a file or paste the document.');
@@ -5882,6 +5891,9 @@ onModalSubmit('openapi-form', 'openapi-error', async (form) => {
       base_url: field('oa-base') || null,
       credentials: document.getElementById('oa-cred').value || null,
       required_permission: field('oa-perm'),
+      oauth: document.getElementById('oa-oauth').checked,
+      oauth_token_url: field('oa-token-url') || null,
+      oauth_scope: field('oa-scope') || null,
     }),
   });
   closeModal('openapi-modal');

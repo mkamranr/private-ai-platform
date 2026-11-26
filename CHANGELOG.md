@@ -6,6 +6,11 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Connectors: MySQL, SQL Server, OpenAPI 2 and OAuth
+- SQL tools can query MySQL/MariaDB (`mysql://`) and SQL Server (`mssql://`) as well as PostgreSQL, read-only and rolled back, with writing keywords refused in the template.
+- *Import OpenAPI* takes OpenAPI 2 (Swagger) documents, and imported tools can authenticate with the OAuth 2 client-credentials grant.
+- **Upgrade.** No migration. Two new Python dependencies, PyMySQL and python-tds (pure Python, pinned with hashes); rebuild the image or the offline bundle.
+
 ### Audit export streamed, and pushed to a SIEM
 - Audit exports are streamed, with no 100,000-row cap; `X-Export-Truncated` is no longer sent.
 - Set `AUDIT_PUSH__URL` to push new audit records to a SIEM every minute, as JSON Lines or Splunk HEC events, resuming where it stopped after an outage; `GET /audit/push` shows its progress.

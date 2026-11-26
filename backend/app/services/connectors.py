@@ -28,20 +28,33 @@ not followed: a redirect is a second request to a host nobody checked.
 
 Both allow-lists are deployment settings, empty by default: on a fresh install neither
 connector can reach anything until whoever deploys the platform says where.
+
+E101: **MySQL/MariaDB** (``mysql://``) and **SQL Server** (``mssql://``) too, through
+pure-Python drivers run in a thread. MySQL runs the query in ``START TRANSACTION READ
+ONLY`` with ``MAX_EXECUTION_TIME``; SQL Server has no read-only transaction, so there the
+query runs in a transaction that is always rolled back, and templates for both are also
+refused if they contain a writing keyword (``INSERT``, ``INTO``, ``EXEC``...) outside
+quotes and comments. A login with read access only remains the real guard. OpenAPI 2
+(Swagger) documents import too, and an OPENAPI tool can authenticate with the OAuth 2
+client-credentials grant, its token fetched from an allow-listed token URL and kept until
+it expires.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime as dt
 import decimal
 import json
 import re
+import ssl
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import httpx
 
@@ -114,71 +127,122 @@ def _refuse_host(host: str | None, allowed: list[str], setting: str, field_name:
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+#: E101: the engines a DATABASE tool can use, by connection-string scheme.
+SQL_SCHEMES = {
+    "postgresql": "postgresql",
+    "postgres": "postgresql",
+    "mysql": "mysql",
+    "mariadb": "mysql",
+    "mssql": "sqlserver",
+    "sqlserver": "sqlserver",
+}
+DSN_FORMS = (
+    "postgresql://user:password@host:5432/database, mysql://user:password@host:3306/database "
+    "or mssql://user:password@host:1433/database"
+)
+#: E101: words refused outside quotes and comments in MySQL and SQL Server templates,
+#: where there is no read-only transaction to refuse them (SQL Server) or it doesn't
+#: cover files (MySQL's ``INTO OUTFILE``, ``LOAD_FILE``).
+_WRITING = re.compile(
+    r"\b(insert|update|delete|merge|drop|alter|create|truncate|grant|revoke|deny|exec|"
+    r"execute|call|into|load_file|load\s+data|handler|lock|unlock|set|use|kill|shutdown|"
+    r"backup|restore|dbcc|openrowset|opendatasource|openquery|openxml|bulk|xp_\w+|sp_\w+)\b",
+    re.I,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class SqlTemplate:
-    """A template with ``:name`` placeholders, compiled to PostgreSQL's ``$n``."""
+    """A template with ``:name`` placeholders, compiled to PostgreSQL's ``$n`` or, for
+    MySQL and SQL Server (E101), to ``%(name)s`` with every other ``%`` doubled."""
 
     sql: str
     names: tuple[str, ...]
+    #: The template outside quotes and comments, for keyword checks.
+    code: str = ""
 
 
-def compile_template(template: str) -> SqlTemplate:
-    """Replace ``:name`` with ``$n`` outside quotes and comments.
+def compile_template(template: str, engine: str = "postgresql") -> SqlTemplate:
+    """Replace ``:name`` with ``$n`` (PostgreSQL) or ``%(name)s`` outside quotes and
+    comments.
 
-    ``::type`` casts, string literals ('...'), quoted identifiers ("..."), dollar-quoted
-    bodies and comments are left alone, so ``'10:30'`` and ``x::int`` survive. A name used
-    twice binds the same ``$n``.
+    ``::type`` casts, string literals ('...'), quoted identifiers ("...", MySQL's
+    backticks, SQL Server's [brackets]), PostgreSQL's dollar-quoted bodies and comments are
+    left alone, so ``'10:30'`` and ``x::int`` survive. A name used twice binds the same
+    parameter.
     """
+    postgres = engine == "postgresql"
     out: list[str] = []
+    code: list[str] = []
     names: list[str] = []
+
+    def emit(text: str) -> None:
+        out.append(text if postgres else text.replace("%", "%%"))
+
+    quotes = "'\"" + ("`" if engine == "mysql" else "")
     i, n = 0, len(template)
     while i < n:
         ch = template[i]
-        if ch in "'\"":
+        if ch in quotes or (ch == "[" and engine == "sqlserver"):
+            close = "]" if ch == "[" else ch
             end = i + 1
             while end < n:
-                if template[end] == ch:
-                    if end + 1 < n and template[end + 1] == ch:  # doubled quote
+                if engine == "mysql" and ch == "'" and template[end] == "\\":
+                    end += 2  # MySQL's backslash escapes
+                    continue
+                if template[end] == close:
+                    if end + 1 < n and template[end + 1] == close:  # doubled quote
                         end += 2
                         continue
                     break
                 end += 1
-            out.append(template[i : end + 1])
+            emit(template[i : end + 1])
+            code.append(" ")
             i = end + 1
-        elif template.startswith("--", i):
+        elif template.startswith("--", i) or (engine == "mysql" and ch == "#"):
             end = template.find("\n", i)
             end = n if end < 0 else end
-            out.append(template[i:end])
+            emit(template[i:end])
             i = end
         elif template.startswith("/*", i):
             end = template.find("*/", i + 2)
             end = n if end < 0 else end + 2
-            out.append(template[i:end])
+            emit(template[i:end])
+            code.append(" ")
             i = end
-        elif ch == "$" and (tag := re.match(r"\$[A-Za-z_]*\$", template[i:])):
+        elif postgres and ch == "$" and (tag := re.match(r"\$[A-Za-z_]*\$", template[i:])):
             marker = tag.group(0)
             end = template.find(marker, i + len(marker))
             end = n if end < 0 else end + len(marker)
             out.append(template[i:end])
             i = end
         elif ch == ":" and template.startswith("::", i):
-            out.append("::")
+            emit("::")
+            code.append("::")
             i += 2
         elif ch == ":" and (match := _NAME.match(template, i + 1)):
             name = match.group(0)
             if name not in names:
                 names.append(name)
-            out.append(f"${names.index(name) + 1}")
+            out.append(f"${names.index(name) + 1}" if postgres else f"%({name})s")
+            code.append(" ")
             i = match.end()
         else:
-            out.append(ch)
+            emit(ch)
+            code.append(ch)
             i += 1
-    return SqlTemplate(sql="".join(out), names=tuple(names))
+    sql = "".join(out)
+    if not postgres and not names:
+        sql = template  # no parameters: the drivers send it as written, % and all
+    return SqlTemplate(sql=sql, names=tuple(names), code="".join(code))
 
 
-def check_template(template: str, parameters_schema: dict[str, Any]) -> SqlTemplate:
+def check_template(
+    template: str, parameters_schema: dict[str, Any], engine: str = "postgresql"
+) -> SqlTemplate:
     """Save-time checks on a DATABASE tool's template. PostgreSQL's read-only transaction is
-    the real guard; these catch mistakes early and say why."""
+    the real guard; these catch mistakes early and say why. For MySQL and SQL Server
+    (E101) a writing keyword outside quotes and comments is refused too."""
     stripped = re.sub(r"(--[^\n]*|/\*.*?\*/)", " ", template or "", flags=re.S).strip()
     if not stripped:
         raise ValidationError("A DATABASE tool needs config.sql.", details={"field": "sql"})
@@ -189,7 +253,13 @@ def check_template(template: str, parameters_schema: dict[str, Any]) -> SqlTempl
         )
     if ";" in stripped.rstrip(";"):
         raise ValidationError("One statement per tool.", details={"field": "sql"})
-    compiled = compile_template(template.strip().rstrip(";"))
+    compiled = compile_template(template.strip().rstrip(";"), engine)
+    if engine != "postgresql" and (word := _WRITING.search(compiled.code)):
+        raise ValidationError(
+            f"On {'MySQL' if engine == 'mysql' else 'SQL Server'} a template may not contain "
+            f"{word.group(0).upper()}: only plain queries are allowed.",
+            details={"field": "sql"},
+        )
     declared = set((parameters_schema or {}).get("properties") or {})
     missing = [name for name in compiled.names if name not in declared]
     if missing:
@@ -284,15 +354,119 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def dsn_host(dsn: str) -> str | None:
-    """The host of a ``postgresql://`` connection string."""
-    parts = urlsplit(dsn.strip())
-    if parts.scheme not in ("postgresql", "postgres"):
+def dsn_engine(dsn: str) -> str:
+    """``postgresql``, ``mysql`` or ``sqlserver``, from the connection string's scheme."""
+    engine = SQL_SCHEMES.get(urlsplit(dsn.strip()).scheme.lower())
+    if engine is None:
         raise ValidationError(
-            "The credential must be a postgresql://user:password@host:5432/database URL.",
+            f"The credential must be a connection string: {DSN_FORMS}.",
             details={"field": "credentials"},
         )
-    return parts.hostname
+    return engine
+
+
+def dsn_host(dsn: str) -> str | None:
+    """The host of a connection string (E57; MySQL and SQL Server since E101)."""
+    dsn_engine(dsn)
+    return urlsplit(dsn.strip()).hostname
+
+
+@dataclass(frozen=True, slots=True)
+class DsnParts:
+    engine: str
+    host: str
+    port: int | None
+    user: str
+    password: str
+    database: str
+    options: dict[str, str]
+
+    @classmethod
+    def parse(cls, dsn: str) -> DsnParts:
+        parts = urlsplit(dsn.strip())
+        return cls(
+            engine=dsn_engine(dsn),
+            host=parts.hostname or "",
+            port=parts.port,
+            user=unquote(parts.username or ""),
+            password=unquote(parts.password or ""),
+            database=unquote(parts.path.lstrip("/")),
+            options={k: v[-1] for k, v in parse_qs(parts.query).items()},
+        )
+
+
+#: (records, column names) from one query.
+Fetched = tuple[list[tuple[Any, ...]], list[str]]
+#: A blocking driver call: (connection, sql, parameters or None, rows to fetch, seconds).
+DriverCall = Callable[[DsnParts, str, dict[str, Any] | None, int, int], Fetched]
+
+
+def _mysql_query(
+    dsn: DsnParts, sql: str, params: dict[str, Any] | None, rows: int, seconds: int
+) -> Fetched:
+    """MySQL or MariaDB through PyMySQL: a READ ONLY transaction, rolled back."""
+    import pymysql
+
+    tls = dsn.options.get("ssl", "").lower() in ("1", "true", "required", "verify")
+    conn = pymysql.connect(
+        host=dsn.host,
+        port=dsn.port or 3306,
+        user=dsn.user,
+        password=dsn.password,
+        database=dsn.database or None,
+        connect_timeout=seconds,
+        read_timeout=seconds,
+        write_timeout=seconds,
+        charset="utf8mb4",
+        autocommit=False,
+        ssl=ssl.create_default_context() if tls else None,
+    )
+    try:
+        with conn.cursor() as cursor:
+            # MySQL 5.7.8+; MariaDB has no such variable, and read_timeout still holds.
+            with contextlib.suppress(pymysql.MySQLError):
+                cursor.execute(f"SET SESSION MAX_EXECUTION_TIME = {int(seconds * 1000)}")
+            cursor.execute("START TRANSACTION READ ONLY")
+            cursor.execute(sql, params)
+            records = list(cursor.fetchmany(rows))
+            columns = [d[0] for d in cursor.description or []]
+        conn.rollback()
+    finally:
+        conn.close()
+    return records, columns
+
+
+def _mssql_query(
+    dsn: DsnParts, sql: str, params: dict[str, Any] | None, rows: int, seconds: int
+) -> Fetched:
+    """SQL Server through python-tds: a transaction that is always rolled back."""
+    import pytds
+
+    conn = pytds.connect(
+        server=dsn.host,
+        port=dsn.port or 1433,
+        database=dsn.database or None,
+        user=dsn.user,
+        password=dsn.password,
+        timeout=seconds,
+        login_timeout=seconds,
+        autocommit=False,
+    )
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(sql, params)
+            records = list(cursor.fetchmany(rows))
+            columns = [d[0] for d in cursor.description or []]
+        finally:
+            cursor.close()
+        conn.rollback()
+    finally:
+        conn.close()
+    return records, columns
+
+
+DRIVERS: dict[str, DriverCall] = {"mysql": _mysql_query, "sqlserver": _mssql_query}
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,9 +488,16 @@ class ConnectorLimits:
 
 
 class DatabaseToolExecutor(ToolExecutor):
-    """Runs an operator-written SQL template read-only against PostgreSQL (E57)."""
+    """Runs an operator-written SQL template read-only against PostgreSQL (E57), MySQL or
+    SQL Server (E101)."""
 
-    def __init__(self, cipher: SecretCipher, limits: ConnectorLimits, connect: Any = None) -> None:
+    def __init__(
+        self,
+        cipher: SecretCipher,
+        limits: ConnectorLimits,
+        connect: Any = None,
+        drivers: dict[str, DriverCall] | None = None,
+    ) -> None:
         self._cipher = cipher
         self._limits = limits
         if connect is None:
@@ -324,6 +505,7 @@ class DatabaseToolExecutor(ToolExecutor):
 
             connect = asyncpg.connect
         self._connect = connect
+        self._drivers = drivers if drivers is not None else DRIVERS
 
     @property
     def tool_type(self) -> ToolType:
@@ -356,17 +538,25 @@ class DatabaseToolExecutor(ToolExecutor):
         if problem:
             return _failure(problem, started, "invalid_arguments")
         try:
-            template = check_template(str(tool.config.get("sql") or ""), tool.parameters_schema)
             dsn = self._dsn(tool)
+            engine = dsn_engine(dsn)
+            template = check_template(
+                str(tool.config.get("sql") or ""), tool.parameters_schema, engine
+            )
         except ValidationError as exc:
             return _failure(f"The tool '{tool.name}' is misconfigured: {exc}", started, "config")
 
         max_rows = self._max_rows(tool)
         timeout = min(self._limits.database_statement_timeout_seconds, invocation.timeout_seconds)
         try:
-            rows, columns, more = await self._query(
-                dsn, template, invocation.arguments, max_rows, timeout
-            )
+            if engine == "postgresql":
+                rows, columns, more = await self._query(
+                    dsn, template, invocation.arguments, max_rows, timeout
+                )
+            else:
+                rows, columns, more = await self._query_other(
+                    dsn, template, invocation.arguments, max_rows, timeout
+                )
         except Exception as exc:  # asyncpg raises a wide family; all are tool failures
             log.warning("database_tool_failed", tool=tool.name, error=type(exc).__name__)
             return _failure(
@@ -414,10 +604,44 @@ class DatabaseToolExecutor(ToolExecutor):
         rows = [{k: _jsonable(v) for k, v in dict(record).items()} for record in records[:max_rows]]
         return rows, columns, more
 
+    async def _query_other(
+        self,
+        dsn: str,
+        template: SqlTemplate,
+        arguments: dict[str, Any],
+        max_rows: int,
+        seconds: int,
+    ) -> tuple[list[dict[str, Any]], list[str], bool]:
+        """E101: MySQL or SQL Server, the blocking driver in a thread."""
+        parts = DsnParts.parse(dsn)
+        params = {name: arguments.get(name) for name in template.names} or None
+        records, columns = await asyncio.wait_for(
+            asyncio.to_thread(
+                self._drivers[parts.engine], parts, template.sql, params, max_rows + 1, seconds
+            ),
+            timeout=seconds + 5,
+        )
+        more = len(records) > max_rows
+        rows = [
+            {column: _jsonable(value) for column, value in zip(columns, record, strict=False)}
+            for record in records[:max_rows]
+        ]
+        return rows, columns, more
+
     async def validate(self, tool: ToolDefinition) -> None:
-        """Connect and prepare the statement (which parses it) without running it."""
-        template = check_template(str(tool.config.get("sql") or ""), tool.parameters_schema)
+        """Connect and prepare the statement (which parses it) without running it. MySQL
+        and SQL Server (E101): connect and run ``SELECT 1``."""
         dsn = self._dsn(tool)
+        engine = dsn_engine(dsn)
+        template = check_template(str(tool.config.get("sql") or ""), tool.parameters_schema, engine)
+        if engine != "postgresql":
+            parts = DsnParts.parse(dsn)
+            seconds = self._limits.database_statement_timeout_seconds
+            await asyncio.wait_for(
+                asyncio.to_thread(self._drivers[engine], parts, "SELECT 1", None, 1, seconds),
+                timeout=seconds + 5,
+            )
+            return
         conn = await self._connect(dsn, timeout=self._limits.database_statement_timeout_seconds)
         try:
             async with conn.transaction(readonly=True):
@@ -459,6 +683,8 @@ class ImportPlan:
     base_url: str
     operations: list[ImportedOperation] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    #: E101: the token URL of the spec's OAuth 2 client-credentials scheme, if it has one.
+    oauth_token_url: str | None = None
 
 
 def _resolve(spec: dict[str, Any], node: Any, depth: int = 0) -> Any:
@@ -481,6 +707,103 @@ def _resolve(spec: dict[str, Any], node: Any, depth: int = 0) -> Any:
     return node
 
 
+_SWAGGER_SCHEMA_KEYS = (
+    "type",
+    "format",
+    "enum",
+    "items",
+    "default",
+    "minimum",
+    "maximum",
+    "minLength",
+    "maxLength",
+    "pattern",
+)
+
+
+def _from_swagger(spec: dict[str, Any]) -> dict[str, Any]:
+    """E101: an OpenAPI 2 (Swagger) document as the OpenAPI 3 shape ``parse_openapi``
+    reads. ``host``/``basePath``/``schemes`` become ``servers``; a parameter's type moves
+    into ``schema``; an ``in: body`` parameter becomes a JSON ``requestBody`` (``formData``
+    a form body, which is skipped like OpenAPI 3's); ``securityDefinitions`` become
+    ``components.securitySchemes``. References are inlined against the Swagger document."""
+    host = spec.get("host")
+    schemes = spec.get("schemes") or ["https"]
+    servers = [{"url": f"{schemes[0]}://{host}{spec.get('basePath') or ''}"}] if host else []
+
+    def parameters(raw: Any) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        plain: list[dict[str, Any]] = []
+        body: dict[str, Any] | None = None
+        for p in _resolve(spec, raw or []):
+            if not isinstance(p, dict):
+                continue
+            where = p.get("in")
+            if where == "body":
+                body = {
+                    "required": bool(p.get("required")),
+                    "content": {"application/json": {"schema": p.get("schema") or {}}},
+                }
+            elif where == "formData":
+                body = {"content": {"multipart/form-data": {"schema": {}}}}
+            else:
+                schema = {k: p[k] for k in _SWAGGER_SCHEMA_KEYS if k in p} or {"type": "string"}
+                plain.append(
+                    {
+                        **{k: p[k] for k in ("name", "in", "required", "description") if k in p},
+                        "schema": schema,
+                    }
+                )
+        return plain, body
+
+    paths: dict[str, Any] = {}
+    for path, item in (spec.get("paths") or {}).items():
+        if not isinstance(item, dict):
+            continue
+        shared, shared_body = parameters(item.get("parameters"))
+        converted: dict[str, Any] = {"parameters": shared}
+        for method in _METHODS:
+            op = item.get(method)
+            if not isinstance(op, dict):
+                continue
+            own, body = parameters(op.get("parameters"))
+            new = {k: v for k, v in op.items() if k not in ("parameters", "consumes")}
+            new["parameters"] = own
+            if body or shared_body:
+                new["requestBody"] = body or shared_body
+            converted[method] = new
+        paths[path] = converted
+    schemes_out: dict[str, Any] = {}
+    for name, scheme in (spec.get("securityDefinitions") or {}).items():
+        if (
+            isinstance(scheme, dict)
+            and scheme.get("type") == "oauth2"
+            and scheme.get("flow") == "application"
+            and scheme.get("tokenUrl")
+        ):
+            schemes_out[name] = {
+                "type": "oauth2",
+                "flows": {"clientCredentials": {"tokenUrl": scheme["tokenUrl"]}},
+            }
+    return {
+        "openapi": "3.0.0",
+        "info": spec.get("info") or {},
+        "servers": servers,
+        "paths": paths,
+        "components": {"securitySchemes": schemes_out},
+    }
+
+
+def _oauth_token_url(spec: dict[str, Any]) -> str | None:
+    """The token URL of the first OAuth 2 client-credentials scheme, if any."""
+    schemes = ((spec.get("components") or {}).get("securitySchemes")) or {}
+    for scheme in schemes.values():
+        if isinstance(scheme, dict) and scheme.get("type") == "oauth2":
+            flow = (scheme.get("flows") or {}).get("clientCredentials") or {}
+            if flow.get("tokenUrl"):
+                return str(flow["tokenUrl"])
+    return None
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").lower()
 
@@ -488,7 +811,7 @@ def _slug(text: str) -> str:
 def parse_openapi(
     raw: str | dict[str, Any], *, prefix: str, base_url: str | None = None
 ) -> ImportPlan:
-    """One tool per operation of an OpenAPI 3 document (JSON or YAML)."""
+    """One tool per operation of an OpenAPI 3 document, or OpenAPI 2 (E101), JSON or YAML."""
     if isinstance(raw, str):
         import yaml
 
@@ -498,9 +821,12 @@ def parse_openapi(
             raise ValidationError(f"The spec is not valid JSON or YAML: {exc}") from exc
     else:
         spec = raw
+    if isinstance(spec, dict) and str(spec.get("swagger", "")).startswith("2"):
+        spec = _from_swagger(spec)
     if not isinstance(spec, dict) or not str(spec.get("openapi", "")).startswith("3"):
         raise ValidationError(
-            "Only OpenAPI 3 documents are supported (an `openapi: 3.x` field).",
+            "Only OpenAPI 3 and OpenAPI 2 (Swagger) documents are supported (an "
+            '`openapi: 3.x` or `swagger: "2.0"` field).',
             details={"field": "spec"},
         )
     servers = spec.get("servers") or []
@@ -511,7 +837,9 @@ def parse_openapi(
             details={"field": "base_url"},
         )
     title = str((spec.get("info") or {}).get("title") or "API")
-    plan = ImportPlan(title=title, base_url=str(chosen).rstrip("/"))
+    plan = ImportPlan(
+        title=title, base_url=str(chosen).rstrip("/"), oauth_token_url=_oauth_token_url(spec)
+    )
     prefix = _slug(prefix) or _slug(title) or "api"
 
     for path, item in (spec.get("paths") or {}).items():
@@ -593,8 +921,19 @@ def parse_openapi(
     return plan
 
 
+#: E101: OAuth 2 access tokens by (token URL, client id, scope): (token, monotonic expiry).
+_TOKENS: dict[tuple[str, str, str], tuple[str, float]] = {}
+#: A token is renewed this long before it says it expires.
+TOKEN_MARGIN_SECONDS = 30
+
+
+class OAuthError(Exception):
+    """The token endpoint did not hand out a token; the message says why."""
+
+
 class OpenApiToolExecutor(ToolExecutor):
-    """Calls one imported OpenAPI operation on an allow-listed host (E57)."""
+    """Calls one imported OpenAPI operation on an allow-listed host (E57), authenticated
+    by a fixed header or, since E101, an OAuth 2 client-credentials token."""
 
     def __init__(
         self, cipher: SecretCipher, limits: ConnectorLimits, transport: Any = None
@@ -603,11 +942,58 @@ class OpenApiToolExecutor(ToolExecutor):
         self._limits = limits
         self._transport = transport
 
+    async def _oauth_header(
+        self, tool: ToolDefinition, secret: str, seconds: float
+    ) -> dict[str, str]:
+        """``Authorization: Bearer`` with a client-credentials token, fetched from the
+        allow-listed token URL (client id and secret as HTTP Basic, as RFC 6749 prefers)
+        and reused until shortly before it expires."""
+        oauth = tool.config.get("oauth") or {}
+        try:
+            token_url = check_openapi_base(
+                str(oauth.get("token_url") or ""), self._limits, "oauth.token_url"
+            )
+        except ValidationError as exc:
+            raise OAuthError(str(exc)) from exc
+        client_id, _, client_secret = secret.partition(":")
+        scope = str(oauth.get("scope") or "")
+        key = (token_url, client_id, scope)
+        cached = _TOKENS.get(key)
+        if cached and cached[1] > time.monotonic():
+            return {"Authorization": f"Bearer {cached[0]}"}
+        form = {"grant_type": "client_credentials", **({"scope": scope} if scope else {})}
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport, timeout=seconds, follow_redirects=False
+            ) as client:
+                response = await client.post(token_url, data=form, auth=(client_id, client_secret))
+        except httpx.HTTPError as exc:
+            raise OAuthError(
+                f"the token endpoint could not be reached ({type(exc).__name__})"
+            ) from exc
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        token = body.get("access_token") if isinstance(body, dict) else None
+        if response.status_code >= 300 or not token:
+            reason = body.get("error") if isinstance(body, dict) else None
+            raise OAuthError(
+                f"the token endpoint answered HTTP {response.status_code}"
+                + (f" ({reason})" if reason else "")
+            )
+        try:
+            lifetime = float(body.get("expires_in") or 300)
+        except (TypeError, ValueError):
+            lifetime = 300.0
+        _TOKENS[key] = (str(token), time.monotonic() + max(0.0, lifetime - TOKEN_MARGIN_SECONDS))
+        return {"Authorization": f"Bearer {token}"}
+
     @property
     def tool_type(self) -> ToolType:
         return ToolType.OPENAPI
 
-    def _auth_headers(self, tool: ToolDefinition) -> dict[str, str]:
+    async def _auth_headers(self, tool: ToolDefinition, seconds: float = 30) -> dict[str, str]:
         encrypted = tool.config.get("_credentials_encrypted")
         if not encrypted:
             return {}
@@ -616,11 +1002,15 @@ class OpenApiToolExecutor(ToolExecutor):
         except Exception:
             log.exception("tool_credential_undecryptable", tool=tool.name)
             return {}
+        if tool.config.get("oauth"):
+            return await self._oauth_header(tool, secret, seconds)
         header = str(tool.config.get("auth_header") or "Authorization")
         scheme = str(tool.config.get("auth_scheme", "Bearer"))
         return {header: f"{scheme} {secret}".strip()}
 
-    def _request(self, tool: ToolDefinition, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _request(
+        self, tool: ToolDefinition, arguments: dict[str, Any], auth: dict[str, str]
+    ) -> dict[str, Any]:
         base = check_openapi_base(tool.endpoint or "", self._limits, "endpoint")
         path = str(tool.config.get("path") or "/")
         query: dict[str, Any] = {}
@@ -638,7 +1028,7 @@ class OpenApiToolExecutor(ToolExecutor):
                 headers[param["name"]] = str(value)
         if re.search(r"\{[^}]+\}", path):
             raise ValidationError(f"A path parameter is missing: {path}.")
-        headers.update(self._auth_headers(tool))
+        headers.update(auth)
         request: dict[str, Any] = {
             "method": str(tool.config.get("method") or "GET"),
             "url": base + (path if path.startswith("/") else "/" + path),
@@ -656,7 +1046,11 @@ class OpenApiToolExecutor(ToolExecutor):
         if problem:
             return _failure(problem, started, "invalid_arguments")
         try:
-            request = self._request(tool, invocation.arguments)
+            auth = await self._auth_headers(tool, invocation.timeout_seconds)
+        except OAuthError as exc:
+            return _failure(f"Could not get an OAuth token: {exc}.", started, "oauth")
+        try:
+            request = self._request(tool, invocation.arguments, auth)
         except ValidationError as exc:
             return _failure(f"Refused: {exc}", started, "refused")
         try:
@@ -714,5 +1108,9 @@ class OpenApiToolExecutor(ToolExecutor):
 
     async def validate(self, tool: ToolDefinition) -> None:
         check_openapi_base(tool.endpoint or "", self._limits, "endpoint")
+        if tool.config.get("oauth"):
+            check_openapi_base(
+                str(tool.config["oauth"].get("token_url") or ""), self._limits, "oauth.token_url"
+            )
         if not tool.config.get("path") or not tool.config.get("method"):
             raise ValueError("An OPENAPI tool needs config.method and config.path (import a spec).")

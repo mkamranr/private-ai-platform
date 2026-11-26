@@ -147,7 +147,9 @@ class TestDatabaseTools:
             ({"sql": "DELETE FROM customers"}, "postgresql://u:p@db.internal/x", "query"),
             ({"sql": "SELECT 1"}, None, "connection string"),
             ({"sql": "SELECT 1"}, "postgresql://u:p@elsewhere/x", "DATABASE_ALLOWED_HOSTS"),
-            ({"sql": "SELECT 1"}, "mysql://u:p@db.internal/x", "postgresql://"),
+            ({"sql": "SELECT 1"}, "oracle://u:p@db.internal/x", "mssql://"),
+            # E101: MySQL and SQL Server are accepted, but refuse writing words themselves.
+            ({"sql": "SELECT a INTO b FROM c"}, "mysql://u:p@db.internal/x", "may not contain"),
         ],
     )
     async def test_refused(
