@@ -1953,6 +1953,7 @@
                   <option value="chat">Chat text (Mattermost, Slack, Teams, Rocket.Chat)</option>
                   <option value="generic">JSON document (ticketing, SOC, automation)</option>
                   <option value="pagerduty">PagerDuty (Events API v2)</option>
+                  <option value="opsgenie">Opsgenie (Alert API v2)</option>
                 </select>
               </div>
               <div class="col-sm-6 d-flex align-items-end">
@@ -1969,6 +1970,14 @@
               <div class="form-text">The <em>Integration Key</em> of an Events API v2 integration on the
                 PagerDuty service (32 characters). Raised alerts open an incident, escalations update it
                 and resolutions close it. A test opens one and closes it straight away.</div>
+              <label class="form-label small text-secondary mt-2" for="notify-inbound">Webhook signing secret <span class="text-secondary">(optional)</span></label>
+              <input class="form-control font-monospace" id="notify-inbound" type="password"
+                     maxlength="256" autocomplete="new-password">
+              <div class="form-text" id="notify-inbound-help"></div>
+              <div class="form-check d-none" id="notify-inbound-clear-row">
+                <input class="form-check-input" type="checkbox" id="notify-inbound-clear">
+                <label class="form-check-label small" for="notify-inbound-clear">Stop taking acknowledgements from PagerDuty</label>
+              </div>
             </div>
             <div class="row g-2 mb-3" id="notify-signing-row">
               <div class="col-sm-6">
@@ -2034,6 +2043,20 @@
               <input class="form-control form-control-sm" style="width:9rem" id="notify-quiet-zone" maxlength="64"
                      value="UTC" aria-label="Time zone" title="UTC, an offset such as +04:00, or a zone name such as Asia/Dubai">
             </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary" for="notify-summary">Summary</label>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <select class="form-select form-select-sm" style="width:auto" id="notify-summary">
+                <option value="">None</option>
+                <option value="hourly">Every hour</option>
+                <option value="daily">Every day at</option>
+              </select>
+              <input type="time" class="form-control form-control-sm" style="width:auto" id="notify-summary-at"
+                     value="08:00" aria-label="Daily summary time">
+            </div>
+            <div class="form-text">What was raised and resolved since the last summary, and what is still open, in one
+              message (in the quiet-hours time zone). Email and chat channels only; nothing is sent when there is nothing to say.</div>
           </div>
           <label class="form-label small text-secondary" for="notify-description">Note <span class="text-secondary">(optional)</span></label>
           <input class="form-control" id="notify-description" maxlength="500" placeholder="e.g. Paged out of hours">

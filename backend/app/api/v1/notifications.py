@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Query, Response, status
+from fastapi import APIRouter, Header, Path, Query, Request, Response, status
 
 from app.api.deps import (
     EffectiveSettingsDep,
@@ -150,3 +150,20 @@ async def email_preview(
     """A sample email of each kind (E49), with the branding currently set on the Settings
     page. Nothing is sent. Works without a mail server."""
     return EmailPreview(kind=kind, **preview(settings.notifications, kind))
+
+
+@router.post(
+    "/pagerduty/{channel_id}",
+    summary="PagerDuty webhook: incidents acknowledged there acknowledge the alert here",
+)
+async def pagerduty_webhook(
+    request: Request,
+    service: NotificationServiceDep,
+    channel_id: uuid.UUID = Path(...),
+    signature: Annotated[str | None, Header(alias="X-PagerDuty-Signature")] = None,
+) -> dict[str, str]:
+    """E99: public; the channel's webhook secret is the credential (401 on a bad
+    signature, 404 when the channel has none). Point a PagerDuty webhook subscription
+    (v3) for the service at this address."""
+    result = await service.pagerduty_event(channel_id, await request.body(), signature)
+    return {"result": result}

@@ -51,6 +51,9 @@ PUBLIC: set[tuple[str, str]] = {
     ("POST", "/api/v1/auth/passkey/verify"),
     # E6: the workflow webhook. Its token is the credential; a bad one is 401 all the same.
     ("POST", "/api/v1/workflow-hooks/{workflow_id}"),
+    # E99: PagerDuty acknowledgements. The signature over the body is the credential;
+    # an unknown channel is 401 like a bad signature.
+    ("POST", "/api/v1/notifications/pagerduty/{channel_id}"),
     # The host ops runner authenticates with X-Ops-Runner-Token, not a user (E7).
     ("POST", "/api/v1/ops/runner/heartbeat"),
     ("POST", "/api/v1/ops/runner/claim"),

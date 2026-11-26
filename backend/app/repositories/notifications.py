@@ -59,6 +59,22 @@ class NotificationDeliveryRepository(BaseRepository[NotificationDelivery]):
         )
         return (await self.session.execute(stmt)).scalars().all()
 
+    async def summary_alerts(self, *, since: dt.datetime, limit: int = 5000) -> Sequence[Alert]:
+        """E99: alerts raised or resolved since ``since``, and every one still open."""
+        stmt = (
+            select(Alert)
+            .where(
+                or_(
+                    Alert.state != AlertState.RESOLVED,
+                    Alert.created_at >= since,
+                    Alert.resolved_at >= since,
+                )
+            )
+            .order_by(Alert.created_at)
+            .limit(limit)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
     async def keys_for(self, alert_ids: Sequence[uuid.UUID]) -> list[DeliveryKey]:
         if not alert_ids:
             return []

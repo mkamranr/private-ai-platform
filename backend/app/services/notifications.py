@@ -30,6 +30,9 @@ run, so one unreachable receiver cannot stall every other channel behind its tim
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import hmac
+import json
 import re
 import uuid
 from collections import defaultdict
@@ -41,7 +44,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 
 from app.config.settings import Settings
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import AuthenticationError, ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.core.metrics import NOTIFICATIONS_SENT
 from app.core.security import SecretCipher
@@ -55,6 +58,7 @@ from app.models.notifications import (
     NotificationChannel,
     NotificationDelivery,
     PayloadFormat,
+    SummaryEvery,
 )
 from app.models.operations import Alert, AlertSeverity, AlertState
 from app.models.teams import Team
@@ -72,6 +76,7 @@ from app.services.notification_senders import (
     WebhookSender,
     digest_message,
     message_for,
+    summary_message,
     test_message,
 )
 
@@ -106,7 +111,9 @@ DELIVERY_RETENTION = dt.timedelta(days=30)
 FAILING_AFTER = 3
 MAX_RECIPIENTS = 20
 _EMAIL = re.compile(r"^[^@\s<>,;\"']+@[^@\s<>,;\"']+$")
-_SECRET_FIELDS = ("url", "signing_secret", "authorization", "routing_key")
+_SECRET_FIELDS = ("url", "signing_secret", "authorization", "routing_key", "inbound_secret")
+#: E99: the time of a daily summary when none is given.
+DEFAULT_SUMMARY_AT = "08:00"
 
 
 def channel_failing_fingerprint(channel_id: uuid.UUID | str) -> str:
@@ -137,6 +144,30 @@ def _quiet_until(channel: NotificationChannel, now: dt.datetime) -> dt.datetime 
     except quiet_hours.QuietHoursError:
         log.warning("notification_quiet_hours_unusable", channel=channel.name)
         return None
+
+
+def summary_boundary(channel: NotificationChannel, now: dt.datetime) -> dt.datetime:
+    """E99: the latest moment, at or before ``now``, a summary of this channel was due:
+    the top of the hour, or today's (else yesterday's) ``summary_at`` in its time zone."""
+    if channel.summary_every == SummaryEvery.HOURLY:
+        return now.replace(minute=0, second=0, microsecond=0)
+    zone = quiet_hours.parse_zone(channel.quiet_timezone or "UTC")
+    at = quiet_hours.parse_time(channel.summary_at or DEFAULT_SUMMARY_AT)
+    local = now.astimezone(zone)
+    due = local.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+    if due > local:
+        due -= dt.timedelta(days=1)
+    return due.astimezone(dt.UTC)
+
+
+def in_scope(channel: NotificationChannel, alert: Alert) -> bool:
+    """Whether ``alert`` is one this channel announces at all (severity aside)."""
+    if alert.source == ALERT_SOURCE and alert.resource_id == str(channel.id):
+        return False  # a channel is not told about its own failures
+    if channel.sources and alert.source not in channel.sources:
+        return False
+    # E46: a team's channel announces only that team's alerts.
+    return channel.team_id is None or alert.team_id == channel.team_id
 
 
 def retry_delay(attempts: int) -> dt.timedelta:
@@ -314,13 +345,45 @@ class NotificationService:
                     details={"field": "signing_secret"},
                 )
             channel.signing_secret_encrypted = self._sender.cipher.encrypt(value) if value else None
+        elif field_name == "inbound_secret":
+            if value and len(value) < 16:
+                raise ValidationError(
+                    "A webhook signing secret needs at least 16 characters.",
+                    details={"field": "inbound_secret"},
+                )
+            channel.inbound_secret_encrypted = self._sender.cipher.encrypt(value) if value else None
         else:
             channel.authorization_encrypted = self._sender.cipher.encrypt(value) if value else None
 
     @staticmethod
     def _check_pagerduty(channel: NotificationChannel) -> None:
         """E50: a PagerDuty channel needs its routing key, and does not sign requests
-        (PagerDuty would ignore the signature; the routing key is the credential)."""
+        (PagerDuty would ignore the signature; the routing key is the credential).
+        E99: an Opsgenie channel needs its API key as the Authorization header; only a
+        PagerDuty channel takes a webhook secret; summaries go to people (chat, email)."""
+        webhook = channel.kind == ChannelKind.WEBHOOK
+        if channel.summary_every and webhook and channel.payload_format != PayloadFormat.CHAT:
+            raise ValidationError(
+                "Summaries are for people: an email channel, or a webhook in chat format.",
+                details={"field": "summary_every"},
+            )
+        if channel.inbound_secret_encrypted and channel.payload_format != PayloadFormat.PAGERDUTY:
+            raise ValidationError(
+                "Only a PagerDuty channel takes a webhook secret.",
+                details={"field": "inbound_secret"},
+            )
+        if webhook and channel.payload_format == PayloadFormat.OPSGENIE:
+            if not channel.authorization_encrypted:
+                raise ValidationError(
+                    "An Opsgenie channel needs its API key as the Authorization header: "
+                    "GenieKey followed by the key of an API integration.",
+                    details={"field": "authorization"},
+                )
+            if channel.signing_secret_encrypted:
+                raise ValidationError(
+                    "Opsgenie does not check signatures. Remove the signing secret.",
+                    details={"field": "signing_secret"},
+                )
         if channel.payload_format != PayloadFormat.PAGERDUTY:
             return
         if not channel.routing_key_encrypted:
@@ -350,6 +413,12 @@ class NotificationService:
             "has_signing_secret": channel.has_signing_secret,
             "has_authorization": channel.has_authorization,
             "has_routing_key": channel.has_routing_key,
+            "has_inbound_secret": channel.has_inbound_secret,
+            "summary": (
+                f"{channel.summary_every} {channel.summary_at or ''}".strip()
+                if channel.summary_every
+                else None
+            ),
             "recipients": list(channel.recipients),
             "team_id": str(channel.team_id) if channel.team_id else None,
             "quiet_hours": (
@@ -375,6 +444,25 @@ class NotificationService:
             raise ValidationError(str(exc), details={"field": "quiet_hours"}) from exc
         channel.quiet_start, channel.quiet_end = start, end
         channel.quiet_timezone = zone.strip()
+
+    @staticmethod
+    def _set_summary(channel: NotificationChannel, data: dict[str, Any]) -> None:
+        """E99: the summary schedule from ``data``; omitted keys keep their value. A new
+        schedule starts counting now, so the first summary doesn't cover all history."""
+        every = data.get("summary_every", channel.summary_every) or None
+        at = data.get("summary_at", channel.summary_at) or None
+        if every == SummaryEvery.DAILY:
+            at = at or DEFAULT_SUMMARY_AT
+            try:
+                quiet_hours.parse_time(at)
+                quiet_hours.parse_zone(channel.quiet_timezone or "UTC")
+            except quiet_hours.QuietHoursError as exc:
+                raise ValidationError(str(exc), details={"field": "summary_at"}) from exc
+        else:
+            at = None
+        if (every, at) != (channel.summary_every, channel.summary_at):
+            channel.summary_sent_at = None
+        channel.summary_every, channel.summary_at = every, at
 
     async def _team(self, team_id: uuid.UUID | None) -> uuid.UUID | None:
         """E46: a channel's team must exist."""
@@ -408,7 +496,6 @@ class NotificationService:
             for name in _SECRET_FIELDS:
                 if data.get(name):
                     self._set_secret(channel, name, data[name])
-            self._check_pagerduty(channel)
         else:
             if any(data.get(name) for name in _SECRET_FIELDS):
                 raise ValidationError(
@@ -416,6 +503,8 @@ class NotificationService:
                 )
             channel.recipients = self._recipients(data.get("recipients") or [])
         self._set_quiet(channel, data)
+        self._set_summary(channel, data)
+        self._check_pagerduty(channel)
         self._channels.add(channel)
         await self._channels.flush()
         await self._channels.session.refresh(channel)
@@ -452,10 +541,9 @@ class NotificationService:
                         "A webhook channel needs a URL.", details={"field": "url"}
                     )
                 self._set_secret(channel, "url", changes["url"])
-            for name in ("signing_secret", "authorization", "routing_key"):
+            for name in ("signing_secret", "authorization", "routing_key", "inbound_secret"):
                 if changes.get(name) is not None:
                     self._set_secret(channel, name, changes[name])
-            self._check_pagerduty(channel)
         else:
             if any(changes.get(name) for name in _SECRET_FIELDS):
                 raise ValidationError(
@@ -465,6 +553,9 @@ class NotificationService:
                 channel.recipients = self._recipients(changes["recipients"])
         if {"quiet_start", "quiet_end", "quiet_timezone"} & changes.keys():
             self._set_quiet(channel, changes)
+        if {"summary_every", "summary_at", "quiet_timezone"} & changes.keys():
+            self._set_summary(channel, changes)
+        self._check_pagerduty(channel)
         if "team_id" in changes and changes["team_id"] != channel.team_id:
             channel.team_id = await self._team(changes["team_id"])
             # Like turning it on: announce from now, not every open alert of its new scope.
@@ -482,7 +573,9 @@ class NotificationService:
         after = self.snapshot(channel)
         changed = sorted(k for k in after if after[k] != before[k])
         secret_changed = [
-            n for n in ("signing_secret", "authorization", "routing_key") if n in changes
+            n
+            for n in ("signing_secret", "authorization", "routing_key", "inbound_secret")
+            if n in changes
         ]
         if changed or secret_changed or "url" in changes:
             await self._audit.record(
@@ -498,6 +591,46 @@ class NotificationService:
                 },
             )
         return channel
+
+    async def pagerduty_event(
+        self, channel_id: uuid.UUID, body: bytes, signature: str | None
+    ) -> str:
+        """E99: a PagerDuty webhook (v3) for this channel. Checked against the channel's
+        webhook secret (``X-PagerDuty-Signature: v1=<HMAC-SHA256 of the body>``, several
+        allowed while PagerDuty rotates it). ``incident.acknowledged`` for an incident this
+        platform opened acknowledges its alert; everything else is accepted and ignored,
+        so PagerDuty doesn't retry it. Returns what was done."""
+        channel = await self._channels.get(channel_id)
+        if (
+            channel is None
+            or channel.payload_format != PayloadFormat.PAGERDUTY
+            or not channel.inbound_secret_encrypted
+        ):
+            # The same answer as a bad signature: a caller learns nothing about which
+            # channels exist.
+            raise AuthenticationError("Invalid signature.")
+        secret = self._sender.cipher.decrypt(channel.inbound_secret_encrypted)
+        expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        offered = [
+            part.strip()[3:]
+            for part in (signature or "").split(",")
+            if part.strip().startswith("v1=")
+        ]
+        if not any(hmac.compare_digest(expected, o) for o in offered):
+            raise AuthenticationError("Invalid signature.")
+        try:
+            event = json.loads(body)["event"]
+            kind, data = event.get("event_type"), event.get("data") or {}
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise ValidationError("Not a PagerDuty webhook event.") from exc
+        key = str(data.get("incident_key") or "")
+        if kind != "incident.acknowledged" or not key.startswith("aip:"):
+            return "ignored"
+        who = str((event.get("agent") or {}).get("summary") or "someone")[:100]
+        alert = await self._alerts.acknowledge_elsewhere(
+            key[4:], who=f"{who} (PagerDuty)", via=f"pagerduty:{channel.name}"
+        )
+        return "acknowledged" if alert is not None else "ignored"
 
     async def delete(self, channel_id: uuid.UUID, *, actor: User) -> None:
         channel = await self.get(channel_id)
@@ -574,6 +707,8 @@ class DispatchResult:
     held: int = 0
     #: Digest messages sent for what quiet hours held (E47).
     digests: int = 0
+    #: Scheduled summaries sent (E99).
+    summaries: int = 0
     pruned: int = 0
     notes: list[str] = field(default_factory=list)
 
@@ -603,6 +738,7 @@ class NotificationDispatcher:
         if channels:
             result.queued = await self._enqueue(channels, now)
             await self._deliver(now, result)
+            result.summaries = await self._send_summaries(channels, now)
         result.pruned = await self._deliveries.prune(before=now - DELIVERY_RETENTION)
         return result
 
@@ -628,12 +764,8 @@ class NotificationDispatcher:
     def _wanted(
         channel: NotificationChannel, alert: Alert, keys: dict[str, str]
     ) -> dict[str, Any] | None:
-        if alert.source == ALERT_SOURCE and alert.resource_id == str(channel.id):
-            return None  # a channel is not told about its own failures
-        if channel.sources and alert.source not in channel.sources:
+        if not in_scope(channel, alert):
             return None
-        if channel.team_id is not None and alert.team_id != channel.team_id:
-            return None  # E46: a team's channel announces only that team's alerts
         announced = {k: s for k, s in keys.items() if k.startswith("open:")}
         base = {
             "id": uuid.uuid4(),
@@ -836,6 +968,78 @@ class NotificationDispatcher:
                     detail=outcome.detail,
                 )
         return handled
+
+    async def _send_summaries(self, channels: list[NotificationChannel], now: dt.datetime) -> int:
+        """E99: each channel whose hourly or daily summary is due gets one message: the
+        alerts raised (at its severity or above) and resolved since the last, and how many
+        are still open. Nothing to say, nothing sent. Not a delivery: a failure is recorded
+        on the channel, and the next summary covers from this one's time regardless."""
+        due: list[tuple[NotificationChannel, dt.datetime]] = []
+        for channel in channels:
+            if not channel.summary_every:
+                continue
+            if channel.summary_sent_at is None:
+                channel.summary_sent_at = now  # the schedule starts counting now
+            elif channel.summary_sent_at < summary_boundary(channel, now):
+                due.append((channel, channel.summary_sent_at))
+        if not due:
+            await self._deliveries.flush()
+            return 0
+        alerts = list(await self._deliveries.summary_alerts(since=min(since for _, since in due)))
+        console_url = self._settings.notifications.console_url
+        sent = 0
+        for channel, since in due:
+            channel.summary_sent_at = now
+            mine = [a for a in alerts if in_scope(channel, a)]
+            floor = _rank(channel.min_severity)
+            raised = [a for a in mine if a.created_at >= since and _rank(a.severity) >= floor]
+            resolved = [a for a in mine if a.resolved_at is not None and a.resolved_at >= since]
+            still_open = sum(
+                1 for a in mine if a.state != AlertState.RESOLVED and _rank(a.severity) >= floor
+            )
+            if not (raised or resolved or still_open):
+                continue
+            items = [
+                message_for(
+                    a,
+                    event=DeliveryEvent.RAISED,
+                    severity=a.severity,
+                    delivery_id=str(a.id),
+                    console_url=console_url,
+                )
+                for a in raised
+            ] + [
+                message_for(
+                    a,
+                    event=DeliveryEvent.RESOLVED,
+                    severity=a.severity,
+                    delivery_id=str(a.id),
+                    console_url=console_url,
+                )
+                for a in resolved
+            ]
+            outcome = await self._sender.send(
+                channel,
+                summary_message(
+                    items,
+                    channel_name=channel.name,
+                    every=channel.summary_every or SummaryEvery.DAILY,
+                    since=since,
+                    still_open=still_open,
+                    delivery_id=str(uuid.uuid4()),
+                    console_url=console_url,
+                ),
+            )
+            record_outcome(channel, outcome, now)
+            await self._channel_health(channel)
+            if outcome.ok:
+                sent += 1
+            else:
+                log.warning(
+                    "notification_summary_failed", channel=channel.name, detail=outcome.detail
+                )
+        await self._deliveries.flush()
+        return sent
 
     async def _channel_health(self, channel: NotificationChannel) -> None:
         fingerprint = channel_failing_fingerprint(channel.id)

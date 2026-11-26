@@ -148,6 +148,8 @@ def _tone(msg: Message) -> tuple[str, str]:
         return "Approval waiting", "WARNING"
     if msg.event == DIGEST_EVENT:
         return "Digest", "NEUTRAL"
+    if msg.event == "summary":
+        return "Summary", "NEUTRAL"
     return msg.severity.title(), msg.severity
 
 
@@ -165,6 +167,8 @@ def _intro(msg: Message, brand: Brand) -> str:
         return f"This is a test from {brand.name}. If you can read it, this channel works."
     if msg.event == DIGEST_EVENT:
         return "These were held while the channel's quiet hours were on, and are sent together."
+    if msg.event == "summary":
+        return f"What this channel's alerts did. {msg.message or ''}".strip()
     article = "An" if severity[:1] in "aeiou" else "A"
     return f"{article} {severity} alert was raised."
 
@@ -235,7 +239,7 @@ def render(msg: Message, brand: Brand | None = None) -> str:
     brand = brand or Brand()
     label, tone = _tone(msg)
     accent = _BADGE.get(tone, _BADGE["NEUTRAL"])[1] if tone != "NEUTRAL" else brand.color
-    body = _digest(msg) if msg.event == DIGEST_EVENT else _details(msg)
+    body = _digest(msg) if msg.event in (DIGEST_EVENT, "summary") else _details(msg)
     button = ""
     if msg.link:
         page = "Approvals" if msg.kind == "approval" else "Alerts"
