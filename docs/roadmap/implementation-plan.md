@@ -778,7 +778,7 @@ matrix still listed as missing.
 - [x] `InferenceBackendAdapter.pull_model`; `OllamaAdapter` posts `/api/pull` (`stream: false`, `insecure`), waiting up to 50 minutes; `POST /backends/{id}/models/pull` (audited `BACKEND_MODEL_PULLED`), 422 with Ollama's reason. The model name is checked against a conservative pattern.
 - [x] Console: *Pull a model* (Ollama) and *This backend warns at* (vLLM) in a backend's *Models*.
 - [x] Tests: `tests/api/test_backend_load.py` (`TestBackendLevels`), `tests/api/test_backend_operations.py` (`TestPull`). Docs: backends.md, api.md.
-- [ ] A pull shows no progress until it ends, and is lost if the request is cut off. vLLM still serves only the model it started with.
+- [ ] ~~A pull shows no progress until it ends, and is lost if the request is cut off~~ (E97). vLLM still serves only the model it started with.
 
 ## E93: Keeping a conversation on one copy
 
@@ -824,6 +824,14 @@ matrix still listed as missing.
 - [x] `ai_platform_gateway_session_affinity_total{outcome}` (`pinned`, `overflow`) in `ReplicaBalancer._pinned`.
 - [x] Tests: `tests/unit/test_workflow_schema.py::TestReplyShape`, `tests/api/test_workflows.py` (reply shape, retried call), `tests/api/test_chargeback_units.py::TestWorkflowTools`, `tests/api/test_models.py::TestDeployment::test_deploy_again_keeps_an_allowed_image_only`, `tests/api/test_session_affinity.py::TestBalancer::test_outcomes_are_counted`. Docs: workflows.md, models.md, chargeback.md, gateway-policy.md, api.md.
 - [ ] JSON Schema keywords beyond those five (`minimum`, `pattern`, `oneOf`...) aren't checked.
+
+## E97: Model pulls in the background, with progress
+
+- [x] `backend_model_pulls` (migration `c4f6a8b0d2e3`): `POST /backends/{id}/models/pull` queues one (202; the active one for the same model is returned), `GET /backends/{id}/pulls` lists the latest 20.
+- [x] `OllamaAdapter.pull_model` streams `/api/pull` (`stream: true`), yielding each line; an `error` line, or an end without `success`, fails it. `BackendPullWorker` (`app/workers/backend_pulls.py`): `claim_pull` (`FOR UPDATE SKIP LOCKED`; a RUNNING pull with no heartbeat for 120 s is taken again), `run_pull` saving stage and bytes every 2 s, `prune_pulls` after 7 days.
+- [x] Console: the backend's latest pulls under *Pull a model*, with a bar, polled every 2 s while one is active; the model list is shown again when it ends.
+- [x] Tests: `tests/api/test_backend_operations.py::TestPull`. Docs: backends.md, api.md.
+- [ ] One pull at a time per worker; a pull can't be cancelled from the platform.
 
 ## Phase acceptance (applies to each)
 

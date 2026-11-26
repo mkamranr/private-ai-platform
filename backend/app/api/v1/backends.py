@@ -24,6 +24,7 @@ from app.schemas.operations import (
     BackendMetricsRead,
     BackendModelAction,
     BackendModelPull,
+    BackendPullRead,
     BackendRead,
     BackendUpdateRequest,
     ConnectionTestResponse,
@@ -248,19 +249,37 @@ async def unload_backend_model(
 
 @router.post(
     "/{backend_id}/models/pull",
-    response_model=MessageResponse,
-    summary="Fetch a model onto the backend from its registry",
+    response_model=BackendPullRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Fetch a model onto the backend from its registry (asynchronous)",
 )
 async def pull_backend_model(
     payload: BackendModelPull,
     service: InferenceBackendServiceDep,
     actor: Annotated[User, require_permission(Perm.BACKEND_MANAGE)],
     backend_id: uuid.UUID = Path(...),
-) -> MessageResponse:
-    """E90: Ollama only. Waits until the whole model is on the backend's disk, which for
-    a large model takes minutes; then it can be loaded, and registered from *Models*."""
-    await service.pull_model(backend_id, payload.model, insecure=payload.insecure, actor=actor)
-    return MessageResponse(message=f"{payload.model} is on the backend now.")
+) -> BackendPullRead:
+    """E90: Ollama only. E97: queued and run by the worker, so it carries on whatever
+    happens to this request; follow it with ``GET /backends/{id}/pulls``. The same model
+    already queued or running on this backend is returned rather than pulled twice."""
+    pull = await service.pull_model(
+        backend_id, payload.model, insecure=payload.insecure, actor=actor
+    )
+    return BackendPullRead.model_validate(pull)
+
+
+@router.get(
+    "/{backend_id}/pulls",
+    response_model=list[BackendPullRead],
+    summary="The backend's latest model pulls and their progress",
+)
+async def list_backend_pulls(
+    service: InferenceBackendServiceDep,
+    _: Annotated[User, require_permission(Perm.BACKEND_VIEW)],
+    backend_id: uuid.UUID = Path(...),
+) -> list[BackendPullRead]:
+    """E97: newest first, up to 20; finished ones are kept for a week."""
+    return [BackendPullRead.model_validate(p) for p in await service.list_pulls(backend_id)]
 
 
 @router.put(

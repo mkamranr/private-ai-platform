@@ -130,6 +130,51 @@ class BackendMetricSample(Base):
     values: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class PullStatus(enum.StrEnum):
+    """E97: a model being fetched onto a backend."""
+
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+#: E97: a pull still to finish.
+ACTIVE_PULL_STATES = frozenset({PullStatus.QUEUED, PullStatus.RUNNING})
+
+
+class BackendModelPull(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """E97: a model fetched onto a backend (Ollama) by the worker, with its progress, so
+    a pull outlives the request that asked for it and shows how far it has got."""
+
+    __tablename__ = "backend_model_pulls"
+    __table_args__ = (
+        Index("ix_backend_model_pulls_backend_created", "backend_id", "created_at"),
+        Index("ix_backend_model_pulls_status", "status"),
+    )
+
+    backend_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("inference_backends.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    insecure: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default=PullStatus.QUEUED, nullable=False)
+    #: What the backend last said it was doing (``pulling manifest``, ``verifying...``).
+    stage: Mapped[str | None] = mapped_column(String(255))
+    completed_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    total_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    error: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Refreshed while it runs; a RUNNING pull whose worker stopped is taken up again.
+    heartbeat_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class AlertSeverity(enum.StrEnum):
     INFO = "INFO"
     WARNING = "WARNING"
