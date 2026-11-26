@@ -99,6 +99,7 @@ KNOWN_SOURCES = (
     "auth",
     "ops_runner",
     "approvals",
+    "audit_push",
 )
 ALERT_SOURCE = "notifications"
 #: Seconds to wait before retry N (1-based, by attempts made so far).

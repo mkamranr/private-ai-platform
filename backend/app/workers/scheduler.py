@@ -197,6 +197,25 @@ class InfrastructureWorker:
         except Exception:
             log.exception("usage_rollup_failed")
 
+    async def push_audit(self) -> None:
+        """E100: new audit rows to the SIEM, when ``audit_push.url`` is set. Never raises."""
+        if not self._settings.audit_push.url:
+            return
+        try:
+            from app.services.audit_push import AuditPusher
+
+            async with self._session_factory() as session:
+                repository = AuditRepository(session)
+                alerts = AlertService(AlertRepository(session), AuditService(repository))
+                result = await AuditPusher(self._settings.audit_push, repository, alerts).run()
+                await session.commit()
+            if result.pushed or result.failed:
+                log.info(
+                    "audit_pushed", rows=result.pushed, failed=result.failed, detail=result.detail
+                )
+        except Exception:
+            log.exception("audit_push_failed")
+
     async def prune_revoked_tokens(self) -> None:
         """Forget revoked tokens that have expired anyway (E14). Never raises."""
         try:
@@ -597,6 +616,17 @@ class InfrastructureWorker:
             max_instances=1,
             misfire_grace_time=3600,
             next_run_time=dt.datetime.now(dt.UTC) + dt.timedelta(minutes=1),
+        )
+
+        push_interval = self._settings.audit_push.interval_seconds
+        self._scheduler.add_job(
+            self.push_audit,
+            IntervalTrigger(seconds=push_interval),
+            id="audit_push",
+            name="Push new audit rows to the SIEM",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=push_interval,
         )
 
         self._scheduler.start()

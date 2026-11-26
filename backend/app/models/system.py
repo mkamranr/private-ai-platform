@@ -16,10 +16,13 @@ edit, so connection strings and keys stay in the environment (§25).
 
 from __future__ import annotations
 
+import datetime as dt
+import uuid
 from typing import Any
 
-from sqlalchemy import Boolean, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PgUUID  # noqa: N811
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -40,3 +43,22 @@ class SystemSetting(TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return f"<SystemSetting {self.key}>"
+
+
+class AuditPushState(TimestampMixin, Base):
+    """E100: how far the audit push to a SIEM has got. One row (id 1).
+
+    The cursor is the timestamp and id of the last row sent, so a restart carries on
+    where it stopped and nothing is sent twice while the SIEM keeps answering.
+    """
+
+    __tablename__ = "audit_push_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cursor_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cursor_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+    pushed_total: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    last_success_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failure_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

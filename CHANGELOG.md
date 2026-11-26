@@ -6,6 +6,10 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Audit export streamed, and pushed to a SIEM
+- Audit exports are streamed, with no 100,000-row cap; `X-Export-Truncated` is no longer sent.
+- Set `AUDIT_PUSH__URL` to push new audit records to a SIEM every minute, as JSON Lines or Splunk HEC events, resuming where it stopped after an outage; `GET /audit/push` shows its progress.
+
 ### Notifications: summaries, Opsgenie, acknowledged from PagerDuty
 - A channel can get an hourly or daily summary: what was raised and resolved since the last one, and what is still open. Email and chat channels.
 - Opsgenie as a webhook format: alerts create an Opsgenie alert and resolutions close it, deduplicated by alias.

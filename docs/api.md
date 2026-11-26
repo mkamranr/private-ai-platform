@@ -560,7 +560,8 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 |---|---|---|
 | GET | `/audit` | `audit.view` — filters + a real total |
 | GET | `/audit/actions` | `audit.view` — actions present in the log |
-| POST | `/audit/export` | `audit.view` — the same filters plus `format` (`csv` or `jsonl`); a file of up to 100,000 records, newest first. `X-Export-Rows` gives the count and `X-Export-Truncated: true` says more matched. Audited as `AUDIT_EXPORTED` |
+| POST | `/audit/export` | `audit.view` — the same filters plus `format` (`csv` or `jsonl`); every matching record, newest first, streamed. `X-Export-Rows` gives the count, fixed when the export starts (later records are left out). Audited as `AUDIT_EXPORTED` |
+| GET | `/audit/push` | `audit.view` — the push to a SIEM (`AUDIT_PUSH__URL`): `configured`, `url` (host only), `format`, `cursor_at`, `pushed_total`, `last_success_at`, `last_error`, `consecutive_failures` |
 
 `request_id` (up to 64 characters) matches the correlation id the request middleware puts
 on every log line and on the `X-Request-ID` response header, so one request's records can

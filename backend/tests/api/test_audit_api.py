@@ -162,17 +162,35 @@ class TestExport:
         )
         assert response.status_code == 403
 
-    async def test_the_cap_is_reported(self, session: AsyncSession, superuser: User) -> None:
+    async def test_streamed_a_page_at_a_time(self, session: AsyncSession, superuser: User) -> None:
+        """E100: keyset pages, no cap; rows written after the start are left out."""
         resource = f"res-{uuid.uuid4().hex[:8]}"
-        for _ in range(3):
-            await _plant(session, resource_id=resource)
-        repository = AuditRepository(session)
-        service = AuditExportService(repository, AuditService(repository), max_rows=2)
-        result = await service.export(
-            actor=superuser, export_format="csv", filters={"resource_id": resource}
+        now = dt.datetime.now(dt.UTC)
+        for i in range(5):
+            await _plant(
+                session,
+                resource_id=resource,
+                username=f"u{i}",
+                at=now - dt.timedelta(seconds=10 - i),
+            )
+        await _plant(
+            session, resource_id=resource, username="later", at=now + dt.timedelta(hours=1)
         )
-        assert result.truncated is True and result.rows == 2
-        assert len(list(csv.DictReader(io.StringIO(result.body)))) == 2
+        repository = AuditRepository(session)
+        service = AuditExportService(repository, AuditService(repository), page_rows=2)
+        for export_format in ("csv", "jsonl"):
+            export = await service.start(
+                actor=superuser, export_format=export_format, filters={"resource_id": resource}
+            )
+            assert export.rows == 5
+            chunks = [chunk async for chunk in service.stream(export, export_format)]
+            assert len(chunks) == 3  # pages of 2, 2 and 1
+            text = "".join(chunks)
+            if export_format == "csv":
+                names = [r["username"] for r in csv.DictReader(io.StringIO(text))]
+            else:
+                names = [json.loads(line)["username"] for line in text.splitlines()]
+            assert names == ["u4", "u3", "u2", "u1", "u0"]
 
 
 def test_safe_cell() -> None:

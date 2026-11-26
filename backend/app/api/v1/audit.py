@@ -18,8 +18,9 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Response
+from fastapi.responses import StreamingResponse
 
-from app.api.deps import AuditDep, AuditRepositoryDep, require_permission
+from app.api.deps import AuditDep, AuditRepositoryDep, SettingsDep, require_permission
 from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
@@ -97,22 +98,23 @@ async def export_audit(
     filters: AuditFilters,
     export_format: Annotated[ExportFormat, Query(alias="format")] = "csv",
 ) -> Response:
-    """Every row the filters match, newest first, up to 100,000 (E54).
+    """Every row the filters match, newest first (E54), streamed with no cap (E100).
 
-    A POST because it is audited: the audit trail is leaving the platform. When the cap
-    cut rows off, ``X-Export-Truncated: true`` says so; narrow the date range for the rest.
+    A POST because it is audited: the audit trail is leaving the platform.
+    ``X-Export-Rows`` is the count, fixed when the export starts: rows recorded after
+    that are left out.
     """
     service = AuditExportService(repository, audit)
-    result = await service.export(actor=actor, export_format=export_format, filters=filters)
+    export = await service.start(actor=actor, export_format=export_format, filters=filters)
     await service.commit()
     headers = {
-        "Content-Disposition": f'attachment; filename="{result.filename}"',
+        "Content-Disposition": f'attachment; filename="{export.filename}"',
         "Cache-Control": "no-store",
-        "X-Export-Rows": str(result.rows),
+        "X-Export-Rows": str(export.rows),
     }
-    if result.truncated:
-        headers["X-Export-Truncated"] = "true"
-    return Response(content=result.body, media_type=result.media_type, headers=headers)
+    return StreamingResponse(
+        service.stream(export, export_format), media_type=export.media_type, headers=headers
+    )
 
 
 @router.get("/actions", response_model=list[str], summary="Actions present in the log")
@@ -126,3 +128,30 @@ async def list_actions(
     filter options that all return nothing is worse than offering the eight that will not.
     """
     return list(await repository.distinct_actions())
+
+
+@router.get("/push", summary="The audit push to a SIEM: where and how far")
+async def audit_push_status(
+    repository: AuditRepositoryDep,
+    settings: SettingsDep,
+    _actor: Annotated[User, require_permission(Perm.AUDIT_VIEW)],
+) -> dict[str, Any]:
+    """E100: whether ``AUDIT_PUSH__URL`` is set, the collector's address (host only), and
+    the push's progress: the time of the last row sent, totals and the last error."""
+    from app.models.system import AuditPushState
+    from app.services.audit_push import display_url
+
+    push = settings.audit_push
+    state = await repository.session.get(AuditPushState, 1)
+    return {
+        "configured": bool(push.url),
+        "url": display_url(push.url),
+        "format": push.format,
+        "interval_seconds": push.interval_seconds,
+        "cursor_at": state.cursor_at if state else None,
+        "pushed_total": state.pushed_total if state else 0,
+        "last_success_at": state.last_success_at if state else None,
+        "last_failure_at": state.last_failure_at if state else None,
+        "last_error": state.last_error if state else None,
+        "consecutive_failures": state.consecutive_failures if state else 0,
+    }

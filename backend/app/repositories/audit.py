@@ -12,10 +12,22 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, literal, select, tuple_
 
 from app.models.audit import AuditLog
 from app.repositories.base import BaseRepository
+
+#: The filters an audit search or export takes.
+FILTER_KEYS = (
+    "user_id",
+    "action",
+    "resource_type",
+    "resource_id",
+    "result",
+    "since",
+    "until",
+    "request_id",
+)
 
 
 def _filtered[S: Select[Any]](
@@ -84,6 +96,43 @@ class AuditRepository(BaseRepository[AuditLog]):
         # export's order) is stable.
         stmt = (
             stmt.order_by(AuditLog.timestamp.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def export_page(
+        self,
+        filters: dict[str, Any],
+        *,
+        before: tuple[dt.datetime, uuid.UUID] | None,
+        limit: int,
+    ) -> Sequence[AuditLog]:
+        """E100: the next ``limit`` rows of an export, newest first, older than ``before``
+        (keyset paging: page 500 costs what page 1 does)."""
+        stmt = _filtered(select(AuditLog), **{key: filters.get(key) for key in FILTER_KEYS})
+        if before is not None:
+            stmt = stmt.where(
+                tuple_(AuditLog.timestamp, AuditLog.id)
+                < tuple_(literal(before[0]), literal(before[1]))
+            )
+        stmt = stmt.order_by(AuditLog.timestamp.desc(), AuditLog.id.desc()).limit(limit)
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def after(
+        self, cursor: tuple[dt.datetime, uuid.UUID | None], *, until: dt.datetime, limit: int
+    ) -> Sequence[AuditLog]:
+        """E100: rows after ``cursor`` and before ``until``, oldest first, for the SIEM
+        push. A cursor with no id takes everything after its time."""
+        at, last_id = cursor
+        newer = (
+            AuditLog.timestamp > at
+            if last_id is None
+            else tuple_(AuditLog.timestamp, AuditLog.id) > tuple_(literal(at), literal(last_id))
+        )
+        stmt = (
+            select(AuditLog)
+            .where(newer, AuditLog.timestamp < until)
+            .order_by(AuditLog.timestamp, AuditLog.id)
+            .limit(limit)
         )
         return (await self.session.execute(stmt)).scalars().all()
 
