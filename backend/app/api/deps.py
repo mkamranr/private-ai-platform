@@ -1479,6 +1479,7 @@ def get_chargeback_service(
         audit,
         currency=settings.chargeback.currency,
         exchange_rates=settings.chargeback.exchange_rates,
+        usage_retention_days=settings.gateway.usage_retention_days,
     )
 
 

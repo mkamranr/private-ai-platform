@@ -376,6 +376,10 @@ async function renderChargeback({ force = false } = {}) {
       ${report.unpriced_models.map((m) => `<code>${esc(m)}</code>`).join(', ')} for some or all of
       this period. Those calls are shown as <em>not priced</em>, not as free.</div>`;
   }
+  // E103: the period reaches back past the usage records still kept.
+  if (report.pruned_note) {
+    notice += `<div class="alert alert-warning small py-2">${icon('i-info')} ${esc(report.pruned_note)}</div>`;
+  }
   const idle = report.idle
     ? `<div class="alert alert-secondary small py-2 d-flex gap-2 align-items-start mb-4">${icon('i-info')}
        <div><strong>Idle GPU capacity</strong> is GPU time held by models nobody called in the period

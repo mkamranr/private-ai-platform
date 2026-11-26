@@ -84,6 +84,11 @@ class TeamService:
         counts = await self._teams.member_counts()
         return [self.describe(t, member_count=counts.get(t.id, 0)) for t in teams]
 
+    async def dashboard_default_for(self, user_id: uuid.UUID) -> int | None:
+        """E103: the dashboard range the user's teams open with: the one their teams that
+        set a range agree on, else None (the console's own default)."""
+        return await self._teams.dashboard_default_for(user_id)
+
     async def get(self, team_id: uuid.UUID, scope: Scope) -> Team:
         team = await self._teams.get(team_id)
         # Someone else's team is not found, exactly like someone else's model.
@@ -146,7 +151,7 @@ class TeamService:
         self, team_id: uuid.UUID, changes: dict[str, Any], *, scope: Scope, actor: User
     ) -> Team:
         team = await self.get(team_id, scope)
-        before = {"name": team.name, "description": team.description}
+        before = self._audited(team)
         if changes.get("name") is not None:
             name = changes["name"].strip()
             other = await self._teams.get_by_name(name)
@@ -157,6 +162,8 @@ class TeamService:
             team.name = name
         if "description" in changes:
             team.description = changes["description"]
+        if "dashboard_window_hours" in changes:
+            team.dashboard_window_hours = changes["dashboard_window_hours"]
         await self._teams.flush()
         await self._teams.session.refresh(team)
         await self._audit.record(
@@ -167,7 +174,7 @@ class TeamService:
             resource_id=str(team.id),
             metadata={
                 "before": before,
-                "after": {"name": team.name, "description": team.description},
+                "after": self._audited(team),
             },
         )
         return team
@@ -309,6 +316,14 @@ class TeamService:
             )
 
     @staticmethod
+    def _audited(team: Team) -> dict[str, Any]:
+        return {
+            "name": team.name,
+            "description": team.description,
+            "dashboard_window_hours": team.dashboard_window_hours,
+        }
+
+    @staticmethod
     def describe(team: Team, *, member_count: int) -> dict[str, Any]:
         return {
             "id": team.id,
@@ -318,6 +333,7 @@ class TeamService:
             "tenant_id": team.tenant_id,
             "member_count": member_count,
             "created_at": team.created_at,
+            "dashboard_window_hours": team.dashboard_window_hours,
         }
 
 

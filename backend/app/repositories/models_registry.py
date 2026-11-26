@@ -579,6 +579,19 @@ class UsageRepository(BaseRepository[UsageRecord]):
     async def last_rolled_day(self) -> dt.date | None:
         return (await self.session.execute(select(func.max(UsageDailyRollup.day)))).scalar()
 
+    async def delete_records_before(self, cutoff: dt.datetime, *, limit: int) -> int:
+        """E103: up to ``limit`` usage records from before ``cutoff``, oldest first.
+        Returns how many were deleted."""
+        oldest = (
+            select(UsageRecord.id)
+            .where(UsageRecord.recorded_at < cutoff)
+            .order_by(UsageRecord.recorded_at)
+            .limit(limit)
+            .scalar_subquery()
+        )
+        result = await self.session.execute(delete(UsageRecord).where(UsageRecord.id.in_(oldest)))
+        return int(getattr(result, "rowcount", 0) or 0)
+
     async def roll_up_days(self, first: dt.date, last: dt.date) -> int:
         """Rewrite the rollups for UTC days ``first`` to ``last``, inclusive, from the
         records. Returns how many rows were written."""

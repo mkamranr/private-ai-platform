@@ -136,6 +136,15 @@ The sharing is an allocation method, not a measurement. The page and every expor
   "Not priced".
 - **A rate of 0 is a price**, and shows as 0.
 
+### Usage records deleted by retention
+
+When `gateway.usage_retention_days` is set (off by default; see
+[settings.md](settings.md#usage-record-retention)), usage records older than that are
+deleted. A report whose period starts before the first day still kept carries
+`records_kept_since` and a `pruned_note`, and the page shows a warning: token figures for
+the earlier days may be missing. The daily rollups that keep the dashboard's long ranges
+don't hold keys, people or end users, so they can't fill the gap.
+
 ### Team scope
 
 A caller without `scope.all` sees rows for their own teams and for shared usage only:

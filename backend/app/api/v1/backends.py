@@ -282,6 +282,24 @@ async def list_backend_pulls(
     return [BackendPullRead.model_validate(p) for p in await service.list_pulls(backend_id)]
 
 
+@router.post(
+    "/{backend_id}/pulls/{pull_id}/cancel",
+    response_model=BackendPullRead,
+    summary="Stop a queued or running model pull",
+)
+async def cancel_backend_pull(
+    service: InferenceBackendServiceDep,
+    actor: Annotated[User, require_permission(Perm.BACKEND_MANAGE)],
+    backend_id: uuid.UUID = Path(...),
+    pull_id: uuid.UUID = Path(...),
+) -> BackendPullRead:
+    """E103: a queued pull comes back CANCELLED. A running one comes back RUNNING with
+    ``cancel_requested_at`` set, and is CANCELLED within a few seconds, when its worker
+    next saves its progress. 409 once the pull has ended."""
+    pull = await service.cancel_pull(backend_id, pull_id, actor=actor)
+    return BackendPullRead.model_validate(pull)
+
+
 @router.put(
     "/{backend_id}/load-alert-levels",
     response_model=BackendRead,

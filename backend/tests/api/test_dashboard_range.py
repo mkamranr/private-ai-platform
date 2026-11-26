@@ -1,5 +1,6 @@
 """The dashboard looks back up to 90 days (expansion E37), and a year from daily
-rollups (E98), opening with the range each person chose last.
+rollups (E98), opening with the range each person chose last, or (E103) the range
+their teams set.
 
 Up to 7 days the traffic chart has a bar per hour; past that, a bar per UTC day, bucketed
 by the database. The test database is shared, so these tests look at the shape of the
@@ -16,8 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.models_registry import UsageDailyRollup, UsageRecord
+from app.models.teams import Team, TeamMembership
 from app.repositories.models_registry import UsageRepository
 from app.services.dashboard import roll_up_usage
+from tests.api.conftest import _user_with
 from tests.conftest import auth_header
 
 URL = "/api/v1/dashboard"
@@ -181,3 +184,62 @@ class TestRememberedRange:
             )
         ).all()
         assert audited == []
+
+
+class TestTeamDefault:
+    """E103: a team's range, used until a member chooses their own."""
+
+    async def test_set_on_the_team_and_offered_to_its_members(
+        self, client, tokens, superuser, session: AsyncSession, settings
+    ) -> None:
+        member = await _user_with(session, settings, [], name="member")
+        teams = []
+        for _ in range(2):
+            suffix = uuid.uuid4().hex[:8]
+            team = Team(name=f"Range {suffix}", slug=f"range-{suffix}")
+            session.add(team)
+            await session.flush()
+            session.add(TeamMembership(team_id=team.id, user_id=member.id, role="member"))
+            teams.append(team)
+        await session.flush()
+        admin = auth_header(tokens, superuser)
+        mine = auth_header(tokens, member)
+
+        async def default() -> int | None:
+            me = await client.get("/api/v1/auth/me", headers=mine)
+            assert me.status_code == 200, me.text
+            return me.json()["dashboard_default_window_hours"]
+
+        async def set_range(team: Team, hours: int | None, headers=admin):
+            return await client.patch(
+                f"/api/v1/teams/{team.id}", json={"dashboard_window_hours": hours}, headers=headers
+            )
+
+        assert await default() is None
+        response = await set_range(teams[0], 720)
+        assert response.status_code == 200, response.text
+        assert response.json()["dashboard_window_hours"] == 720
+        assert await default() == 720  # the other team sets none
+        await set_range(teams[1], 168)
+        assert await default() is None  # they disagree: the console's usual range
+        await set_range(teams[1], 720)
+        assert await default() == 720
+
+        cleared = await set_range(teams[0], None)
+        assert cleared.json()["dashboard_window_hours"] is None
+        assert (await set_range(teams[0], 9000)).status_code == 422
+        assert (await set_range(teams[0], 24, headers=mine)).status_code == 403
+
+        audited = (
+            (
+                await session.execute(
+                    select(AuditLog.meta).where(
+                        AuditLog.resource_id == str(teams[0].id),
+                        AuditLog.action == "TEAM_UPDATED",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert any(m["after"]["dashboard_window_hours"] == 720 for m in audited)

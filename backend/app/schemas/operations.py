@@ -149,6 +149,9 @@ class BackendPullRead(ORMModel):
     created_at: dt.datetime
     started_at: dt.datetime | None = None
     finished_at: dt.datetime | None = None
+    #: E103: a stop was asked for and the worker hasn't reached it yet (status RUNNING).
+    cancel_requested_at: dt.datetime | None = None
+    cancelled_by: uuid.UUID | None = None
 
 
 class BackendLoadLevels(BaseModel):

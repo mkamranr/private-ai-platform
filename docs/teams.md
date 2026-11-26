@@ -142,6 +142,9 @@ is counted from `usage_records.team_id`, the same way key budgets are. See
 - A team that has owners always keeps at least one.
 - Membership is read on every request, like permissions. Removing someone takes effect
   on their next call.
+- With `team.manage`, *Members' dashboards open with* sets the dashboard range the team's
+  members start with until they choose their own (`dashboard_window_hours`). Someone in
+  several teams that set different ranges gets the usual last 24 hours.
 
 Audit actions: `TEAM_CREATED`, `TEAM_UPDATED`, `TEAM_DELETED`, `TEAM_MEMBER_ADDED`,
 `TEAM_MEMBER_UPDATED`, `TEAM_MEMBER_REMOVED`, `SCOPE_ASSIGNED`.

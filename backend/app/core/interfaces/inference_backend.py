@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import enum
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -97,7 +97,9 @@ class InferenceBackendAdapter(ABC):
     #: E97: whether `pull_model` is supported, checked before a pull is queued.
     can_pull: bool = False
 
-    def pull_model(self, name: str, *, insecure: bool = False) -> AsyncIterator[dict[str, Any]]:
+    def pull_model(
+        self, name: str, *, insecure: bool = False
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """E90 (DEPLOY): fetch a model onto the backend's disk from its registry. E97:
         yields its progress as it goes (``status``, ``completed``, ``total``)."""
         raise UnsupportedBackendOperationError("This backend type can't fetch models.")

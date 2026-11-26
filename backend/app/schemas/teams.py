@@ -33,6 +33,8 @@ class TeamUpdateRequest(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = None
+    #: E103: the dashboard range its members open with (hours); null clears it.
+    dashboard_window_hours: int | None = Field(default=None, ge=1, le=8760)
 
 
 class TeamMemberRead(BaseModel):
@@ -51,6 +53,7 @@ class TeamRead(BaseModel):
     tenant_id: str
     member_count: int = 0
     created_at: dt.datetime
+    dashboard_window_hours: int | None = None
 
 
 class TeamDetail(TeamRead):

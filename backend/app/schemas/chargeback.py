@@ -153,6 +153,10 @@ class ChargebackReport(BaseModel):
     generated_at: dt.datetime
     estimate: bool
     note: str
+    #: E103: usage records from before this day may have been deleted (null: all kept),
+    #: and a note when the period starts before it.
+    records_kept_since: dt.date | None = None
+    pruned_note: str | None = None
     rows: list[ChargebackRow]
     #: GPU time of models nobody called. Only for callers who see every team.
     idle: ChargebackRow | None

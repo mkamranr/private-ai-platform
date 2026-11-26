@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Usage record retention, cancelling a pull, a team's dashboard range
+- `gateway.usage_retention_days` (Settings, *Retention*) deletes gateway usage records older than that many days, once their day is in the daily rollups, so the dashboard's long ranges keep their totals. Off (0) by default; at least 100 days. Chargeback reports reaching back past the records kept say so.
+- *Cancel* on a queued or running model pull (`POST /backends/{id}/pulls/{pull_id}/cancel`) stops it: a queued one at once, a running one within seconds. Audited.
+- A team can set the range its members' dashboards open with until they choose their own (*Members' dashboards open with* on the Teams page, `dashboard_window_hours` on `PATCH /teams/{id}`).
+- **Upgrade.** One migration (`alembic upgrade head`). Usage records are only deleted once you set the retention.
+
 ### Change an MCP server in place
 - *Edit* on an MCP server (or `PUT /mcp/servers/{id}`) changes its endpoint, transport, description or token without deleting it, so its tools keep their grants, risk levels and enabled state and follow the new endpoint.
 - **Upgrade.** Nothing to do.

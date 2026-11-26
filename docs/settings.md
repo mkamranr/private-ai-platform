@@ -26,6 +26,7 @@ that silently ignores what it saved is worse than one that says "restart require
 | `platform.public_base_url` | Networking | node install command, workflow webhook URL, SSO callback | next enrolment, webhook rotation or sign-in |
 | `gpu.metric_retention_days` | Retention | hourly GPU metric purge | next retention run |
 | `backends.load_retention_days` | Retention | hourly purge of backends' load samples | next retention run |
+| `gateway.usage_retention_days` | Retention | hourly usage rollup: gateway usage records older than this, on days already rolled up, are deleted. 0 (the default) keeps every record; otherwise 100–3650 (see [Usage record retention](#usage-record-retention)) | next usage rollup (hourly) |
 | `backends.load_alert_requests_waiting`, `backends.load_alert_kv_cache_percent` | Monitoring | backend load alerts (see [backends.md](backends.md#load-over-time-and-alerts-on-it)) | next backend check |
 | `knowledge.query_history_days` | Retention | Retrieval Playground question history; 0 keeps none (see [rag-evaluation.md](rag-evaluation.md#question-history)) | next question; pruning at the next retention run |
 | `gpu.alerts_enabled`, `gpu.alert_temperature_warning_celsius`, `gpu.alert_temperature_critical_celsius`, `gpu.alert_memory_warning_percent`, `gpu.alert_utilization_warning_percent`, `gpu.alert_power_warning_percent`, `gpu.alert_pcie_replays_per_hour`, `gpu.alert_sustain_minutes`, `gpu.alert_recovery_margin_celsius`, `gpu.alert_recovery_margin_percent` | GPU monitoring | GPU threshold alerts (see [gpu.md](gpu.md#threshold-alerts)) | next GPU alert check (1 min) |
@@ -147,9 +148,23 @@ caller's team scope covers, which is the same rule their list pages follow.
 - a time range: last hour, 6 hours, 24 hours, 7, 30, 90 or 180 days, or a year. The one
   chosen is saved to the person's account (`PUT /users/me/preferences`
   `{dashboard_window_hours}`, not audited) and the dashboard opens with it next time, on
-  any browser;
+  any browser. Until someone chooses one, it opens with the range their teams set
+  (*Members' dashboards open with* on the Teams page, `PATCH /teams/{id}`
+  `{dashboard_window_hours}`), when the teams that set one agree; otherwise the last 24
+  hours;
 - a Refresh button;
 - an Auto-refresh switch. Turning it off pauses the 5-second poll on this page.
+
+### Usage record retention
+
+Gateway usage records are kept for ever by default. Set `gateway.usage_retention_days`
+(Settings, *Retention*) to delete those older than that many days, at least 100 so the
+dashboard's last 90 days still come from the records. The hourly rollup job deletes them
+after rolling up, 10,000 a transaction, and only from days already in the rollups, so
+the dashboard's long ranges show the same totals afterwards. Chargeback reads the records
+themselves (by key, person and end user, which the rollups don't keep), so a report whose
+period starts before the records kept says so (`records_kept_since`, `pruned_note`, and a
+warning on the page). Take a backup first if those reports must be reproducible.
 
 ## Not built yet
 
@@ -157,5 +172,4 @@ caller's team scope covers, which is the same rule their list pages follow.
   read per request first, and the table above documents that contract.
 - Per-team or per-user preferences, apart from the dashboard range. These are platform
   settings only.
-- A default range per team; a range past a year. Usage records are never pruned, so the
-  rollups only make long ranges faster.
+- A range past a year.

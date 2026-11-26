@@ -186,14 +186,22 @@ class InfrastructureWorker:
                 log.exception("node_sync_failed")
 
     async def roll_up_usage(self) -> None:
-        """E98: daily usage rollups for the dashboard's long ranges. Never raises."""
+        """E98: daily usage rollups for the dashboard's long ranges, then (E103) records
+        past ``gateway.usage_retention_days`` deleted. Never raises."""
         try:
-            from app.services.dashboard import roll_up_usage
+            from app.services.dashboard import prune_usage, roll_up_usage
 
             async with self._session_factory() as session:
-                days = await roll_up_usage(UsageRepository(session), session.commit)
-            if days:
-                log.info("usage_rolled_up", days=days)
+                usage = UsageRepository(session)
+                days = await roll_up_usage(usage, session.commit)
+                if days:
+                    log.info("usage_rolled_up", days=days)
+                # A runtime setting (E103): read per run.
+                settings = await RUNTIME.effective(session, self._settings)
+                retention = settings.gateway.usage_retention_days
+                pruned = await prune_usage(usage, session.commit, retention_days=retention)
+                if pruned:
+                    log.info("usage_records_pruned", deleted=pruned, retention_days=retention)
         except Exception:
             log.exception("usage_rollup_failed")
 

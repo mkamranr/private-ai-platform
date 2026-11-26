@@ -71,6 +71,12 @@ the model, or register it with *Register all in catalogue*. Needs `backend.manag
 (reading pulls, `backend.view`), audited as `BACKEND_MODEL_PULLED` when queued. Finished
 pulls are kept a week.
 
+*Cancel* on a queued or running pull stops it (`POST /backends/{id}/pulls/{pull_id}/cancel`,
+`backend.manage`, audited as `BACKEND_MODEL_PULL_CANCELLED`). A queued one is `CANCELLED`
+at once. A running one shows *Cancelling…* until its worker next saves progress, within a
+few seconds, when it drops the connection to Ollama and marks it `CANCELLED`. Ollama keeps
+the layers it already downloaded, so pulling the same model again carries on from there.
+
 ### Load over time, and alerts on it
 
 Each health check of a backend that reports its load (vLLM, Ollama) keeps one sample of
