@@ -855,7 +855,7 @@ matrix still listed as missing.
 - [x] `POST /audit/export` streams (`StreamingResponse`, keyset pages of 1,000 via `AuditRepository.export_page`); no cap; `until` fixed at the start so `X-Export-Rows` is exact; `X-Export-Truncated` is gone.
 - [x] `AUDIT_PUSH__*` settings and `audit_push_state` (migration `f7c9d1e3a5b6`): `AuditPusher` (`app/services/audit_push.py`), run by the scheduler every `interval_seconds`, sends rows after the cursor and older than a minute, oldest first, as JSON Lines or Splunk HEC; the cursor moves only on 2xx; three failures raise an `audit_push` alert, cleared on success. `GET /audit/push` for its state.
 - [x] Tests: `tests/api/test_audit_api.py::test_streamed_a_page_at_a_time`, `tests/api/test_audit_push.py`. Doc: security.md, api.md.
-- [ ] One collector; settings from the environment only (no console form); no syslog transport; the console still downloads the whole file before saving it.
+- [ ] One collector; ~~settings from the environment only (no console form); no syslog transport; the console still downloads the whole file before saving it~~ (E104).
 
 ## E101: Connectors: MySQL, SQL Server, OpenAPI 2 and OAuth
 
@@ -879,6 +879,15 @@ matrix still listed as missing.
 - [x] Same migration: `teams.dashboard_window_hours`, set with `PATCH /teams/{id}` (in `TEAM_UPDATED`'s before and after). `/auth/me` adds `dashboard_default_window_hours`: `TeamRepository.dashboard_default_for`, the one value the user's teams that set one agree on. The console opens the dashboard with the person's own range, else that, else 24 hours. Console: *Members' dashboards open with* in the team's detail.
 - [x] Tests: `tests/api/test_usage_retention.py`, `tests/api/test_backend_operations.py::TestCancelPull`, `tests/api/test_dashboard_range.py::TestTeamDefault`. Docs: settings.md, backends.md, chargeback.md, teams.md, api.md.
 - [ ] Rollups keep no key, person or end user, so chargeback can't report on pruned days. A pull already past its last progress save finishes. A person's own range, once chosen, always wins over the team's.
+
+## E104: Audit push from the console, syslog, exports saved as they stream
+
+- [x] `audit_push_config` (migration `b9e1a3c5d7f8`, one row; the authorization encrypted with `SecretCipher`) and `audit_push_state.last_run_at`. `effective_push`: the environment's `AuditPushSettings` when `AUDIT_PUSH__URL` is set, else the console's. The scheduler's `audit_push` job ticks every 10 s (`AUDIT_PUSH_TICK_SECONDS`) and `AuditPusher.run(due_only=True)` runs once `interval_seconds` have passed since `last_run_at`.
+- [x] `AuditPushConfigService`: `GET /audit/push` adds `source`, `editable`, `config` (with `has_authorization`), `last_run_at`; `PUT /audit/push` (`settings.manage`; 409 while the environment sets it; audited `AUDIT_PUSH_CONFIGURED` with addresses as scheme, host and port); `restart_from_now` moves the cursor; `POST /audit/push/test` sends a made-up `AUDIT_PUSH_TEST` record (audited `AUDIT_PUSH_TESTED`, the record itself not written).
+- [x] Syslog: `format: syslog`, `syslog+tcp://` / `syslog+tls://` (`check_outbound_url(schemes=)`), `syslog_frames` (RFC 5424, octet counting, notice or warning by result, the action as MSGID, the record as JSON after a BOM), `syslog_facility`. `AuditPushSettings` refuses an address that doesn't fit the format.
+- [x] Exports: `ExportTickets` in `app/services/audit_export.py` (`secrets.token_urlsafe`, SHA-256 key in Redis for 60 s, `GETDEL`); `POST /audit/export/link` and `POST /audit/export/download` (form field `ticket`, no bearer; the person must still be active with `audit.view`). The console posts the ticket as a form, so the browser's download streams it to disk.
+- [x] Console: *Push to a SIEM* on the Audit Log page (status, settings, test, turn off; read-only when set in the environment). Tests: `tests/api/test_audit_push_console.py`. Docs: security.md, api.md.
+- [ ] Still one collector. Syslog over TCP has no acknowledgement: a collector that drops a batch it accepted loses it. A failed download shows the error in place of the console page.
 
 ## Phase acceptance (applies to each)
 

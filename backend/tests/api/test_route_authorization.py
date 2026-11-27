@@ -54,6 +54,10 @@ PUBLIC: set[tuple[str, str]] = {
     # E99: PagerDuty acknowledgements. The signature over the body is the credential;
     # an unknown channel is 401 like a bad signature.
     ("POST", "/api/v1/notifications/pagerduty/{channel_id}"),
+    # E104: an audit export downloaded by the browser. The one-time ticket in the form body
+    # is the credential (issued by POST /audit/export/link, which needs audit.view, and
+    # checked against the person's permissions again here); a missing or used one is 401.
+    ("POST", "/api/v1/audit/export/download"),
     # The host ops runner authenticates with X-Ops-Runner-Token, not a user (E7).
     ("POST", "/api/v1/ops/runner/heartbeat"),
     ("POST", "/api/v1/ops/runner/claim"),

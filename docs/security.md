@@ -137,16 +137,46 @@ usernames tried at sign-in, user agents and messages are text anyone can choose.
 Lines keeps `metadata` as an object, for a log pipeline or SIEM. Each export is itself
 recorded as `AUDIT_EXPORTED`, with its filters and row count. Both need `audit.view`.
 
-**Push to a SIEM.** Set `AUDIT_PUSH__URL` and the scheduler sends new audit records to
-it as they are written, every `AUDIT_PUSH__INTERVAL_SECONDS` (60 by default), oldest
-first, in batches of `AUDIT_PUSH__BATCH_SIZE` (500):
+The console saves the file as it arrives, through the browser's own download, rather
+than holding all of it in memory first. It asks for a one-time ticket
+(`POST /audit/export/link`) and posts it as a form to `POST /audit/export/download`. A
+ticket is good for one download within a minute, for the person who asked for it while
+they are still active and hold `audit.view`. It travels in the request body, so it never
+appears in an address or an access log, and only its hash is kept, in Redis. Scripts can
+keep calling `POST /audit/export` with their token.
 
-| Setting | |
+**Push to a SIEM.** Set it up under *Push to a SIEM* on the Audit Log page
+(`settings.manage`), or with `AUDIT_PUSH__URL` and the settings below in the environment.
+The scheduler then sends new audit records as they are written, every
+`interval_seconds` (60 by default), oldest first, in batches of `batch_size` (500):
+
+| Setting (`AUDIT_PUSH__...` in the environment) | |
 |---|---|
-| `AUDIT_PUSH__FORMAT` | `jsonl` (JSON Lines, the export's records) or `splunk_hec` (Splunk HTTP Event Collector events: `time`, `source`, `sourcetype`, and the record as `event`) |
-| `AUDIT_PUSH__AUTHORIZATION` | the whole header, e.g. `Splunk <token>` or `Bearer <token>` |
-| `AUDIT_PUSH__SOURCETYPE` | Splunk only, `aip:audit` by default |
-| `AUDIT_PUSH__VERIFY_TLS`, `AUDIT_PUSH__TIMEOUT_SECONDS` | `true`, 15 |
+| `url` | `https://...` for JSON Lines or Splunk HEC; `syslog+tls://host:6514` or `syslog+tcp://host:514` for syslog |
+| `format` | `jsonl` (JSON Lines, the export's records), `splunk_hec` (Splunk HTTP Event Collector events: `time`, `source`, `sourcetype`, and the record as `event`) or `syslog` (below) |
+| `authorization` | the whole header, e.g. `Splunk <token>` or `Bearer <token>`. Not used by syslog |
+| `sourcetype` | Splunk only, `aip:audit` by default |
+| `syslog_facility` | syslog only: `local0` (default) to `local7`, `auth`, `authpriv` or `audit` |
+| `verify_tls`, `timeout_seconds` | `true`, 15 |
+
+- **Console or environment.** When `AUDIT_PUSH__URL` is set in the environment, the
+  environment's settings are used and the console shows them read-only. Otherwise the
+  console's are. They are kept in the database with the authorization encrypted, and
+  shown back only as *saved*. A change applies within 10 seconds, without a restart.
+  Saving is audited as `AUDIT_PUSH_CONFIGURED`, with addresses shown as scheme, host and
+  port and the header only as changed or not. *Turn off* stops the push and keeps the
+  settings.
+- **Send a test record** sends one made-up record (action `AUDIT_PUSH_TEST`) the way the
+  push does and shows what the collector answered. It is not written to the audit log;
+  the test is (`AUDIT_PUSH_TESTED`).
+- **Send only what is recorded from now on** skips what accumulated while the push was off
+  or pointed elsewhere. Otherwise a collector gets everything since the last record
+  accepted.
+- **Syslog** is RFC 5424, one message per record: severity *notice* for a success and
+  *warning* for a failure or refusal, the action as the message ID, and the record as
+  JSON for the message. Messages are framed by octet counting (RFC 6587, as RFC 5425
+  requires over TLS). TCP has no acknowledgement, so a batch counts as delivered once it
+  is written. UDP is not offered, because it can lose records without anyone noticing.
 
 - It starts from when it was turned on; earlier records are exported from the console.
 - The position (time and id of the last record accepted) is kept in the database, so a
@@ -155,9 +185,9 @@ first, in batches of `AUDIT_PUSH__BATCH_SIZE` (500):
   rows aren't skipped.
 - Three failed pushes in a row raise a WARNING alert (source `audit_push`), which
   notification channels can route; the next push that gets through clears it.
-- `GET /audit/push` (`audit.view`) shows whether it is set up, the collector's host, the
-  last record sent, totals and the last error. The URL goes through the outbound URL
-  policy, like webhooks.
+- `GET /audit/push` (`audit.view`) shows whether it is set up and from where (`source`:
+  `environment`, `console` or `off`), the collector's host, the last record sent, totals
+  and the last error. The URL goes through the outbound URL policy, like webhooks.
 
 ---
 

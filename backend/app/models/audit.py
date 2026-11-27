@@ -159,6 +159,9 @@ class AuditAction(enum.StrEnum):
     CHARGEBACK_EXPORTED = "CHARGEBACK_EXPORTED"
     # Audit export (E54)
     AUDIT_EXPORTED = "AUDIT_EXPORTED"
+    #: E104: the audit push to a SIEM set from the console, and a test record sent.
+    AUDIT_PUSH_CONFIGURED = "AUDIT_PUSH_CONFIGURED"
+    AUDIT_PUSH_TESTED = "AUDIT_PUSH_TESTED"
     # Cost budgets (E12)
     COST_BUDGET_CREATED = "COST_BUDGET_CREATED"
     COST_BUDGET_UPDATED = "COST_BUDGET_UPDATED"

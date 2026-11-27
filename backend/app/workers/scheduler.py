@@ -103,6 +103,8 @@ BACKUP_SCHEDULE_CHECK_SECONDS = 300
 #: How often approvals are checked for expiry (E17). The TTL is in hours, so this only
 #: bounds how late past it an approval expires.
 APPROVAL_EXPIRY_CHECK_SECONDS = 900
+#: E104: how often the audit push checks whether its interval has passed.
+AUDIT_PUSH_TICK_SECONDS = 10
 
 
 class InfrastructureWorker:
@@ -206,16 +208,21 @@ class InfrastructureWorker:
             log.exception("usage_rollup_failed")
 
     async def push_audit(self) -> None:
-        """E100: new audit rows to the SIEM, when ``audit_push.url`` is set. Never raises."""
-        if not self._settings.audit_push.url:
-            return
+        """E100: new audit rows to the SIEM. E104: the settings are the environment's when
+        it sets AUDIT_PUSH__URL, else the console's, read each tick; a run happens once
+        their interval has passed since the last. Never raises."""
         try:
-            from app.services.audit_push import AuditPusher
+            from app.models.system import AuditPushConfig
+            from app.services.audit_push import AuditPusher, effective_push
 
             async with self._session_factory() as session:
+                config = await session.get(AuditPushConfig, 1)
+                push = effective_push(self._settings.audit_push, config, self._cipher)
+                if not push.settings.url:
+                    return
                 repository = AuditRepository(session)
                 alerts = AlertService(AlertRepository(session), AuditService(repository))
-                result = await AuditPusher(self._settings.audit_push, repository, alerts).run()
+                result = await AuditPusher(push.settings, repository, alerts).run(due_only=True)
                 await session.commit()
             if result.pushed or result.failed:
                 log.info(
@@ -626,15 +633,16 @@ class InfrastructureWorker:
             next_run_time=dt.datetime.now(dt.UTC) + dt.timedelta(minutes=1),
         )
 
-        push_interval = self._settings.audit_push.interval_seconds
+        # E104: a short tick; each run decides whether the push's interval has passed, so
+        # an interval changed in the console applies without a restart.
         self._scheduler.add_job(
             self.push_audit,
-            IntervalTrigger(seconds=push_interval),
+            IntervalTrigger(seconds=AUDIT_PUSH_TICK_SECONDS),
             id="audit_push",
             name="Push new audit rows to the SIEM",
             coalesce=True,
             max_instances=1,
-            misfire_grace_time=push_interval,
+            misfire_grace_time=AUDIT_PUSH_TICK_SECONDS,
         )
 
         self._scheduler.start()

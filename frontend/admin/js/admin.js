@@ -3096,6 +3096,7 @@ function auditQuery() {
 }
 
 async function renderAudit() {
+  if (!document.getElementById('audit-push').dataset.loaded) renderAuditPush();
   const query = auditQuery();
   query.set('limit', '100');
   const action = document.getElementById('aud-action').value;
@@ -3135,6 +3136,157 @@ async function renderAudit() {
         ? 'Narrow the filters to see the rest — this list is truncated, not complete.'
         : 'That is all of them.'}
     </div>`;
+}
+
+// E104: the audit push to a SIEM. Drawn on the first visit and after a change, not on
+// every poll, so the form keeps what someone is typing.
+const PUSH_FORMAT_LABEL = { jsonl: 'JSON Lines', splunk_hec: 'Splunk HEC', syslog: 'syslog' };
+const PUSH_FACILITIES = ['local0', 'local1', 'local2', 'local3', 'local4', 'local5', 'local6',
+  'local7', 'auth', 'authpriv', 'audit'];
+
+async function renderAuditPush() {
+  const host = document.getElementById('audit-push');
+  host.dataset.loaded = '1';
+  const s = await api('/audit/push').catch(() => null);
+  if (!s) { host.innerHTML = ''; return; }
+  const failing = s.configured && s.consecutive_failures > 0;
+  const status = s.configured
+    ? `${pill(failing ? 'WARNING' : 'HEALTHY', failing ? 'Failing' : 'On')}
+       to <span class="mono">${esc(s.url)}</span> as ${esc(PUSH_FORMAT_LABEL[s.format] || s.format)},
+       every ${fmtInt(s.interval_seconds)} s · ${fmtInt(s.pushed_total)} sent${s.last_success_at ? `, last ${esc(ago(s.last_success_at))}` : ''}
+       <span class="text-secondary">(${s.source === 'environment' ? 'set in the environment' : 'set here'})</span>`
+    : `${pill('UNKNOWN', 'Off')} <span class="text-secondary">New audit records are not sent anywhere.</span>`;
+  const error = failing && s.last_error
+    ? `<div class="small text-danger mt-1">${esc(s.last_error)}</div>` : '';
+  let settings = '';
+  if (!s.editable) {
+    settings = `<div class="small text-secondary mt-2">Set in the environment (<code>AUDIT_PUSH__*</code>),
+      which wins over the console. Unset <code>AUDIT_PUSH__URL</code> to manage it here.</div>`;
+  } else if (can('settings.manage')) {
+    settings = `<details class="mt-2" ${s.configured ? '' : 'open'}><summary class="small">Settings</summary>
+      ${auditPushForm(s.config)}</details>`;
+  }
+  host.innerHTML = `<div class="card card-body py-2 mb-3">
+      <div class="d-flex flex-wrap align-items-center gap-2 small">
+        <strong>Push to a SIEM</strong> ${status}
+        <button type="button" class="btn btn-sm btn-link ms-auto py-0" id="push-reload">Refresh</button>
+      </div>${error}${settings}
+    </div>`;
+  document.getElementById('push-reload').addEventListener('click', (event) =>
+    guard(event.target, renderAuditPush));
+  const form = document.getElementById('push-form');
+  if (form) wireAuditPushForm(form, s);
+}
+
+function auditPushForm(saved) {
+  const c = {
+    url: '', format: 'jsonl', interval_seconds: 60, batch_size: 500, verify_tls: true,
+    timeout_seconds: 15, sourcetype: 'aip:audit', syslog_facility: 'local0', has_authorization: false,
+    ...(saved || {}),
+  };
+  const option = (value, label, chosen) => `<option value="${esc(value)}" ${value === chosen ? 'selected' : ''}>${esc(label)}</option>`;
+  return `<form id="push-form" class="row g-2 small mt-1">
+    <div class="col-md-3">
+      <label class="form-label text-secondary mb-1" for="push-format">Format</label>
+      <select id="push-format" class="form-select form-select-sm">
+        ${Object.entries(PUSH_FORMAT_LABEL).map(([v, l]) => option(v, l, c.format)).join('')}
+      </select>
+    </div>
+    <div class="col-md-9">
+      <label class="form-label text-secondary mb-1" for="push-url">Collector address</label>
+      <input id="push-url" class="form-control form-control-sm mono" maxlength="2048" required
+        value="${esc(c.url || '')}">
+      <div class="form-text" id="push-url-help"></div>
+    </div>
+    <div class="col-md-6" data-push-only="jsonl splunk_hec">
+      <label class="form-label text-secondary mb-1" for="push-auth">Authorization header</label>
+      <input id="push-auth" type="password" class="form-control form-control-sm mono" autocomplete="off"
+        placeholder="${c.has_authorization ? 'Saved. Leave blank to keep it.' : 'e.g. Splunk <token> or Bearer <token>'}">
+      ${c.has_authorization ? `<label class="form-check mt-1"><input type="checkbox" class="form-check-input"
+        id="push-auth-remove"> Remove the saved header</label>` : ''}
+    </div>
+    <div class="col-md-3" data-push-only="splunk_hec">
+      <label class="form-label text-secondary mb-1" for="push-sourcetype">Sourcetype</label>
+      <input id="push-sourcetype" class="form-control form-control-sm mono" maxlength="128" value="${esc(c.sourcetype)}">
+    </div>
+    <div class="col-md-3" data-push-only="syslog">
+      <label class="form-label text-secondary mb-1" for="push-facility">Facility</label>
+      <select id="push-facility" class="form-select form-select-sm">
+        ${PUSH_FACILITIES.map((f) => option(f, f, c.syslog_facility)).join('')}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label text-secondary mb-1" for="push-interval">Every (s)</label>
+      <input id="push-interval" type="number" min="10" max="86400" class="form-control form-control-sm" value="${c.interval_seconds}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label text-secondary mb-1" for="push-batch">Batch</label>
+      <input id="push-batch" type="number" min="1" max="5000" class="form-control form-control-sm" value="${c.batch_size}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label text-secondary mb-1" for="push-timeout">Timeout (s)</label>
+      <input id="push-timeout" type="number" min="1" max="120" step="any" class="form-control form-control-sm" value="${c.timeout_seconds}">
+    </div>
+    <div class="col-12 d-flex flex-wrap gap-3">
+      <label class="form-check"><input type="checkbox" class="form-check-input" id="push-verify"
+        ${c.verify_tls ? 'checked' : ''}> Verify the collector's TLS certificate</label>
+      <label class="form-check" title="Skip what was recorded while the push was off or pointed elsewhere.">
+        <input type="checkbox" class="form-check-input" id="push-restart"> Send only what is recorded from now on</label>
+    </div>
+    <div class="col-12 d-flex flex-wrap gap-2">
+      <button class="btn btn-sm btn-primary">Save</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="push-test"
+        ${saved?.url ? '' : 'disabled'} title="Sends one made-up record the way the push does">Send a test record</button>
+      ${saved?.url ? '<button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="push-off">Turn off</button>' : ''}
+    </div>
+  </form>`;
+}
+
+function wireAuditPushForm(form, status) {
+  const format = document.getElementById('push-format');
+  const show = () => {
+    form.querySelectorAll('[data-push-only]').forEach((el) =>
+      el.classList.toggle('d-none', !el.dataset.pushOnly.split(' ').includes(format.value)));
+    document.getElementById('push-url-help').textContent = format.value === 'syslog'
+      ? 'syslog+tls://host:6514 (or syslog+tcp://host:514). RFC 5424 messages; UDP is not offered, it can lose records unnoticed.'
+      : 'https://… The collector takes one POST per batch. A Splunk HEC address ends /services/collector/event.';
+  };
+  format.addEventListener('change', show);
+  show();
+  const save = (body) => api('/audit/push', { method: 'PUT', body: JSON.stringify(body) });
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    guard(form.querySelector('button.btn-primary'), async () => {
+      const body = {
+        url: document.getElementById('push-url').value.trim(),
+        format: format.value,
+        interval_seconds: Number(document.getElementById('push-interval').value),
+        batch_size: Number(document.getElementById('push-batch').value),
+        timeout_seconds: Number(document.getElementById('push-timeout').value),
+        verify_tls: document.getElementById('push-verify').checked,
+        sourcetype: document.getElementById('push-sourcetype').value.trim() || 'aip:audit',
+        syslog_facility: document.getElementById('push-facility').value,
+        restart_from_now: document.getElementById('push-restart').checked,
+      };
+      const typed = document.getElementById('push-auth').value;
+      if (format.value === 'syslog' || document.getElementById('push-auth-remove')?.checked) body.authorization = '';
+      else if (typed) body.authorization = typed;
+      await save(body);
+      alert('Saved. The push uses it within 10 seconds.', 'success');
+      await renderAuditPush();
+    });
+  });
+  document.getElementById('push-test')?.addEventListener('click', (event) => guard(event.target, async () => {
+    const result = await api('/audit/push/test', { method: 'POST' });
+    alert(result.ok ? `The collector took the test record (${result.detail}).`
+      : `The test record was not delivered: ${result.detail}`, result.ok ? 'success' : 'danger');
+  }));
+  document.getElementById('push-off')?.addEventListener('click', (event) => guard(event.target, async () => {
+    if (!confirm('Stop pushing audit records to the SIEM? The settings are kept.')) return;
+    await save({ url: null });
+    alert('The audit push is off.', 'success');
+    await renderAuditPush();
+  }));
 }
 
 function auditRow(row) {
@@ -6390,25 +6542,20 @@ document.getElementById('audit-body').addEventListener('click', (event) => {
 });
 
 async function exportAudit(format) {
+  // E104: a one-time ticket posted as a form, so the browser's own download saves the
+  // file as it streams instead of holding it all in memory first. The response is an
+  // attachment, so the page stays where it is.
   const query = auditQuery();
   query.set('format', format);
-  const response = await fetch(`${API}/audit/export?${query}`, {
-    method: 'POST', headers: { Authorization: `Bearer ${token.get()}` },
+  const link = await api(`/audit/export/link?${query}`, { method: 'POST' });
+  const form = Object.assign(document.createElement('form'), {
+    method: 'POST', action: link.url,
   });
-  if (!response.ok) {
-    let message = `Export failed (${response.status})`;
-    try { message = (await response.json())?.error?.message || message; } catch { /* not JSON */ }
-    throw new Error(message);
-  }
-  const blob = await response.blob();
-  const name = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1] || `audit.${format}`;
-  const url = URL.createObjectURL(blob);
-  const a = Object.assign(document.createElement('a'), { href: url, download: name });
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-  // E100: streamed with no cap; the count is fixed when the export starts.
-  const rows = response.headers.get('X-Export-Rows');
-  alert(`Downloaded ${name} (${rows} records). The export is recorded in the audit log.`, 'success');
+  form.append(Object.assign(document.createElement('input'), { type: 'hidden', name: 'ticket', value: link.ticket }));
+  document.body.append(form);
+  form.submit();
+  form.remove();
+  alert('The export is downloading: your browser saves it as it arrives. It is recorded in the audit log.', 'success');
 }
 for (const [id, format] of [['aud-export-csv', 'csv'], ['aud-export-jsonl', 'jsonl']]) {
   const button = document.getElementById(id);

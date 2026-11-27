@@ -17,14 +17,25 @@ import datetime as dt
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import AuditDep, AuditRepositoryDep, SettingsDep, require_permission
+from app.api.deps import (
+    AuditDep,
+    AuditPushConfigServiceDep,
+    AuditRepositoryDep,
+    ExportTicketsDep,
+    require_permission,
+)
 from app.api.routing import CommittingRoute
 from app.core.permissions import Permission as Perm
 from app.models.auth import User
-from app.schemas.audit import AuditLogRead
+from app.schemas.audit import (
+    AuditExportLink,
+    AuditLogRead,
+    AuditPushTestResult,
+    AuditPushUpdate,
+)
 from app.schemas.common import Page
 from app.services.audit_export import AuditExportService, ExportFormat
 
@@ -117,6 +128,57 @@ async def export_audit(
     )
 
 
+@router.post(
+    "/export/link",
+    response_model=AuditExportLink,
+    summary="A one-time link to download an export from (for browsers)",
+)
+async def audit_export_link(
+    request: Request,
+    tickets: ExportTicketsDep,
+    actor: Annotated[User, require_permission(Perm.AUDIT_VIEW)],
+    filters: AuditFilters,
+    export_format: Annotated[ExportFormat, Query(alias="format")] = "csv",
+) -> AuditExportLink:
+    """E104: the same filters and format as ``POST /audit/export``, returned as a ticket
+    good for one download within a minute. The console posts it as a form to ``url``, so
+    the browser saves the file as it streams, and the ticket stays out of URLs (and so
+    out of access logs). The export is audited when the ticket is used."""
+    ticket = await tickets.issue(actor=actor, export_format=export_format, filters=filters)
+    url = request.url_for("download_audit_export").path
+    return AuditExportLink(url=url, ticket=ticket.ticket, expires_at=ticket.expires_at)
+
+
+@router.post(
+    "/export/download",
+    name="download_audit_export",
+    summary="Download an export through a one-time link",
+    response_class=Response,
+    responses={200: {"content": {"text/csv": {}, "application/x-ndjson": {}}}},
+)
+async def download_audit_export(
+    repository: AuditRepositoryDep,
+    audit: AuditDep,
+    tickets: ExportTicketsDep,
+    ticket: Annotated[str, Form(max_length=128)] = "",
+) -> Response:
+    """E104: authenticated by the ticket (a form field), not a bearer token, because a
+    browser submitting a form sends none. The ticket is used up here; the person it was issued to
+    must still be active and hold ``audit.view``. Audited as ``AUDIT_EXPORTED``."""
+    actor, export_format, filters = await tickets.redeem(ticket)
+    service = AuditExportService(repository, audit)
+    export = await service.start(actor=actor, export_format=export_format, filters=filters)
+    await service.commit()
+    headers = {
+        "Content-Disposition": f'attachment; filename="{export.filename}"',
+        "Cache-Control": "no-store",
+        "X-Export-Rows": str(export.rows),
+    }
+    return StreamingResponse(
+        service.stream(export, export_format), media_type=export.media_type, headers=headers
+    )
+
+
 @router.get("/actions", response_model=list[str], summary="Actions present in the log")
 async def list_actions(
     repository: AuditRepositoryDep,
@@ -130,28 +192,40 @@ async def list_actions(
     return list(await repository.distinct_actions())
 
 
-@router.get("/push", summary="The audit push to a SIEM: where and how far")
+@router.get("/push", summary="The audit push to a SIEM: where, from which settings, how far")
 async def audit_push_status(
-    repository: AuditRepositoryDep,
-    settings: SettingsDep,
+    service: AuditPushConfigServiceDep,
     _actor: Annotated[User, require_permission(Perm.AUDIT_VIEW)],
 ) -> dict[str, Any]:
-    """E100: whether ``AUDIT_PUSH__URL`` is set, the collector's address (host only), and
-    the push's progress: the time of the last row sent, totals and the last error."""
-    from app.models.system import AuditPushState
-    from app.services.audit_push import display_url
+    """E100: the collector's address (scheme, host and port) and the push's progress.
+    E104: ``source`` says whether the settings come from the ``environment`` (which wins,
+    and makes them read-only here), the ``console``, or the push is ``off``; ``config``
+    is what the console saved, with ``has_authorization`` instead of the header."""
+    return await service.status()
 
-    push = settings.audit_push
-    state = await repository.session.get(AuditPushState, 1)
-    return {
-        "configured": bool(push.url),
-        "url": display_url(push.url),
-        "format": push.format,
-        "interval_seconds": push.interval_seconds,
-        "cursor_at": state.cursor_at if state else None,
-        "pushed_total": state.pushed_total if state else 0,
-        "last_success_at": state.last_success_at if state else None,
-        "last_failure_at": state.last_failure_at if state else None,
-        "last_error": state.last_error if state else None,
-        "consecutive_failures": state.consecutive_failures if state else 0,
-    }
+
+@router.put("/push", summary="Set the audit push to a SIEM from the console")
+async def update_audit_push(
+    payload: AuditPushUpdate,
+    service: AuditPushConfigServiceDep,
+    actor: Annotated[User, require_permission(Perm.SETTINGS_MANAGE)],
+) -> dict[str, Any]:
+    """E104: applies from the scheduler's next tick (within 10 seconds). 409 while
+    ``AUDIT_PUSH__URL`` is set in the environment. Audited, without the authorization."""
+    changes = payload.model_dump(exclude_unset=True, exclude={"restart_from_now"})
+    await service.update(changes, actor=actor, restart_from_now=payload.restart_from_now)
+    return await service.status()
+
+
+@router.post(
+    "/push/test", response_model=AuditPushTestResult, summary="Send the SIEM a test record"
+)
+async def test_audit_push(
+    service: AuditPushConfigServiceDep,
+    actor: Annotated[User, require_permission(Perm.SETTINGS_MANAGE)],
+) -> AuditPushTestResult:
+    """E104: one made-up record (action ``AUDIT_PUSH_TEST``), sent the way the push sends,
+    with what the collector answered. It is not written to the audit log; the test is
+    (``AUDIT_PUSH_TESTED``)."""
+    ok, detail = await service.test(actor)
+    return AuditPushTestResult(ok=ok, detail=detail)
