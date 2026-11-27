@@ -75,6 +75,8 @@ RAW_UP_TO_HOURS = 90 * 24
 
 #: Days rolled up per transaction, so a first run over a long history commits as it goes.
 ROLLUP_CHUNK_DAYS = 31
+#: E103: usage records deleted per transaction when pruning.
+PRUNE_BATCH = 10_000
 
 #: Up to a week the chart has a bar per hour (168 at most). Past that it has a bar per
 #: day: 90 days of hours would be 2,160 bars, too thin to read and slow to draw.
@@ -529,6 +531,41 @@ async def roll_up_usage(
         days += (end - start).days + 1
         start = end + dt.timedelta(days=1)
     return days
+
+
+def usage_kept_since(retention_days: int, *, today: dt.date | None = None) -> dt.date | None:
+    """E103: the first UTC day whose usage records are all kept, or None when every
+    record is kept. Records may be kept from earlier, until the next pruning."""
+    if retention_days <= 0:
+        return None
+    today = today or dt.datetime.now(dt.UTC).date()
+    return today - dt.timedelta(days=retention_days)
+
+
+async def prune_usage(
+    usage: UsageRepository,
+    commit: Callable[[], Awaitable[None]],
+    *,
+    retention_days: int,
+    today: dt.date | None = None,
+    batch: int = PRUNE_BATCH,
+) -> int:
+    """E103: delete usage records from before ``retention_days`` ago, but only from days
+    already in the rollups (the last day rolled up is written again on the next run, so
+    it is kept too). A batch per transaction. Returns the records deleted."""
+    kept_since = usage_kept_since(retention_days, today=today)
+    rolled = await usage.last_rolled_day()
+    if kept_since is None or rolled is None:
+        return 0
+    first_kept = min(kept_since, rolled)
+    cutoff = dt.datetime.combine(first_kept, dt.time(), tzinfo=dt.UTC)
+    deleted = 0
+    while True:
+        n = await usage.delete_records_before(cutoff, limit=batch)
+        await commit()
+        deleted += n
+        if n < batch:
+            return deleted
 
 
 def _weighted_latency(rows: list[dict[str, Any]]) -> float:

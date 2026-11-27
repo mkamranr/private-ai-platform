@@ -337,10 +337,11 @@ async function renderDashboard({ force = false } = {}) {
   // Auto-refresh off: the poll leaves the page as it is; Refresh and the range still work.
   if (!force && !dashAuto && document.getElementById('dashboard-body').children.length) return;
   const select = document.getElementById('dash-window');
-  // E98: open with the range this person chose last time, on any browser.
+  // E98: open with the range this person chose last time, on any browser. E103: until
+  // they choose one, the range their teams set.
   if (!dashRangeRestored) {
     dashRangeRestored = true;
-    const saved = String(currentUser?.dashboard_window_hours || '');
+    const saved = String(currentUser?.dashboard_window_hours || currentUser?.dashboard_default_window_hours || '');
     if (saved && [...select.options].some((o) => o.value === saved)) select.value = saved;
   }
   const hours = Number(select.value) || 24;
@@ -4783,7 +4784,8 @@ function backendPullForm(canPull) {
   <div id="be-pulls" class="small mt-2"></div>`;
 }
 
-/** E97: a backend's latest pulls, with a bar for each one still downloading. */
+/** E97: a backend's latest pulls, with a bar for each one still downloading. E103: and
+ * a Cancel button on each one queued or running, for those who manage backends. */
 function backendPullsHtml(pulls) {
   if (!pulls.length) return '';
   const size = (bytes) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`);
@@ -4795,9 +4797,14 @@ function backendPullsHtml(pulls) {
            <div class="progress-bar" style="width:${percent}%"></div></div>
          <span class="text-secondary">${percent}% · ${esc(p.stage || '')}</span>`
       : `<span class="text-secondary">${esc(active ? (p.stage || 'waiting for the worker') : (p.error || (p.total_bytes ? size(p.total_bytes) : '')))}</span>`;
+    const stop = !active || !can('backend.manage') ? ''
+      : p.cancel_requested_at
+        ? '<span class="text-secondary">Cancelling…</span>'
+        : `<button type="button" class="btn btn-sm btn-outline-danger py-0" data-pull-cancel="${esc(p.id)}">Cancel</button>`;
     return `<tr><td class="mono">${esc(p.model)}</td><td>${pill(p.status)}</td>
       <td><div class="d-flex align-items-center gap-2">${progress}</div></td>
-      <td class="text-secondary text-nowrap">${esc(ago(p.created_at))}</td></tr>`;
+      <td class="text-secondary text-nowrap">${esc(ago(p.created_at))}</td>
+      <td class="text-end">${stop}</td></tr>`;
   }).join('')}</tbody></table>`;
 }
 
@@ -4877,6 +4884,20 @@ async function openDiscover(backendId, backendName, capabilities = []) {
         if (still) setTimeout(watch, 2000);
       };
       watch();
+      // E103: stop a pull. A queued one ends at once; a running one within seconds.
+      pullsHost.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-pull-cancel]');
+        if (!button) return;
+        guard(button, async () => {
+          try {
+            await api(`/backends/${backendId}/pulls/${button.dataset.pullCancel}/cancel`, { method: 'POST' });
+            const pulls = await api(`/backends/${backendId}/pulls`).catch(() => null);
+            if (pulls) pullsHost.innerHTML = backendPullsHtml(pulls.slice(0, 5));
+          } catch (err) {
+            body.insertAdjacentHTML('afterbegin', `<div class="alert alert-danger small">${esc(err.message)}</div>`);
+          }
+        });
+      });
       document.getElementById('be-pull-form')?.addEventListener('submit', (event) => {
         event.preventDefault();
         const button = event.target.querySelector('button');
@@ -5154,6 +5175,24 @@ const RESOURCE_LABEL = {
   notification_channels: 'Notification channels',
 };
 
+/** E103: the dashboard range the team's members open with until they choose one. */
+function teamDashboardRangeHtml(team) {
+  const options = [...document.getElementById('dash-window').options];
+  const current = String(team.dashboard_window_hours || '');
+  const label = options.find((o) => o.value === current)?.textContent;
+  if (!can('team.manage')) {
+    return label ? `<div class="small text-secondary mt-2">Members' dashboards open with: ${esc(label)}</div>` : '';
+  }
+  return `<div class="d-flex flex-wrap align-items-center gap-2 small mt-3">
+    <label class="text-secondary" for="team-dash-window"
+      title="Until a member picks a range themselves. When a person's teams set different ranges, the dashboard opens with the last 24 hours.">Members' dashboards open with</label>
+    <select id="team-dash-window" class="form-select form-select-sm" style="width:auto">
+      <option value="">The usual (last 24 hours)</option>
+      ${options.map((o) => `<option value="${esc(o.value)}" ${o.value === current ? 'selected' : ''}>${esc(o.textContent)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+
 async function renderTeamDetail(teamId) {
   const slot = document.getElementById('team-detail');
   const team = await api(`/teams/${teamId}`);
@@ -5204,6 +5243,7 @@ async function renderTeamDetail(teamId) {
         </div>
         <div class="small text-secondary mb-1">Owns</div>
         <div class="d-flex flex-wrap gap-1">${resources}</div>
+        ${teamDashboardRangeHtml(team)}
       </div>
       ${tableHtml('<th>Member</th><th>Team role</th><th>Added</th><th></th>', memberRows ||
         `<tr><td colspan="4" class="text-secondary small">No members yet.</td></tr>`)}
@@ -5239,6 +5279,11 @@ async function renderTeamDetail(teamId) {
       await renderTeams();
     });
   });
+  document.getElementById('team-dash-window')?.addEventListener('change', (event) => guard(event.target, async () => {
+    const hours = Number(event.target.value) || null;
+    await api(`/teams/${teamId}`, { method: 'PATCH', body: JSON.stringify({ dashboard_window_hours: hours }) });
+    alert('Saved. Members who have not chosen a range get it next time they open the console.', 'success');
+  }));
   document.getElementById('team-delete')?.addEventListener('click', (event) => guard(event.target, async () => {
     if (!confirm(`Delete team ${team.name}? This is refused while it still owns resources.`)) return;
     await api(`/teams/${teamId}`, { method: 'DELETE' });

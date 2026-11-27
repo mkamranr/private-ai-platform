@@ -68,6 +68,7 @@ from app.models.models_registry import UsageRecord
 from app.models.workflows import Workflow
 from app.repositories.chargeback import GROUPS, ChargebackRepository, CostRateRepository
 from app.services.audit import AuditService
+from app.services.dashboard import usage_kept_since
 
 log = get_logger(__name__)
 
@@ -83,6 +84,11 @@ MAX_ROWS = 1000
 MAX_RATE = Decimal(1_000_000_000)
 
 #: Shown on every report and in every export.
+#: E103: shown when the period starts before the usage records still kept.
+PRUNED_NOTE = (
+    "Gateway usage records are kept for {days} days, so token figures before {since} may be "
+    "missing. The dashboard's long ranges still show them from daily rollups."
+)
 ESTIMATE_NOTE = (
     "Estimates from local rates, not invoices. Token costs use the rate in force for each "
     "call's model when it was made. Speech is priced per audio minute or million "
@@ -236,12 +242,14 @@ class ChargebackService:
         *,
         currency: str,
         exchange_rates: dict[str, Decimal] | None = None,
+        usage_retention_days: int = 0,
     ) -> None:
         self._rates = rates
         self._reports = reports
         self._audit = audit
         self.currency = currency
         self.exchange_rates = dict(exchange_rates or {})
+        self.usage_retention_days = usage_retention_days
 
     async def commit(self) -> None:
         """Commit before the response is sent, so a page that reloads right after a
@@ -546,6 +554,8 @@ class ChargebackService:
         # Totals are over every row, including any the response leaves out.
         every = [*rows, *([idle] if idle else [])]
         truncated = limit is not None and len(rows) > limit
+        # E103: usage records before this day may have been deleted.
+        kept_since = usage_kept_since(self.usage_retention_days, today=now.date())
         report = {
             "currency": self.currency,
             # E86: the currencies it can be shown in, and the rate used (1: as priced).
@@ -559,6 +569,12 @@ class ChargebackService:
             "generated_at": now,
             "estimate": True,
             "note": ESTIMATE_NOTE,
+            "records_kept_since": kept_since,
+            "pruned_note": (
+                PRUNED_NOTE.format(days=self.usage_retention_days, since=kept_since.isoformat())
+                if kept_since is not None and start < kept_since
+                else None
+            ),
             "rows": rows if limit is None else rows[:limit],
             "idle": idle,
             "truncated": truncated,

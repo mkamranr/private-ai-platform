@@ -831,7 +831,7 @@ matrix still listed as missing.
 - [x] `OllamaAdapter.pull_model` streams `/api/pull` (`stream: true`), yielding each line; an `error` line, or an end without `success`, fails it. `BackendPullWorker` (`app/workers/backend_pulls.py`): `claim_pull` (`FOR UPDATE SKIP LOCKED`; a RUNNING pull with no heartbeat for 120 s is taken again), `run_pull` saving stage and bytes every 2 s, `prune_pulls` after 7 days.
 - [x] Console: the backend's latest pulls under *Pull a model*, with a bar, polled every 2 s while one is active; the model list is shown again when it ends.
 - [x] Tests: `tests/api/test_backend_operations.py::TestPull`. Docs: backends.md, api.md.
-- [ ] One pull at a time per worker; a pull can't be cancelled from the platform.
+- [ ] One pull at a time per worker; ~~a pull can't be cancelled from the platform~~ (E103).
 
 ## E98: Dashboard rollups and a remembered range
 
@@ -839,7 +839,7 @@ matrix still listed as missing.
 - [x] `GET /dashboard` takes `window_hours` up to 8760. Past 90 days the gateway section reads rollups up to `rolled_up_through` and the records after it; timing percentiles cover the last 90 days (`timings_window_hours`).
 - [x] `users.dashboard_window_hours`, set with `PUT /users/me/preferences` (not audited) and returned by `/auth/me`; the console opens with it and saves each change. *Last 180 days* and *Last year*.
 - [x] Tests: `tests/api/test_dashboard_range.py` (`TestRollups`, `TestRememberedRange`). Doc: settings.md.
-- [ ] No default range per team; `/monitoring/overview` stays at 90 days; usage records are still never pruned.
+- [ ] ~~No default range per team~~ (E103); `/monitoring/overview` stays at 90 days; ~~usage records are still never pruned~~ (E103).
 
 ## E99: Notification summaries, Opsgenie, PagerDuty acknowledgements
 
@@ -870,6 +870,15 @@ matrix still listed as missing.
 - [x] `PUT /mcp/servers/{id}` (`mcp.manage`, `McpServerUpdateRequest`): endpoint, transport, description and bearer token; `""` removes the token. The name is fixed (it prefixes tool names). `McpRegistryService.update_server` checks the endpoint with `checked_mcp_endpoint`, copies a new endpoint onto the server's tools, resets the status to `UNKNOWN` when the connection changes, and audits `MCP_SERVER_UPDATED` with `changed`, `before` and `after` (no secrets). `McpServerRead.has_credentials`.
 - [x] Console: *Edit* on each server opens the register form filled in, name locked, with *Remove the token*. Tests: `tests/api/test_mcp_edit.py`. Doc: mcp.md, api.md.
 - [ ] Renaming a server (and its tools) is not offered.
+
+## E103: Usage record retention, cancelling a pull, a team's dashboard range
+
+- [x] `gateway.usage_retention_days` (runtime, *Retention*; 0 keeps every record, else 100–3650, `USAGE_RETENTION_MIN_DAYS`). `prune_usage` in `app/services/dashboard.py`, run after the rollup by the scheduler's `usage_rollup` job: deletes records before `min(today - retention, last day rolled up)`, so a day not yet rolled up (or about to be rolled up again) is never touched; `UsageRepository.delete_records_before`, 10,000 a transaction.
+- [x] Chargeback: `ChargebackService(usage_retention_days=)`; the report carries `records_kept_since` and `pruned_note` when its period starts before it; the page shows the note.
+- [x] Migration `a8d0f2b4c6e7`: `backend_model_pulls.cancel_requested_at`, `cancelled_by`; `PullStatus.CANCELLED`. `InferenceBackendService.cancel_pull` (`POST /backends/{id}/pulls/{pull_id}/cancel`, `backend.manage`, audited `BACKEND_MODEL_PULL_CANCELLED`): QUEUED becomes CANCELLED at once (under `FOR UPDATE`, so the worker's claim waits); RUNNING gets `cancel_requested_at`. `run_pull` checks before starting and after each progress save (`_cancel_requested` reads the column afresh), leaving the stream through `aclosing` so the connection to Ollama closes at once. Console: *Cancel* and *Cancelling…*.
+- [x] Same migration: `teams.dashboard_window_hours`, set with `PATCH /teams/{id}` (in `TEAM_UPDATED`'s before and after). `/auth/me` adds `dashboard_default_window_hours`: `TeamRepository.dashboard_default_for`, the one value the user's teams that set one agree on. The console opens the dashboard with the person's own range, else that, else 24 hours. Console: *Members' dashboards open with* in the team's detail.
+- [x] Tests: `tests/api/test_usage_retention.py`, `tests/api/test_backend_operations.py::TestCancelPull`, `tests/api/test_dashboard_range.py::TestTeamDefault`. Docs: settings.md, backends.md, chargeback.md, teams.md, api.md.
+- [ ] Rollups keep no key, person or end user, so chargeback can't report on pruned days. A pull already past its last progress save finishes. A person's own range, once chosen, always wins over the team's.
 
 ## Phase acceptance (applies to each)
 

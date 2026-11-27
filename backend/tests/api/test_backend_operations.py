@@ -334,3 +334,112 @@ class TestPull:
         row.finished_at = dt.datetime.now(dt.UTC) - dt.timedelta(days=8)
         await session.flush()
         assert await service.prune_pulls() == 1
+
+
+class TestCancelPull:
+    """E103: a queued pull is cancelled at once, a running one by its worker."""
+
+    async def _queued(self, client, tokens, backend_admin) -> tuple[dict, dict]:
+        headers = auth_header(tokens, backend_admin)
+        created = await _create(client, headers)
+        response = await client.post(
+            f"/api/v1/backends/{created['id']}/models/pull",
+            json={"model": "llama3.2:3b"},
+            headers=headers,
+        )
+        assert response.status_code == 202, response.text
+        return created, response.json()
+
+    async def test_a_queued_pull_is_cancelled_at_once(
+        self,
+        app,
+        client: AsyncClient,
+        tokens,
+        backend_admin,
+        backend_viewer,
+        fake_backend,
+        session: AsyncSession,
+    ) -> None:
+        backend, pull = await self._queued(client, tokens, backend_admin)
+        url = f"/api/v1/backends/{backend['id']}/pulls/{pull['id']}/cancel"
+        denied = await client.post(url, headers=auth_header(tokens, backend_viewer))
+        assert denied.status_code == 403
+
+        response = await client.post(url, headers=auth_header(tokens, backend_admin))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "CANCELLED" and body["cancel_requested_at"] is not None
+        assert body["cancelled_by"] == str(backend_admin.id)
+
+        service = _backend_service(session, app.state.secret_cipher)
+        assert await service.claim_pull() is None  # never run
+
+        again = await client.post(url, headers=auth_header(tokens, backend_admin))
+        assert again.status_code == 409  # already ended
+        missing = await client.post(
+            f"/api/v1/backends/{backend['id']}/pulls/{uuid.uuid4()}/cancel",
+            headers=auth_header(tokens, backend_admin),
+        )
+        assert missing.status_code == 404
+        audited = (
+            await session.execute(
+                select(AuditLog).where(AuditLog.action == "BACKEND_MODEL_PULL_CANCELLED")
+            )
+        ).scalar_one()
+        assert audited.resource_id == backend["id"]
+        assert audited.meta["was"] == "QUEUED"
+
+    async def test_a_running_pull_stops_at_its_next_save(
+        self, app, client: AsyncClient, tokens, backend_admin, fake_backend, session
+    ) -> None:
+        backend, pull = await self._queued(client, tokens, backend_admin)
+        lines = [
+            {"status": "pulling 6a0746a1ec1a", "total": 2000, "completed": n}
+            for n in (100, 200, 300, 400)
+        ] + [{"status": "success"}]
+        fake_backend["ollama-host"] = lambda request: httpx.Response(
+            200, content="\n".join(json.dumps(x) for x in lines) + "\n"
+        )
+        service = _backend_service(session, app.state.secret_cipher)
+        claimed = await service.claim_pull()
+        assert claimed is not None
+        saves = 0
+
+        async def save() -> None:
+            nonlocal saves
+            saves += 1
+            await session.flush()
+            if saves == 1:  # someone presses Cancel while it downloads
+                response = await client.post(
+                    f"/api/v1/backends/{backend['id']}/pulls/{pull['id']}/cancel",
+                    headers=auth_header(tokens, backend_admin),
+                )
+                assert response.status_code == 200, response.text
+                assert response.json()["status"] == "RUNNING"
+                assert response.json()["cancel_requested_at"] is not None
+
+        done = await service.run_pull(claimed, save, every_seconds=0)
+        assert done.status == PullStatus.CANCELLED and done.finished_at is not None
+        assert done.completed_bytes == 100  # stopped after the first event
+        assert done.error is None
+
+    async def test_a_pull_cancelled_before_it_starts_never_reaches_the_backend(
+        self, app, client: AsyncClient, tokens, backend_admin, fake_backend, session
+    ) -> None:
+        _, pull = await self._queued(client, tokens, backend_admin)
+        called: list[str] = []
+
+        def ollama(request: httpx.Request) -> httpx.Response:
+            called.append(request.url.path)
+            return httpx.Response(200, content='{"status": "success"}\n')
+
+        fake_backend["ollama-host"] = ollama
+        service = _backend_service(session, app.state.secret_cipher)
+        claimed = await service.claim_pull()
+        assert claimed is not None
+        # Its worker stopped after the cancel was asked for; another takes it up.
+        claimed.cancel_requested_at = dt.datetime.now(dt.UTC)
+        await session.flush()
+        done = await service.run_pull(claimed, session.flush)
+        assert done.status == PullStatus.CANCELLED and called == []
+        assert str(done.id) == pull["id"]

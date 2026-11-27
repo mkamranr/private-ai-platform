@@ -137,6 +137,8 @@ class PullStatus(enum.StrEnum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    #: E103: stopped from the platform.
+    CANCELLED = "CANCELLED"
 
 
 #: E97: a pull still to finish.
@@ -173,6 +175,12 @@ class BackendModelPull(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: Refreshed while it runs; a RUNNING pull whose worker stopped is taken up again.
     heartbeat_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    #: E103: someone asked for a running pull to stop; the worker stops it at its next
+    #: progress save and marks it CANCELLED.
+    cancel_requested_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
 
 
 class AlertSeverity(enum.StrEnum):

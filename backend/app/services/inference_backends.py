@@ -27,7 +27,8 @@ import datetime as dt
 import json
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
 from typing import Any, ClassVar, Final
 
 import httpx
@@ -376,7 +377,7 @@ class OllamaAdapter(_HttpAdapter):
 
     async def pull_model(
         self, name: str, *, insecure: bool = False
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """E97: ``/api/pull`` streamed: one JSON object per line (``status``, and
         ``completed`` / ``total`` bytes while a layer downloads), ending ``success``."""
         timeout = httpx.Timeout(self.pull_timeout_seconds, connect=self._timeout)
@@ -927,24 +928,17 @@ class InferenceBackendService:
         every_seconds: float = PULL_PROGRESS_SECONDS,
     ) -> BackendModelPull:
         """E97: pull it, recording the backend's progress through ``save`` (a commit, in
-        the worker) at most every ``every_seconds``. Ends SUCCEEDED or FAILED; never
-        raises for the pull's own failure."""
+        the worker) at most every ``every_seconds``. Ends SUCCEEDED, FAILED or (E103)
+        CANCELLED; never raises for the pull's own failure."""
         backend = await self._backends.get(pull.backend_id)
+        cancelled = False
         try:
             if backend is None or not backend.enabled:
                 raise ModelNotOnBackendError("The backend is gone or disabled.")
-            last = time.monotonic()
-            async for event in self.adapter_for(backend).pull_model(
-                pull.model, insecure=pull.insecure
-            ):
-                pull.stage = str(event.get("status") or "")[:255] or pull.stage
-                if isinstance(event.get("total"), int):
-                    pull.total_bytes = event["total"]
-                    pull.completed_bytes = int(event.get("completed") or 0)
-                if time.monotonic() - last >= every_seconds:
-                    pull.heartbeat_at = dt.datetime.now(dt.UTC)
-                    await save()
-                    last = time.monotonic()
+            # E103: a stop asked for before it started (or before its worker stopped).
+            cancelled = await self._cancel_requested(pull)
+            if not cancelled:
+                cancelled = await self._follow_pull(backend, pull, save, every_seconds)
         except Exception as exc:
             pull.status = PullStatus.FAILED
             pull.error = (
@@ -954,13 +948,99 @@ class InferenceBackendService:
                 "backend_pull_failed", pull=str(pull.id), model=pull.model, error=pull.error
             )
         else:
-            pull.status = PullStatus.SUCCEEDED
+            if cancelled:
+                pull.status = PullStatus.CANCELLED
+                log.info("backend_pull_cancelled", pull=str(pull.id), model=pull.model)
+            else:
+                pull.status = PullStatus.SUCCEEDED
+        if pull.status == PullStatus.SUCCEEDED:
             if pull.total_bytes:
                 pull.completed_bytes = pull.total_bytes
             log.info("backend_pull_succeeded", pull=str(pull.id), model=pull.model)
         pull.finished_at = dt.datetime.now(dt.UTC)
         pull.heartbeat_at = pull.finished_at
         await save()
+        return pull
+
+    async def _follow_pull(
+        self,
+        backend: InferenceBackend,
+        pull: BackendModelPull,
+        save: Callable[[], Awaitable[None]],
+        every_seconds: float,
+    ) -> bool:
+        """Record the backend's progress until it ends. Returns True when it was stopped
+        because a cancel was asked for (checked at each save)."""
+        last = time.monotonic()
+        stream = self.adapter_for(backend).pull_model(pull.model, insecure=pull.insecure)
+        # Closed as soon as the loop is left, so a cancelled pull drops its connection to
+        # the backend at once (Ollama keeps what it downloaded, for a later pull).
+        async with aclosing(stream):
+            async for event in stream:
+                pull.stage = str(event.get("status") or "")[:255] or pull.stage
+                if isinstance(event.get("total"), int):
+                    pull.total_bytes = event["total"]
+                    pull.completed_bytes = int(event.get("completed") or 0)
+                if time.monotonic() - last >= every_seconds:
+                    pull.heartbeat_at = dt.datetime.now(dt.UTC)
+                    await save()
+                    last = time.monotonic()
+                    if await self._cancel_requested(pull):
+                        return True
+        return False
+
+    async def _cancel_requested(self, pull: BackendModelPull) -> bool:
+        """E103: read afresh, since the request to stop is written by another session."""
+        at = (
+            await self._backends.session.execute(
+                select(BackendModelPull.cancel_requested_at).where(BackendModelPull.id == pull.id)
+            )
+        ).scalar_one_or_none()
+        return at is not None
+
+    async def cancel_pull(
+        self, backend_id: uuid.UUID, pull_id: uuid.UUID, *, actor: User
+    ) -> BackendModelPull:
+        """E103: a queued pull is cancelled at once; a running one is asked to stop, and
+        its worker marks it CANCELLED at its next progress save (within a few seconds).
+        A finished pull is a conflict. Audited."""
+        backend = await self.get(backend_id)
+        pull = (
+            await self._backends.session.execute(
+                select(BackendModelPull)
+                .where(BackendModelPull.id == pull_id, BackendModelPull.backend_id == backend_id)
+                # Waits for a worker saving it, so a pull that just ended is seen ended.
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if pull is None:
+            raise NotFoundError(f"No pull with id {pull_id} on '{backend.name}'.")
+        if pull.status not in ACTIVE_PULL_STATES:
+            raise ConflictError(f"The pull of {pull.model!r} has already ended ({pull.status}).")
+        now = dt.datetime.now(dt.UTC)
+        was = pull.status
+        if pull.cancel_requested_at is None:
+            pull.cancel_requested_at = now
+            pull.cancelled_by = actor.id
+        if pull.status == PullStatus.QUEUED:
+            pull.status = PullStatus.CANCELLED
+            pull.finished_at = now
+        await self._backends.flush()
+        await self._audit.record(
+            AuditAction.BACKEND_MODEL_PULL_CANCELLED,
+            user_id=actor.id,
+            username=actor.username,
+            resource_type="inference_backend",
+            resource_id=str(backend_id),
+            metadata={
+                "name": backend.name,
+                "model": pull.model,
+                "pull_id": str(pull.id),
+                "was": str(was),
+            },
+        )
+        await self._backends.session.refresh(pull)
         return pull
 
     async def prune_pulls(self, *, keep_days: int = PULL_KEEP_DAYS) -> int:

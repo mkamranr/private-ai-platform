@@ -109,7 +109,7 @@ credential exists. Responses carry no hostnames, DSNs or stack traces.
 | GET | `/auth/trusted-devices` | authenticated | Browsers trusted to skip the second step |
 | DELETE | `/auth/trusted-devices/{id}` | authenticated | Forget one |
 | DELETE | `/auth/trusted-devices` | authenticated | Forget them all |
-| GET | `/auth/me` | authenticated | Identity + resolved permission list |
+| GET | `/auth/me` | authenticated | Identity + resolved permission list; `dashboard_window_hours` (their own range) and `dashboard_default_window_hours` (their teams', when those that set one agree) |
 
 Login failures return one message regardless of cause — distinguishing "no such user"
 from "wrong password" would make this endpoint a user-enumeration oracle.
@@ -594,7 +594,8 @@ Under `/api/v1`, authenticated with the platform JWT. See [backends.md](backends
 | POST | `/backends/{id}/models/load` | `backend.manage` — `{model}`: Ollama loads a model it has and keeps it in memory. Audited |
 | POST | `/backends/{id}/models/unload` | `backend.manage` — `{model}`: Ollama unloads it from memory. Audited |
 | POST | `/backends/{id}/models/pull` | `backend.manage` — `{model, insecure?}`: queues Ollama fetching the model onto its disk (library or internal registry name); 202 with the pull (the same one if already queued or running). Audited |
-| GET | `/backends/{id}/pulls` | `backend.view` — the latest 20 pulls: `status` (`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`), `stage`, `completed_bytes`, `total_bytes`, `error` |
+| GET | `/backends/{id}/pulls` | `backend.view` — the latest 20 pulls: `status` (`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`), `stage`, `completed_bytes`, `total_bytes`, `error`, `cancel_requested_at`, `cancelled_by` |
+| POST | `/backends/{id}/pulls/{pull_id}/cancel` | `backend.manage` — a queued pull comes back `CANCELLED`; a running one `RUNNING` with `cancel_requested_at`, and is `CANCELLED` within seconds by its worker. 409 once it has ended. Audited |
 | PUT | `/backends/{id}/load-alert-levels` | `backend.manage` — `{requests_waiting?, kv_cache_percent?}`: the backend's own load alert levels over the platform's (0: off for it; `{}`: the platform's). Audited |
 | POST | `/backends/{id}/models/register` | `model.register` **and** `backend.manage` |
 | GET | `/alerts` | `alert.view` — filters `state`, `open`, `severity` |
@@ -637,7 +638,7 @@ Under `/api/v1`, authenticated with the platform JWT. See [teams.md](teams.md).
 | GET | `/teams/mine` | any signed-in user — your teams, and whether you can see all of them |
 | POST | `/teams` | `team.manage` — `name`, optional `slug` (derived otherwise) and `description` |
 | GET | `/teams/{id}` | `team.view` — with members and how many resources of each kind it owns |
-| PATCH | `/teams/{id}` | `team.manage` — name and description; the slug is fixed |
+| PATCH | `/teams/{id}` | `team.manage` — name, description and `dashboard_window_hours` (1–8760, the range its members' dashboards open with until they choose one; null clears it); the slug is fixed |
 | DELETE | `/teams/{id}` | `team.manage` — 409 while the team owns resources |
 | POST | `/teams/{id}/members` | `team.manage` or team owner — `user_id`, `role` (`member`/`owner`) |
 | PATCH | `/teams/{id}/members/{user_id}` | `team.manage` or team owner — change the team role |

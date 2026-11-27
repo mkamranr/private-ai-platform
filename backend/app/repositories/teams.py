@@ -56,6 +56,18 @@ class TeamRepository(BaseRepository[Team]):
         stmt = select(TeamMembership.team_id).where(TeamMembership.user_id == user_id)
         return frozenset((await self.session.execute(stmt)).scalars().all())
 
+    async def dashboard_default_for(self, user_id: uuid.UUID) -> int | None:
+        """E103: the dashboard range the user's teams open with, when those that set one
+        agree; None when none does or they differ."""
+        stmt = (
+            select(Team.dashboard_window_hours)
+            .join(TeamMembership, TeamMembership.team_id == Team.id)
+            .where(TeamMembership.user_id == user_id, Team.dashboard_window_hours.isnot(None))
+            .distinct()
+        )
+        chosen = (await self.session.execute(stmt)).scalars().all()
+        return chosen[0] if len(chosen) == 1 else None
+
     async def members(self, team_id: uuid.UUID) -> Sequence[tuple[TeamMembership, User]]:
         stmt = (
             select(TeamMembership, User)

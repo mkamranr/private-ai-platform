@@ -36,7 +36,7 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config.settings import Settings
+from app.config.settings import USAGE_RETENTION_MIN_DAYS, Settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.core.redact import REDACTED, is_secret_key, redact_value
@@ -87,6 +87,14 @@ def _bounded(low: int, high: int) -> Callable[[Any], None]:
     def check(value: Any) -> None:
         if not low <= value <= high:
             raise ValueError(f"must be between {low} and {high}")
+
+    return check
+
+
+def _zero_or_bounded(low: int, high: int) -> Callable[[Any], None]:
+    def check(value: Any) -> None:
+        if value != 0 and not low <= value <= high:
+            raise ValueError(f"must be 0, or between {low} and {high}")
 
     return check
 
@@ -239,6 +247,17 @@ RUNTIME_SETTINGS: tuple[RuntimeSetting, ...] = (
         "An open memory alert clears only once usage is this many points under the warning "
         "level. Read by the gpu_alerts job.",
         "Next GPU alert check (every minute)",
+    ),
+    RuntimeSetting(
+        "gateway.usage_retention_days",
+        "retention",
+        "Gateway usage record retention (days)",
+        "Usage records older than this are deleted once their day is in the daily rollups "
+        "the dashboard reads for long ranges. Chargeback reports reaching further back are "
+        "incomplete. 0 keeps every record; otherwise at least 100. Read by the hourly usage "
+        "rollup.",
+        "Next usage rollup (hourly)",
+        _zero_or_bounded(USAGE_RETENTION_MIN_DAYS, 3650),
     ),
     RuntimeSetting(
         "gateway.circuit_failure_threshold",

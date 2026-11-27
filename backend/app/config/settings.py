@@ -55,6 +55,8 @@ ModelRuntime = Literal["vllm", "sglang", "tgi", "llamacpp", "ollama", "external"
 #: Runtimes the platform points at rather than deploys. A deployment for one of these
 #: creates no container and reserves no GPUs.
 EXTERNAL_RUNTIMES: frozenset[str] = frozenset({"ollama", "external"})
+#: E103: the shortest usage retention: past the dashboard's 90 days read from records.
+USAGE_RETENTION_MIN_DAYS: int = 100
 
 
 def external_key_for(settings: Settings, runtime: str, endpoint: str | None) -> str | None:
@@ -613,6 +615,20 @@ class GatewaySettings(BaseModel):
     #: steps, ingestion, search, memory) once a team or model token budget is used up.
     #: Off by default: they are counted against budgets (E19, E21) but never refused.
     enforce_platform_budgets: bool = False
+    #: E103: gateway usage records older than this many days are deleted, once the day is
+    #: in the daily rollups (which the dashboard reads past 90 days and keeps forever).
+    #: Chargeback reads the records themselves, so a report reaching further back is
+    #: incomplete and says so. 0 keeps every record; otherwise at least 100.
+    usage_retention_days: int = Field(default=0, ge=0, le=3650)
+
+    @field_validator("usage_retention_days")
+    @classmethod
+    def _usage_retention(cls, value: int) -> int:
+        if 0 < value < USAGE_RETENTION_MIN_DAYS:
+            raise ValueError(
+                f"must be 0 (keep every record) or at least {USAGE_RETENTION_MIN_DAYS}"
+            )
+        return value
 
 
 class KnowledgeSettings(BaseModel):

@@ -225,6 +225,9 @@ class UserRead(ORMModel):
     approval_reminder_emails: bool = True
     #: E98: the dashboard range they last chose, in hours; None for the default.
     dashboard_window_hours: int | None = None
+    #: E103: the range their teams open the dashboard with (when those that set one
+    #: agree), used until they choose their own.
+    dashboard_default_window_hours: int | None = None
     # Never a password hash. Serialising one would leak it into every log,
     # response cache and browser history that touches this endpoint.
 

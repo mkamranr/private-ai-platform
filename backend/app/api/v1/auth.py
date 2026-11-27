@@ -21,6 +21,7 @@ from app.api.deps import (
     EffectiveSettingsDep,
     PasskeyServiceDep,
     RedisDep,
+    TeamServiceDep,
     TrustedDeviceServiceDep,
 )
 from app.api.routing import CommittingRoute
@@ -397,7 +398,7 @@ async def logout_all(user: CurrentUserDep, auth: AuthServiceDep) -> MessageRespo
 
 
 @router.get("/me", response_model=CurrentUserRead, summary="The authenticated user")
-async def me(user: CurrentUserDep) -> CurrentUserRead:
+async def me(user: CurrentUserDep, teams: TeamServiceDep) -> CurrentUserRead:
     """Identity plus resolved permissions.
 
     The permission list lets the admin UI hide controls the user cannot use. It is
@@ -422,6 +423,8 @@ async def me(user: CurrentUserDep) -> CurrentUserRead:
                     "dashboard_window_hours",
                 )
             },
+            # E103: what the dashboard opens with until they choose a range themselves.
+            "dashboard_default_window_hours": await teams.dashboard_default_for(user.id),
             "roles": user.roles,
             # A superuser bypasses checks entirely, so enumerating grants would
             # understate what they can do; the flag above is the honest signal.
