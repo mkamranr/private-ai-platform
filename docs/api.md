@@ -561,7 +561,11 @@ cannot set a header on an upgrade. See [voice.md](voice.md).
 | GET | `/audit` | `audit.view` — filters + a real total |
 | GET | `/audit/actions` | `audit.view` — actions present in the log |
 | POST | `/audit/export` | `audit.view` — the same filters plus `format` (`csv` or `jsonl`); every matching record, newest first, streamed. `X-Export-Rows` gives the count, fixed when the export starts (later records are left out). Audited as `AUDIT_EXPORTED` |
-| GET | `/audit/push` | `audit.view` — the push to a SIEM (`AUDIT_PUSH__URL`): `configured`, `url` (host only), `format`, `cursor_at`, `pushed_total`, `last_success_at`, `last_error`, `consecutive_failures` |
+| POST | `/audit/export/link` | `audit.view` — the same filters plus `format`: `{url, ticket, expires_at}`, a ticket good for one download within a minute |
+| POST | `/audit/export/download` | **the ticket** (form field `ticket`), no bearer token — the export the ticket was issued for, streamed as an attachment. 401 for an unknown, used or expired ticket or a disabled account, 403 once `audit.view` is gone. Audited as `AUDIT_EXPORTED` |
+| GET | `/audit/push` | `audit.view` — the push to a SIEM: `configured`, `source` (`environment`, `console`, `off`), `editable`, `url` (scheme, host and port), `format`, `interval_seconds`, `config` (the console's saved settings, with `has_authorization`), `cursor_at`, `pushed_total`, `last_run_at`, `last_success_at`, `last_error`, `consecutive_failures` |
+| PUT | `/audit/push` | `settings.manage` — `url` (null turns it off), `format`, `authorization` (left out: kept; empty: removed), `interval_seconds`, `batch_size`, `verify_tls`, `timeout_seconds`, `sourcetype`, `syslog_facility`, `restart_from_now`. 409 while `AUDIT_PUSH__URL` is set in the environment. Audited |
+| POST | `/audit/push/test` | `settings.manage` — sends one made-up record: `{ok, detail}`. 409 while the push is off. Audited |
 
 `request_id` (up to 64 characters) matches the correlation id the request middleware puts
 on every log line and on the `X-Request-ID` response header, so one request's records can

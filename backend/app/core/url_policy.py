@@ -70,22 +70,23 @@ def public_ai_host(host: str) -> str | None:
     return None
 
 
-def check_outbound_url(url: str, *, field: str = "base_url") -> str:
+def check_outbound_url(
+    url: str, *, field: str = "base_url", schemes: frozenset[str] = _ALLOWED_SCHEMES
+) -> str:
     """Validate an administrator-supplied URL and return it normalised.
 
     Normalised means: surrounding whitespace and trailing slashes removed, so
     ``http://h:8000/`` and ``http://h:8000`` are the same backend.
 
     Raises :class:`ValidationError` naming ``field`` so the UI can mark the input.
+    ``schemes`` (E104) lets a caller that isn't HTTP name its own, e.g. syslog.
     """
     candidate = (url or "").strip()
     parsed = urlparse(candidate)
 
-    if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
-        raise ValidationError(
-            f"{candidate!r} must start with http:// or https://.",
-            details={"field": field},
-        )
+    if parsed.scheme.lower() not in schemes:
+        allowed = " or ".join(f"{s}://" for s in sorted(schemes))
+        raise ValidationError(f"{candidate!r} must start with {allowed}.", details={"field": field})
     host = parsed.hostname
     if not host:
         raise ValidationError(

@@ -927,10 +927,12 @@ class AuditPushSettings(BaseModel):
     is exported from the console instead.
     """
 
+    #: E104: ``syslog+tcp://host:514`` or ``syslog+tls://host:6514`` with ``syslog``.
     url: str | None = None
     #: ``jsonl``: JSON Lines, one audit record per line. ``splunk_hec``: Splunk's HTTP
-    #: Event Collector (``/services/collector/event``), one event per record.
-    format: Literal["jsonl", "splunk_hec"] = "jsonl"
+    #: Event Collector (``/services/collector/event``), one event per record. E104:
+    #: ``syslog``: RFC 5424 messages over TCP or TLS, framed by octet counting.
+    format: Literal["jsonl", "splunk_hec", "syslog"] = "jsonl"
     #: The whole Authorization header, e.g. ``Splunk <token>`` or ``Bearer <token>``.
     authorization: SecretStr | None = None
     interval_seconds: int = Field(default=60, ge=10, le=86400)
@@ -939,6 +941,31 @@ class AuditPushSettings(BaseModel):
     timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     #: Splunk only: the events' ``sourcetype``.
     sourcetype: str = Field(default="aip:audit", max_length=128)
+    #: E104: syslog only: the facility the messages carry.
+    syslog_facility: Literal[
+        "auth",
+        "authpriv",
+        "audit",
+        "local0",
+        "local1",
+        "local2",
+        "local3",
+        "local4",
+        "local5",
+        "local6",
+        "local7",
+    ] = "local0"
+
+    @model_validator(mode="after")
+    def _url_fits_format(self) -> AuditPushSettings:
+        if self.url:
+            syslog = self.url.lower().startswith(("syslog+tcp://", "syslog+tls://"))
+            if syslog != (self.format == "syslog"):
+                raise ValueError(
+                    "a syslog+tcp:// or syslog+tls:// address goes with the syslog format, "
+                    "and an http(s):// one with the others"
+                )
+        return self
 
 
 class TracingSettings(BaseModel):

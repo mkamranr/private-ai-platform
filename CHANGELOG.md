@@ -6,6 +6,12 @@ Each release lists what changed for someone running the platform. Upgrade steps 
 
 ## Unreleased
 
+### Audit push from the console, over syslog too; exports saved as they stream
+- *Push to a SIEM* on the Audit Log page sets up the audit push without touching the environment: collector, format, authorization (stored encrypted), interval and batch size, with *Send a test record* and *Turn off*. A change applies within 10 seconds. `AUDIT_PUSH__URL` in the environment still wins, and the page then shows those settings read-only.
+- Syslog as a third format: RFC 5424 over TCP or TLS (`syslog+tcp://`, `syslog+tls://`), octet-counted, with a facility of your choice.
+- *Export CSV* and *Export JSONL* hand the file to the browser's own download, so it is saved as it streams instead of being held in memory first.
+- **Upgrade.** One migration (`alembic upgrade head`). An existing `AUDIT_PUSH__*` setup carries on unchanged.
+
 ### Usage record retention, cancelling a pull, a team's dashboard range
 - `gateway.usage_retention_days` (Settings, *Retention*) deletes gateway usage records older than that many days, once their day is in the daily rollups, so the dashboard's long ranges keep their totals. Off (0) by default; at least 100 days. Chargeback reports reaching back past the records kept say so.
 - *Cancel* on a queued or running model pull (`POST /backends/{id}/pulls/{pull_id}/cancel`) stops it: a queued one at once, a running one within seconds. Audited.

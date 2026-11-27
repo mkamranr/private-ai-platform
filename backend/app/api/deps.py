@@ -122,6 +122,8 @@ from app.services.answer_quality import AnswerQualityService
 from app.services.answer_scoring import AnswerScoringService
 from app.services.api_keys import ApiKeyService
 from app.services.audit import AuditService
+from app.services.audit_export import ExportTickets
+from app.services.audit_push import AuditPushConfigService
 from app.services.auth import AuthService
 from app.services.auth_providers import LdapAuthProvider, LocalAuthProvider
 from app.services.backup_schedule import BackupScheduler
@@ -414,6 +416,26 @@ def get_secret_cipher(request: Request) -> SecretCipher:
 
 
 CipherDep = Annotated[SecretCipher, Depends(get_secret_cipher)]
+
+
+def get_audit_push_config_service(
+    session: SessionDep, audit: AuditDep, cipher: CipherDep, settings: SettingsDep
+) -> AuditPushConfigService:
+    """E104: the audit push as the console sees and changes it."""
+    return AuditPushConfigService(AuditRepository(session), audit, cipher, settings.audit_push)
+
+
+AuditPushConfigServiceDep = Annotated[
+    AuditPushConfigService, Depends(get_audit_push_config_service)
+]
+
+
+def get_export_tickets(session: SessionDep, redis: RedisDep) -> ExportTickets:
+    """E104: one-time download links for audit exports."""
+    return ExportTickets(redis, UserRepository(session))
+
+
+ExportTicketsDep = Annotated[ExportTickets, Depends(get_export_tickets)]
 
 
 def get_node_service(

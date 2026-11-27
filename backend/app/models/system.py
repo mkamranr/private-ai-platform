@@ -20,7 +20,7 @@ import datetime as dt
 import uuid
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID  # noqa: N811
 from sqlalchemy.orm import Mapped, mapped_column
@@ -62,3 +62,31 @@ class AuditPushState(TimestampMixin, Base):
     last_failure_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: E104: when the push last ran, so the interval set in the console is kept.
+    last_run_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuditPushConfig(TimestampMixin, Base):
+    """E104: the audit push to a SIEM as set in the console. One row (id 1).
+
+    Used when ``AUDIT_PUSH__URL`` is not set in the environment; the environment wins
+    otherwise, so a deployment that manages it as configuration keeps doing so. The
+    authorization header is stored encrypted, like other credentials.
+    """
+
+    __tablename__ = "audit_push_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: None: the push is off.
+    url: Mapped[str | None] = mapped_column(Text)
+    format: Mapped[str] = mapped_column(String(16), default="jsonl", nullable=False)
+    authorization_encrypted: Mapped[str | None] = mapped_column(Text)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    batch_size: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    timeout_seconds: Mapped[float] = mapped_column(Float, default=15.0, nullable=False)
+    sourcetype: Mapped[str] = mapped_column(String(128), default="aip:audit", nullable=False)
+    syslog_facility: Mapped[str] = mapped_column(String(16), default="local0", nullable=False)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
